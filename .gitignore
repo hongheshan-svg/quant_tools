@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+*.spec
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+
+# IDE
+.cursor/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data & Logs
+data/
+logs/
+failed_*.log
+
+# Config with secrets (use settings.yaml.example as template)
+config/settings.yaml
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Test files
+test_*.py
+!tests/test_*.py

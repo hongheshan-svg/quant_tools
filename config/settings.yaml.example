@@ -1,0 +1,204 @@
+# ============================================================
+# A股舆情驱动量化交易系统 - 全局配置
+# ============================================================
+# 使用方法: 复制本文件为 settings.yaml，填入您的 API Key
+
+# --- LLM API 配置 ---
+# 支持平台: deepseek / qwen(通义千问) / zhipu(智谱GLM) / moonshot(Kimi)
+#            baidu(文心一言) / siliconflow(硅基流动) / openai / custom(自定义)
+# 提示: 可在程序界面点击【AI设置】按钮切换平台，无需手动编辑此文件
+llm:
+  # 主力模型（在界面中可自由切换）
+  primary:
+    provider: deepseek
+    api_key: "your-deepseek-api-key-here"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-chat"
+    max_tokens: 4096
+    temperature: 0.3
+  # 备用模型（主力模型失败时自动切换）
+  backup:
+    provider: openai
+    api_key: "your-openai-api-key-here"
+    base_url: "https://api.openai.com/v1"
+    model: "gpt-4o"
+    max_tokens: 4096
+    temperature: 0.3
+  # ---- 以下为各平台 base_url 参考 ----
+  # DeepSeek:      https://api.deepseek.com
+  # 通义千问:      https://dashscope.aliyuncs.com/compatible-mode/v1
+  # 智谱GLM:       https://open.bigmodel.cn/api/paas/v4
+  # 月之暗面Kimi:  https://api.moonshot.cn/v1
+  # 百度文心:      https://qianfan.baidubce.com/v2
+  # 豆包Doubao:    https://ark.cn-beijing.volces.com/api/v3
+  # 硅基流动:      https://api.siliconflow.cn/v1
+  # OpenAI:        https://api.openai.com/v1
+  # LLM 性能优化参数
+  timeout_seconds: 45
+  max_retries: 2
+  retry_backoff_seconds: 1.5
+  batch_workers: 3
+  analysis_workers: 3
+  cache_enabled: true
+  cache_ttl_seconds: 3600
+  cache_path: "data/llm_cache.sqlite3"
+
+# --- 数据库配置 ---
+database:
+  sqlite_path: "data/quant.db"
+  echo: false  # 是否打印SQL
+
+# --- Redis 缓存配置 ---
+redis:
+  host: "127.0.0.1"
+  port: 6379
+  db: 0
+  password: ""
+  enabled: false  # 首次启动可关闭Redis
+
+# --- 数据采集调度配置 ---
+scheduler:
+  # 热搜采集间隔（分钟）
+  hot_search_interval: 30
+  # 财联社采集间隔（分钟）
+  cailianshe_interval: 5
+  # 行情数据采集间隔（分钟，交易时间内）
+  stock_data_interval: 15
+  # 研报采集间隔（分钟）
+  research_interval: 60
+  # 每日分析运行时间 (HH:MM)
+  daily_analysis_time: "15:30"
+  # 每日信号生成时间 (HH:MM)
+  daily_signal_time: "16:00"
+  # 每日自学习运行时间 (HH:MM)
+  self_learning_time: "16:20"
+
+# --- 交易时间配置 ---
+trading:
+  # 交易日（自动从AKShare获取，此处为备用）
+  morning_start: "09:30"
+  morning_end: "11:30"
+  afternoon_start: "13:00"
+  afternoon_end: "15:00"
+  # 集合竞价时间
+  auction_start: "09:15"
+  auction_end: "09:25"
+
+# --- 策略权重配置 ---
+strategy:
+  weights:
+    sentiment_score: 0.25   # 舆情评分权重
+    limit_up_score: 0.15    # 连板高度权重
+    seal_strength: 0.15     # 封单强度权重
+    sector_effect: 0.12     # 板块效应权重
+    capital_flow: 0.10      # 资金流向权重
+    technical: 0.08         # 技术面权重
+    market_emotion: 0.05    # 市场情绪权重
+    global_score: 0.10      # 国际因子权重（美股财报+国际事件）
+  # 自学习参数（会根据历史结果自动生成 adaptive_weights 和 source_confidence）
+  learning:
+    enabled: true
+    lookback_days: 20
+    min_samples: 40
+    blend_ratio: 0.35
+    corr_adjust_cap: 0.25
+    source_min_samples: 3
+    source_conf_floor: 0.80
+    source_conf_ceil: 1.20
+  # 运行后会自动回写（首次可留空）
+  adaptive_weights: {}
+  source_confidence: {}
+  # 选股数量
+  top_n: 10
+
+# --- 风险控制配置 ---
+risk:
+  # 单只股票最大仓位比例
+  max_position_pct: 0.20
+  # 单日最大买入比例
+  max_daily_buy_pct: 0.50
+  # 止损比例（负数）
+  stop_loss_pct: -0.05
+  # 止盈比例
+  take_profit_pct: 0.15
+  # 大盘跌幅熔断阈值
+  market_circuit_breaker_pct: -0.02
+  # 连续止损次数限制
+  max_consecutive_losses: 3
+  # 黑名单关键词（过滤ST等）
+  blacklist_keywords:
+    - "ST"
+    - "*ST"
+
+# --- 国际数据采集配置 ---
+global_data:
+  # 重点跟踪的美股公司（财报）
+  us_focus_stocks:
+    - symbol: "NVDA"
+      name: "英伟达"
+      a_share_sectors: ["AI算力", "GPU", "光模块"]
+    - symbol: "AAPL"
+      name: "苹果"
+      a_share_sectors: ["苹果产业链"]
+    - symbol: "TSLA"
+      name: "特斯拉"
+      a_share_sectors: ["新能源车产业链"]
+    - symbol: "AMD"
+      name: "AMD"
+      a_share_sectors: ["AI算力", "芯片"]
+    - symbol: "MSFT"
+      name: "微软"
+      a_share_sectors: ["AI应用", "云计算"]
+    - symbol: "GOOGL"
+      name: "谷歌"
+      a_share_sectors: ["AI应用", "数据中心"]
+    - symbol: "AMZN"
+      name: "亚马逊"
+      a_share_sectors: ["跨境电商", "云计算"]
+    - symbol: "META"
+      name: "Meta"
+      a_share_sectors: ["VR/AR", "AI应用"]
+  # 美股数据采集频率（分钟）
+  us_earnings_interval: 60
+  # 国际新闻采集频率（分钟）
+  global_news_interval: 30
+  # 开盘前重点采集时间
+  pre_market_collection_time: "08:00"
+
+# --- 消息推送配置 ---
+notifier:
+  # 企业微信
+  wechat:
+    enabled: false
+    webhook_url: "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=your-key"
+  # 钉钉
+  dingtalk:
+    enabled: false
+    webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=your-token"
+    secret: "your-secret"
+
+# --- Web仪表盘配置 ---
+dashboard:
+  host: "0.0.0.0"
+  port: 8000
+
+# --- Qt6 桌面端配置 ---
+desktop:
+  refresh_interval_seconds: 30
+  news_refresh_seconds: 10          # 资讯流独立刷新间隔（秒）
+  auto_collect_enabled: true
+  collect_interval_seconds: 120
+  news_workers: 3
+  market_workers: 4
+  analysis_workers: 3
+  score_workers: 4
+  enable_realtime_ai: true
+  realtime_ai_workers: 2
+  max_log_lines: 800
+
+# --- 日志配置 ---
+logging:
+  level: "INFO"
+  rotation: "10 MB"
+  retention: "30 days"
+  log_dir: "logs"
