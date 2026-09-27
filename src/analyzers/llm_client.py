@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+from json_repair import repair_json
 from loguru import logger
 from openai import OpenAI
 
@@ -328,6 +329,19 @@ class LLMClient:
             try:
                 repaired = self._repair_truncated_json(raw)
                 if repaired:
+                    return repaired
+            except Exception:
+                pass
+
+            # 最后兜底：json_repair 修复尾逗号、单引号、前后多余文字等格式问题。
+            # 输出被截断时先截到最后一个完整对象，避免把半截的股票代码当成有效数据。
+            try:
+                text = (raw or "").strip()
+                if not text.endswith("}") and "}" in text:
+                    text = text[: text.rfind("}") + 1]
+                repaired = repair_json(text, return_objects=True)
+                if isinstance(repaired, dict) and repaired:
+                    logger.warning(f"JSON 格式不规范，已自动修复: {raw[:80]}")
                     return repaired
             except Exception:
                 pass
