@@ -11,6 +11,11 @@ import urllib.parse
 import httpx
 from loguru import logger
 
+from src.notifier.base import paged_titles, split_by_bytes
+
+# 钉钉 markdown 单条上限约 20000 字节
+MAX_CONTENT_BYTES = 18000
+
 
 class DingTalkNotifier:
     """钉钉机器人推送"""
@@ -38,14 +43,14 @@ class DingTalkNotifier:
 
     def send(self, title: str, content: str) -> bool:
         """
-        发送 Markdown 消息
+        发送 Markdown 消息，超长内容自动拆成多条
 
         Args:
             title: 消息标题
             content: 消息内容（Markdown 格式）
 
         Returns:
-            是否发送成功
+            是否全部发送成功
         """
         if not self.enabled:
             logger.debug("钉钉推送未启用")
@@ -55,6 +60,12 @@ class DingTalkNotifier:
             logger.warning("钉钉 webhook URL 未配置")
             return False
 
+        chunks = split_by_bytes(content, MAX_CONTENT_BYTES)
+        # 逐条发送，某条失败不影响后续分段
+        results = [self._send_one(t, c) for t, c in zip(paged_titles(title, len(chunks)), chunks)]
+        return all(results)
+
+    def _send_one(self, title: str, content: str) -> bool:
         url = self._get_signed_url()
         payload = {
             "msgtype": "markdown",

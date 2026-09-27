@@ -5,6 +5,11 @@
 import httpx
 from loguru import logger
 
+from src.notifier.base import paged_titles, split_by_bytes
+
+# 企业微信 markdown 单条上限 4096 字节，预留标题和页码
+MAX_CONTENT_BYTES = 3800
+
 
 class WeChatNotifier:
     """企业微信机器人推送"""
@@ -16,14 +21,14 @@ class WeChatNotifier:
 
     def send(self, title: str, content: str) -> bool:
         """
-        发送消息
+        发送消息，超长内容自动拆成多条
 
         Args:
             title: 消息标题
             content: 消息内容（支持 Markdown）
 
         Returns:
-            是否发送成功
+            是否全部发送成功
         """
         if not self.enabled:
             logger.debug("企业微信推送未启用")
@@ -33,6 +38,12 @@ class WeChatNotifier:
             logger.warning("企业微信 webhook URL 未配置")
             return False
 
+        chunks = split_by_bytes(content, MAX_CONTENT_BYTES)
+        # 逐条发送，某条失败不影响后续分段
+        results = [self._send_one(t, c) for t, c in zip(paged_titles(title, len(chunks)), chunks)]
+        return all(results)
+
+    def _send_one(self, title: str, content: str) -> bool:
         payload = {
             "msgtype": "markdown",
             "markdown": {

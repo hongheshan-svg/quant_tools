@@ -72,6 +72,8 @@ scheduler:
   daily_signal_time: "16:00"
   # 每日自学习运行时间 (HH:MM)
   self_learning_time: "16:20"
+  # 每日报告推送时间 (HH:MM)，需在 notifier 中启用至少一个渠道
+  daily_report_time: "16:10"
 
 # --- 交易时间配置 ---
 trading:
@@ -180,6 +182,9 @@ global_data:
 
 # --- 消息推送配置 ---
 notifier:
+  # 每日报告：定时任务在 scheduler.daily_report_time 推送，桌面端 AI涨停预测完成后也会推送
+  # 内容：大盘复盘、交易信号（含价格计划）、待确认订单、模拟盘账户、近 60 天信号绩效
+  daily_report_enabled: true
   # 企业微信
   wechat:
     enabled: false
@@ -189,6 +194,11 @@ notifier:
     enabled: false
     webhook_url: "https://oapi.dingtalk.com/robot/send?access_token=your-token"
     secret: "your-secret"
+  # 飞书自定义机器人（安全设置选「签名校验」时填写 secret）
+  feishu:
+    enabled: false
+    webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/your-hook"
+    secret: ""
 
 # --- Web仪表盘配置 ---
 dashboard:

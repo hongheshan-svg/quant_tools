@@ -190,7 +190,11 @@ def test_pipeline_premarket_predict_prepares_orders(tmp_path, monkeypatch):
 
     pipeline = pipeline_mod.PipelineService(config)
     result = pipeline.premarket_predict()
-    assert result == {"prediction_count": 1, "orders": {"prepared": 3, "confirmed": 0}}
+    assert result == {
+        "prediction_count": 1,
+        "orders": {"prepared": 3, "confirmed": 0},
+        "report": {"pushed": False, "reason": "未启用任何推送渠道"},
+    }
 
     snapshot = pipeline.trading_snapshot()
     pending = [o for o in snapshot["orders"] if o["code"] == "000858"]

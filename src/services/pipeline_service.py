@@ -48,7 +48,19 @@ class PipelineService:
         result: dict[str, Any] = {"prediction_count": len(predictions)}
         if predictions and self.execution.enabled:
             result["orders"] = self.prepare_orders(signal_date=date.today().strftime("%Y-%m-%d"))
+        if predictions and self.config.get("notifier", {}).get("daily_report_enabled", True):
+            result["report"] = self.push_daily_report()
         return result
+
+    def push_daily_report(self) -> dict[str, Any]:
+        """推送每日报告到已启用的机器人（未启用任何渠道时直接返回）。"""
+        from src.services.daily_report import DailyReportService
+
+        try:
+            return DailyReportService(self.config).push()
+        except Exception as e:
+            logger.error(f"每日报告推送异常: {e}")
+            return {"pushed": False, "error": str(e)}
 
     def signal_performance(self, lookback_days: int = 60) -> dict[str, Any]:
         """近 lookback_days 天交易信号的绩效回测（只读统计）。"""

@@ -640,6 +640,8 @@ class MainWindow(QMainWindow):
         action_layout = QHBoxLayout(action_box)
         self.btn_premarket = QPushButton("AI涨停预测")
         self.btn_premarket.setToolTip("根据当前所有数据，AI预测最可能涨停的10只")
+        self.btn_push_report = QPushButton("推送日报")
+        self.btn_push_report.setToolTip("把大盘复盘、交易信号、待确认订单、模拟盘和信号绩效推送到企业微信/钉钉/飞书")
         self.btn_ai_settings = QPushButton("AI设置")
         self.btn_ai_settings.setToolTip("切换AI平台（DeepSeek/通义千问/智谱/Kimi等）")
         self.btn_ai_settings.setStyleSheet(
@@ -647,7 +649,7 @@ class MainWindow(QMainWindow):
             "  border-radius: 6px; padding: 5px 12px; }"
             "QPushButton:hover { background: #8a4fb0; }"
         )
-        for b in [self.btn_premarket, self.btn_ai_settings]:
+        for b in [self.btn_premarket, self.btn_push_report, self.btn_ai_settings]:
             action_layout.addWidget(b)
         action_layout.addStretch()
         layout.addWidget(action_box)
@@ -872,6 +874,7 @@ class MainWindow(QMainWindow):
     def _bind_actions(self):
         self.btn_premarket.clicked.connect(lambda: self._run_task("AI涨停预测", self.pipeline.premarket_predict))
         self.btn_ai_settings.clicked.connect(self._open_ai_settings)
+        self.btn_push_report.clicked.connect(lambda: self._run_task("推送日报", self.pipeline.push_daily_report))
         self.btn_prepare_orders.clicked.connect(lambda: self._run_task("生成订单", self.pipeline.prepare_orders))
         self.btn_confirm_order.clicked.connect(self._confirm_selected_order)
         self.btn_cancel_order.clicked.connect(self._cancel_selected_order)
@@ -2172,6 +2175,10 @@ class MainWindow(QMainWindow):
             "order_id": "订单号",
             "error": "错误",
             "exit_orders": "卖出订单",
+            "report": "日报推送",
+            "pushed": "已推送",
+            "channels": "渠道",
+            "reason": "原因",
         }
 
         def transform(obj: Any):

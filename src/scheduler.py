@@ -178,6 +178,20 @@ def _run_signal_generation(config: dict):
         logger.error(f"交易执行任务异常: {e}")
 
 
+def _run_daily_report(config: dict):
+    """每日报告推送（大盘复盘 + 信号 + 订单 + 模拟盘 + 信号绩效）。"""
+    if _skip_non_trade_day(config, "每日报告推送"):
+        return
+    if not config.get("notifier", {}).get("daily_report_enabled", True):
+        return
+    from src.services.daily_report import DailyReportService
+
+    try:
+        DailyReportService(config).push()
+    except Exception as e:
+        logger.error(f"每日报告推送异常: {e}")
+
+
 def _run_self_learning(config: dict):
     """每日自学习任务。"""
     if _skip_non_trade_day(config, "系统自学习"):
@@ -259,6 +273,17 @@ def start_scheduler(config: dict):
         args=[config],
         id="signal_generation",
         name="每日信号生成",
+    )
+
+    # 每日报告推送（16:10，信号和订单生成之后）
+    report_time = sched_cfg.get("daily_report_time", "16:10")
+    hour, minute = report_time.split(":")
+    scheduler.add_job(
+        _run_daily_report,
+        trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
+        args=[config],
+        id="daily_report",
+        name="每日报告推送",
     )
 
     # 每日自学习（16:20）
