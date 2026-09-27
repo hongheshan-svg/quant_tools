@@ -45,6 +45,7 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
 - 只有 `test_basic.py` 和 `test_self_learning.py` 能当普通脚本直接运行（`python tests/test_basic.py`）。
 - `.gitignore` 忽略了 `tests/` 以外所有位置的 `test_*.py`，新测试必须放在 `tests/` 下。
 - 涉及数据库的测试要先重置引擎单例（可照搬 `tests/test_self_learning.py` 里的 `_reset_db_engine()`）。
+- 测试必须能离线运行，GitHub CI（`.github/workflows/ci.yml`，Python 3.12）会在每次推送 main 时跑全部测试。会联网的地方（交易日历、上市日期、采集器）要 monkeypatch 掉；交易日历可以直接用 `trading_calendar._set_days({...})` 指定。
 
 ## 打包（Windows EXE）
 
@@ -60,6 +61,7 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
   - 间隔任务：热搜每 30 分钟，财联社每 5 分钟，行情每 15 分钟，国际新闻每 30 分钟。
   - 工作日定时任务：15:30 每日分析（舆情 → 涨停 → 国际因子 → `CompositeScorer.score_today()`），16:00 生成信号并调用 `ExecutionService.execute_signals()` 生成订单，16:20 自学习。
   - 所有间隔和时间都读自 `scheduler.*` 配置项。
+  - 行情采集和上面三个每日任务在非交易日跳过（`_skip_non_trade_day()`），新闻、热搜、国际新闻照常采集。
 - **桌面端**（`run_dashboard.py` → `src/desktop/main_window.py`）**不使用** `scheduler.py`：
   - Qt 定时器和按钮驱动 `PipelineService`（`collect()` → `self_learn()` → `premarket_predict()`，预测后生成订单）。
   - 【模拟交易】页通过 `PipelineService` 的交易方法确认、撤销订单。这些方法共用一把锁，因为它们在不同工作线程里被调用。
@@ -69,9 +71,15 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
 
 新增任务或数据源时，需要接入每一个应该运行它的运行时。
 
+### 交易日历（`src/trading_calendar.py`）
+
+- `load(db_path, refresh=True)` 把新浪交易日历（缓存在 `trade_calendar` 表）读进内存；缓存超过 7 天或覆盖不到今天之后 30 天时联网更新，失败沿用缓存，6 小时内不重复尝试。`refresh=False` 只读本地缓存。
+- `is_trade_day()` / `next_trade_day()` 只查内存，可在界面线程高频调用；没有日历或日期超出日历范围时退化为周一至周五。
+- 调度器、预测器负责联网刷新；桌面端启动时先读缓存再在后台刷新；自学习只读缓存。判断交易日一律用这个模块，不要再写跳过周末的简易规则。
+
 ### 数据源
 
-- 实时行情按顺序回退：腾讯 `qt.gtimg.cn`（普通 HTTP）→ 东方财富 → AKShare 新浪（见 `StockDataCollector._collect_realtime_quotes`）。
+- 实时行情按顺序回退：腾讯 `qt.gtimg.cn`（普通 HTTP）→ 东方财富 → AKShare 新浪（见 `StockDataCollector._collect_realtime_quotes`）。每个源挂在进程级 `CircuitBreaker`（`src/collectors/circuit_breaker.py`）上：连续失败 3 次熔断 5 分钟，冷却后放行一次探测；全部熔断时仍会尝试第一个源。
 - 东方财富数据统一走 `em_client.get_em_client()`：这是一个 Playwright 单例，用来绕过 TLS 指纹检测，替代 AKShare 的 `ak.*_em()` 系列函数。不要直接调用 `ak.*_em()`。
 - `browser_client.py` 每个线程持有一个 Playwright 实例，因为同步 Playwright 对象不能跨线程使用。`ths_client.py`（同花顺）在它之上加了重试、Cookie 回退和过期缓存回退。
 - `BaseCollector.fetch_url()` 和 `post_url()` 带指数退避重试。`safe_collect()` 会吞掉所有异常并返回 `[]`，所以采集器出错只会体现在日志里。
@@ -98,6 +106,7 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
   - 如果开启了 `strategy.learning.enabled` 且 `strategy.adaptive_weights` 非空，每个实际权重为 `base*(1-blend_ratio) + adaptive*blend_ratio`，`blend_ratio` 默认 0.35。
   - `generate_signals()` 把 Top N 中 `strong_buy`/`buy` 的评分写成 `TradeSignal` 记录。
 - `SelfLearningService.run_daily_learning()` 用之后的 `StockDaily` 和 `LimitUpStock` 数据检验历史信号的结果，并计算各因子与结果的相关性。
+  - 信号的验证日（`_evaluation_date()`）：`premarket` 信号的 `signal_date` 已经是预测的目标交易日，就用这一天；其他信号都是收盘后用当天数据生成的，必须用下一个交易日验证。用信号当天行情评估等于拿已知结果给自己打分。
   - 它把 `strategy.adaptive_weights` 和按新闻源区分的 `strategy.source_confidence` 写回 `settings.yaml`，除非设置了 `strategy.learning.persist_to_yaml: false`。
   - 同时写入一条 `LearningSnapshot` 记录。
 
@@ -107,7 +116,8 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
   - 主模型失败时切换到备用模型；备用模型的 Key 仍以 `your-` 开头时会被跳过。
   - 响应缓存在 SQLite 里，缓存键是模型 + 提示词 + 参数的哈希，带 TTL。
   - `reload()` 可热切换模型平台。
-- `LimitUpPredictor`（`src/services/premarket_predictor.py`）按时段选择提示词，时段为 `premarket`（9:25 前）、`morning`、`noon`、`afternoon`、`aftermarket`（15:00 后）。
+  - `chat_json()` 解析失败时依次尝试：提取 markdown 代码块 → 修复截断的 `items` 列表 → 截到最后一个完整对象后交给 `json_repair`。截断的输出不能直接交给 `json_repair`，它会把半截的对象（如半截股票代码）当成有效数据保留下来。
+- `LimitUpPredictor`（`src/services/premarket_predictor.py`）按时段选择提示词，时段为 `premarket`（9:25 前）、`morning`、`noon`、`afternoon`、`aftermarket`（15:00 后）。非交易日一律按 `premarket` 处理。预测写入 `TradeSignal` 时，`signal_date` 存的是目标交易日：交易日盘前和盘中是当天，盘后和非交易日是下一个交易日。
 
 ### 交易（`src/trading/`）
 

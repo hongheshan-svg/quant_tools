@@ -72,7 +72,7 @@ python run_dashboard.py
 | `uvicorn src.dashboard.app:app --port 8000` | 启动 Web 仪表盘，浏览器访问 http://localhost:8000 |
 | `python scripts/fetch_history.py --mode daily --start-date 2024-01-01` | 回补历史数据；`--mode` 可选 `all`、`daily`、`limit_up`、`dragon_tiger`；默认断点续传，加 `--force-full` 全量重拉 |
 
-`main.py` 的默认时间表（可在 `scheduler` 配置中修改）：
+`main.py` 的默认时间表（可在 `scheduler` 配置中修改）。行情采集和每日分析任务按交易日历运行，周末和法定节假日自动跳过；新闻类采集照常进行。
 
 | 任务 | 频率 |
 |---|---|
@@ -166,7 +166,7 @@ python run_dashboard.py
 
 ## 开发
 
-运行测试（测试不会访问网络）：
+运行测试（测试不会访问网络；推送到 main 后 GitHub CI 会自动运行）：
 
 ```bash
 pip install pytest
