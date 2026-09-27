@@ -28,6 +28,7 @@ from src.database.models import (  # noqa: E402
 
 A_SHARE_OPEN_DATE = "1990-12-19"
 DEFAULT_START = A_SHARE_OPEN_DATE
+GAP_TOLERANCE_DAYS = 10  # stored history starting within this many days after --start-date counts as covered
 SLEEP_INTERVAL = 0.3
 BATCH_SIZE = 500
 
@@ -159,6 +160,35 @@ def get_latest_date_in_db(engine, table_cls, code_col: str | None, code: str | N
             return row[0] if row and row[0] else None
         except Exception:
             return None
+
+
+def get_date_range_in_db(engine, table_cls, code: str) -> tuple[str | None, str | None]:
+    """(earliest, latest) trade_date stored for one code."""
+    with Session(engine) as s:
+        try:
+            row = s.execute(
+                text(f"SELECT MIN(trade_date), MAX(trade_date) FROM {table_cls.__tablename__} WHERE code=:code"),
+                {"code": code},
+            ).fetchone()
+            return (row[0], row[1]) if row else (None, None)
+        except Exception:
+            return None, None
+
+
+def resume_start(earliest: str | None, latest: str | None, start_date: str, fill_gaps: bool) -> str:
+    """Where incremental daily download should start for one code.
+
+    Normally continue after the latest stored day. With fill_gaps (an explicit --start-date), stocks whose stored
+    history starts well after start_date are fetched from start_date again: the daily quote collection stores
+    only the latest day for every stock, which would otherwise make every stock look up to date.
+    """
+    if not latest or latest < start_date:
+        return start_date
+    if fill_gaps and earliest:
+        limit = (datetime.strptime(start_date, "%Y-%m-%d") + timedelta(days=GAP_TOLERANCE_DAYS)).strftime("%Y-%m-%d")
+        if earliest > limit:
+            return start_date
+    return (datetime.strptime(latest, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
 
 
 def has_any_rows(engine, table_name: str) -> bool:
@@ -337,7 +367,7 @@ def records_from_daily_df(code: str, name: str, source: str, df) -> list[dict]:
     return records
 
 
-def fetch_daily_ohlcv(engine, start_date: str, end_date: str, resume: bool = True, workers: int = 8):
+def fetch_daily_ohlcv(engine, start_date: str, end_date: str, resume: bool = True, workers: int = 8, fill_gaps: bool = False):
     stocks = fetch_stock_list()
     if not stocks:
         logger.error("stock list empty, skip daily")
@@ -359,13 +389,10 @@ def fetch_daily_ohlcv(engine, start_date: str, end_date: str, resume: bool = Tru
 
         actual_start = start_date
         if resume:
-            latest = get_latest_date_in_db(engine, StockDaily, "code", code)
-            if latest and latest >= start_date:
-                next_day = (datetime.strptime(latest, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
-                if next_day > end_date:
-                    logger.debug(f"[{idx}/{total}] {code} {name} already up-to-date")
-                    return
-                actual_start = next_day
+            actual_start = resume_start(*get_date_range_in_db(engine, StockDaily, code), start_date, fill_gaps)
+            if actual_start > end_date:
+                logger.debug(f"[{idx}/{total}] {code} {name} already up-to-date")
+                return
 
         try:
             source, df = fetch_daily_df_with_fallback(code, actual_start, end_date)
@@ -631,7 +658,9 @@ def main():
 
     if args.mode in ("all", "daily"):
         logger.info("=== collect daily ===")
-        fetch_daily_ohlcv(engine, args.start_date, args.end_date, resume=daily_resume, workers=args.workers)
+        # 显式指定 --start-date 时补齐该日期之后缺失的历史（日常采集只存了最新一天的行情）
+        fetch_daily_ohlcv(engine, args.start_date, args.end_date, resume=daily_resume, workers=args.workers,
+                          fill_gaps=args.start_date != DEFAULT_START)
 
     if args.mode in ("all", "limit_up"):
         logger.info("=== collect limit_up ===")

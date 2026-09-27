@@ -115,3 +115,14 @@ def test_to_ak_symbol_maps_bj_92_prefix():
 
 def test_to_ak_symbol_keeps_sh_9_prefix_for_non_92():
     assert fh.to_ak_symbol("900901") == "sh900901"
+
+
+def test_resume_start_fills_history_gap_for_explicit_start():
+    # 日常采集只存了最新一天：显式 --start-date 时从起点补齐
+    assert fh.resume_start("2026-09-24", "2026-09-24", "2026-06-01", fill_gaps=True) == "2026-06-01"
+    # 已有从起点开始的历史（起点是周末/节假日也算）：从最新一天之后继续
+    assert fh.resume_start("2026-06-02", "2026-09-24", "2026-06-01", fill_gaps=True) == "2026-09-25"
+    # 默认起点（全历史）按最新日期增量追加
+    assert fh.resume_start("2026-09-24", "2026-09-24", "2026-06-01", fill_gaps=False) == "2026-09-25"
+    assert fh.resume_start(None, None, "2026-06-01", fill_gaps=True) == "2026-06-01"
+    assert fh.resume_start("2026-01-05", "2026-03-01", "2026-06-01", fill_gaps=True) == "2026-06-01"
