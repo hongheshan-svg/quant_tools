@@ -23,6 +23,7 @@ from src.database.models import (
     LimitUpStock,
     SentimentAnalysis,
     StockDaily,
+    StockInfo,
     StockScore,
     TradeSignal,
 )
@@ -419,6 +420,10 @@ class LimitUpPredictor:
             logger.warning("涨停预测: DeepSeek 未返回有效结果")
             return []
 
+        predictions = self._validate_predictions(predictions)
+        if not predictions:
+            logger.warning("涨停预测: AI 返回的股票均未通过校验")
+            return []
         predictions = self._apply_source_confidence(predictions)
 
         # 4) 写入数据库
@@ -429,6 +434,51 @@ class LimitUpPredictor:
 
         logger.info(f"涨停预测完成: {len(predictions)} 只标的 ({session_desc})")
         return predictions
+
+    def _validate_predictions(self, predictions: list) -> list[dict]:
+        """剔除 AI 编造或不合规的股票：行情库和股票列表中都查不到的代码、ST/退市股、重复代码；
+        名称以数据库为准。数据库还没有任何行情时无法校验，原样返回。"""
+        import re
+
+        from src.utils.stock_code import code_candidates, is_st
+
+        valid: list[dict] = []
+        seen: set[str] = set()
+        with get_db_session(self.db_path) as session:
+            has_universe = session.query(StockDaily.id).first() or session.query(StockInfo.id).first()
+            if not has_universe:
+                logger.warning("行情库为空，跳过 AI 预测股票校验")
+                return [p for p in predictions if isinstance(p, dict)]
+            for p in predictions:
+                if not isinstance(p, dict):
+                    continue
+                match = re.search(r"\d{6}", str(p.get("code", "")))
+                code = match.group() if match else ""
+                ai_name = str(p.get("name", "")).strip()
+                if not code or code in seen:
+                    continue
+                name = (
+                    session.query(StockDaily.name)
+                    .filter(StockDaily.code.in_(code_candidates(code)), StockDaily.name.isnot(None), StockDaily.name != "")
+                    .order_by(StockDaily.trade_date.desc())
+                    .limit(1)
+                    .scalar()
+                    or session.query(StockInfo.name).filter(StockInfo.code == code).limit(1).scalar()
+                )
+                if not name:
+                    logger.warning(f"AI 预测的 {ai_name}({code}) 在行情库和股票列表中都不存在，已剔除")
+                    continue
+                if is_st(name) or "退" in name:
+                    logger.warning(f"AI 预测的 {name}({code}) 为 ST/退市风险股，已剔除")
+                    continue
+                if ai_name and ai_name != name:
+                    logger.info(f"AI 预测股票名称校正: {ai_name} → {name}({code})")
+                seen.add(code)
+                valid.append({**p, "code": code, "name": name})
+        dropped = len(predictions) - len(valid)
+        if dropped:
+            logger.info(f"AI 预测校验：{len(predictions)} 只中剔除 {dropped} 只")
+        return valid
 
     def _apply_source_confidence(self, predictions: list[dict]) -> list[dict]:
         """

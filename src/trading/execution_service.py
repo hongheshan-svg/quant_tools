@@ -10,6 +10,7 @@ from loguru import logger
 from sqlalchemy import func
 
 from src.config_loader import load_config
+from src.analyzers.decision import is_bullish
 from src.database.db import get_db_session
 from src.database.models import (
     ExecutionEvent,
@@ -552,8 +553,8 @@ class ExecutionService:
             return False
         verdict = (sig.ai_verdict or "").strip()
         if verdict:
-            verdict_lower = verdict.lower()
-            return not any(k in verdict_lower for k in ("卖", "避", "观望", "sell", "avoid", "hold", "watch"))
+            # 只有明确的买入/加仓才下单；无法识别的建议按保守处理
+            return is_bullish(verdict)
         if st == "premarket":
             return True
         # 评分引擎的信号没有 AI 研判，hold 评级也记为 buy，需按当日评分的评级过滤
