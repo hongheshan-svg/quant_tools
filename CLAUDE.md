@@ -65,7 +65,8 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
   - 行情采集和上面三个每日任务在非交易日跳过（`_skip_non_trade_day()`），新闻、热搜、国际新闻照常采集。
 - **桌面端**（`run_dashboard.py` → `src/desktop/main_window.py`）**不使用** `scheduler.py`：
   - Qt 定时器和按钮驱动 `PipelineService`（`collect()` → `self_learn()` → `premarket_predict()`；预测后生成订单并推送日报）。每次自动采集完成后，在后台调用 `check_exits()`。
-  - 【信号绩效】页在切换到该页时才计算，调用的是 `PipelineService.signal_performance()`。
+  - 【信号绩效】【主线分析】页在切换到该页时才计算，【数据源状态】页读取的是进程内的健康记录。
+  - 个股详情对话框（在交易决策表中双击股票）的【AI诊断】页调用 `PipelineService.diagnose_stock()`。打开时只显示上次的诊断结果，点击按钮才调用 AI。
   - 【模拟交易】页通过 `PipelineService` 的交易方法确认、撤销订单。这些方法共用一把锁，因为它们在不同工作线程里被调用。
   - `CollectorOrchestrator` 负责并发采集。
   - `DataQueryService` 提供界面上的全部查询。
@@ -78,10 +79,19 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
 - `load(db_path, refresh=True)` 把新浪交易日历（缓存在 `trade_calendar` 表）读进内存；缓存超过 7 天或覆盖不到今天之后 30 天时联网更新，失败沿用缓存，6 小时内不重复尝试。`refresh=False` 只读本地缓存。
 - `is_trade_day()` / `next_trade_day()` 只查内存，可在界面线程高频调用；没有日历或日期超出日历范围时退化为周一至周五。
 - 调度器、预测器负责联网刷新；桌面端启动时先读缓存再在后台刷新；自学习只读缓存。判断交易日一律用这个模块，不要再写跳过周末的简易规则。
+- `market_data_ready()`：交易日且已过 9:25。在此之前（包括节假日），行情接口返回的是上一个交易日的数据，所以按当天日期入库的行情和涨停池采集会直接跳过。
+- 数据库里可能已经有旧版本在节假日写入的重复数据。按日期取数的分析代码（大盘环境、主线、信号绩效、自学习）要先用 `trade_days_only()` 或 `is_trade_day()` 过滤掉非交易日。
 
 ### 数据源
 
-- 实时行情按顺序回退：腾讯 `qt.gtimg.cn`（普通 HTTP）→ 东方财富 → AKShare 新浪（见 `StockDataCollector._collect_realtime_quotes`）。每个源挂在进程级 `CircuitBreaker`（`src/collectors/circuit_breaker.py`）上：连续失败 3 次熔断 5 分钟，冷却后放行一次探测；全部熔断时仍会尝试第一个源。
+- 多数据源统一用 `source_chain.fetch_with_fallback(dataset, [(名称, 取数函数)], attempts=, allow_stale=)` 取数：
+  - **熔断：** 每个数据集一个 `CircuitBreaker`，连续失败 3 次熔断 5 分钟，冷却后放行一次探测；全部熔断时仍会尝试第一个源。
+  - **缓存兜底：** 开启 `allow_stale` 时，所有源都失败后返回上次成功的数据，并标记 `stale`。按日期入库的数据（行情）不要开这个选项。
+  - **健康记录：** 每次尝试都会记入进程级的 `source_health`。熔断器、缓存和健康记录都是进程级状态，测试前后要清空（参考 `tests/test_source_chain.py` 的 fixture）。
+- 实时行情按顺序回退：腾讯 `qt.gtimg.cn`（普通 HTTP）→ 东方财富 → AKShare 新浪。
+- 涨停池：东方财富涨停池 → 东方财富强势股池。强势股池里有没涨停的股票，所以只保留涨幅达到该板块涨停幅度的行。
+- 结构不适合改成回退链的内联回退（指数、板块、北向资金、各资讯采集器），直接调用 `source_health.record()` 记录健康状态。
+- 股票代码统一用 `src/utils/stock_code.py`（`bare_code`、`code_candidates`、`exchange_of`、`board_of`、`daily_limit_pct`），不要再手写代码前缀规则。北交所新代码以 92 开头，不是上交所。
 - 东方财富数据统一走 `em_client.get_em_client()`：这是一个 Playwright 单例，用来绕过 TLS 指纹检测，替代 AKShare 的 `ak.*_em()` 系列函数。不要直接调用 `ak.*_em()`。
 - `browser_client.py` 每个线程持有一个 Playwright 实例，因为同步 Playwright 对象不能跨线程使用。`ths_client.py`（同花顺）在它之上加了重试、Cookie 回退和过期缓存回退。
 - `BaseCollector.fetch_url()` 和 `post_url()` 带指数退避重试。`safe_collect()` 会吞掉所有异常并返回 `[]`，所以采集器出错只会体现在日志里。
@@ -107,6 +117,15 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
 - `CompositeScorer`（`src/strategy/scorer.py`）按 `strategy.weights` 组合 8 个因子分，各因子由 `src/strategy/*_score.py` 计算。
   - 如果开启了 `strategy.learning.enabled` 且 `strategy.adaptive_weights` 非空，每个实际权重为 `base*(1-blend_ratio) + adaptive*blend_ratio`，`blend_ratio` 默认 0.35。
   - `generate_signals()` 把 Top N 中 `strong_buy`/`buy` 的评分写成 `TradeSignal` 记录。
+- 大盘环境 `MarketRegimeAnalyzer`（`src/analyzers/market_regime.py`）：
+  - **评分：** 从 `stock_daily` 和 `limit_up_stock` 计算，分为趋势 35、短线情绪 45、量能 20 三部分。
+  - **档位：** 按总分映射为进攻、均衡、防守、冰点，并给出情绪周期。
+  - **样本要求：** 当天有行情的股票少于 300 只时返回「未知」，不做仓位调整。
+  - **使用方：** `ExecutionService._regime_adjusted_budget()` 按档位缩放单笔预算（`trading.regime_position_control`），冰点时不开新仓。预测器提示词、日报、桌面端、个股诊断都会用到它。
+- 主线 `ThemeTracker`（`src/analyzers/theme_tracker.py`）：
+  - **热度：** 用近 5 个交易日涨停池、按 `sector`（所属行业）计算每日热度。
+  - **阶段与角色：** 判断启动、加速、持续发酵、降温、退潮、观察。至少 3 天数据才判为持续发酵。`stock_roles()` 给出龙头或跟风。
+  - **预测器接入：** 预测器在提示词中加入「主线梯队」，并在涨停候选股描述行里标注主线角色。
 - `tech_score.analyze_technical()` 返回评分、趋势、MACD、RSI6、乖离率、量比，以及理由和风险；`calculate_tech_score()` 只取其中的分数。按打板策略调整过：乖离率只按高位风险扣分，RSI 高于 80 只提示偏热。预测器会把 `brief()` 摘要追加到涨停候选股的描述行里。
 - `SelfLearningService.run_daily_learning()` 用之后的 `StockDaily` 和 `LimitUpStock` 数据检验历史信号的结果，并计算各因子与结果的相关性。
   - 信号的验证日（模块级函数 `signal_evaluation_date()`，信号绩效回测也用它）：`premarket` 信号的 `signal_date` 已经是预测的目标交易日，就用这一天；其他信号都是收盘后用当天数据生成的，必须用下一个交易日验证。用信号当天行情评估等于拿已知结果给自己打分。
@@ -123,6 +142,13 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
   - 响应缓存在 SQLite 里，缓存键是模型 + 提示词 + 参数的哈希，带 TTL。
   - `reload()` 可热切换模型平台。
   - `chat_json()` 解析失败时依次尝试：提取 markdown 代码块 → 修复截断的 `items` 列表 → 截到最后一个完整对象后交给 `json_repair`。截断的输出不能直接交给 `json_repair`，它会把半截的对象（如半截股票代码）当成有效数据保留下来。
+- 操作建议统一用 `src/analyzers/decision.py`：`normalize_action()` 把文本归一为 buy、add、hold、watch、reduce、sell、avoid、alert 八种。否定说法（「不建议买入」）识别为 avoid；多个关键词同时出现时，取最先出现的；无法识别时返回空字符串。下单只接受 `is_bullish()` 为真的建议。
+- AI 预测保存前会经过 `_validate_predictions()`：剔除在 `stock_daily` 和 `stock_info` 里都查不到的代码（AI 编造的）、ST/退市股和重复代码，名称以数据库为准。行情库为空时无法校验，直接跳过。
+- 个股诊断 `StockDiagnosisService`（`src/services/stock_diagnosis.py`）：
+  - **流程：** 先用 `build_context()` 汇总行情、技术面、涨停记录、主线、大盘、资讯、龙虎榜和持仓，再由 LLM 输出决策仪表盘 JSON。
+  - **护栏：** `_apply_guardrails()` 负责动作归一化，缺失时按评分推断；评分低于 50 的买入降为观望；冰点不给买入；价格计划用 `sanitize_price_plan()` 校验。
+  - **缓存：** 结果存入 `stock_diagnosis` 表，30 分钟内复用。
+  - **测试：** 通过构造函数的 `llm=` 参数注入假 LLM。
 - `LimitUpPredictor`（`src/services/premarket_predictor.py`）按时段选择提示词，时段为 `premarket`（9:25 前）、`morning`、`noon`、`afternoon`、`aftermarket`（15:00 后）。非交易日一律按 `premarket` 处理。预测写入 `TradeSignal` 时，`signal_date` 存的是目标交易日：交易日盘前和盘中是当天，盘后和非交易日是下一个交易日。
 
 ### 交易（`src/trading/`）
