@@ -12,6 +12,7 @@ import pandas as pd
 from loguru import logger
 
 from src.collectors.base import BaseCollector
+from src.collectors.circuit_breaker import CircuitBreaker
 from src.collectors.em_client import get_em_client
 from src.database.db import get_db_session
 from src.database.models import (
@@ -43,6 +44,9 @@ TENCENT_MIN_FIELDS = 45
 TENCENT_TOTAL_MV_INDEX = 45
 TENCENT_CIRC_MV_INDEX = 44
 NORTHBOUND_UNIT_SPLIT_THRESHOLD = 10000
+
+# 实时行情各数据源共用的熔断器（进程级，跨采集轮次保留状态）
+_realtime_quote_breaker = CircuitBreaker("实时行情")
 
 
 class StockDataCollector(BaseCollector):
@@ -666,7 +670,10 @@ class StockDataCollector(BaseCollector):
         ]
 
         df = None
-        for source_name, fetch_fn in sources:
+        fetchers = dict(sources)
+        for source_name in _realtime_quote_breaker.available_sources([name for name, _ in sources]):
+            fetch_fn = fetchers[source_name]
+            last_error = "空数据"
             for attempt in range(2):
                 try:
                     df = fetch_fn()
@@ -674,10 +681,13 @@ class StockDataCollector(BaseCollector):
                         logger.info(f"实时行情数据源 [{source_name}] 第{attempt+1}次成功, {len(df)} 条")
                         break
                 except Exception as e:
+                    last_error = str(e)
                     logger.warning(f"实时行情 [{source_name}] 第{attempt+1}次失败: {e}")
                     time.sleep(1.5)
             if df is not None and not df.empty:
+                _realtime_quote_breaker.record_success(source_name)
                 break
+            _realtime_quote_breaker.record_failure(source_name, last_error)
 
         if df is None or df.empty:
             logger.error("实时行情：所有数据源均失败")
