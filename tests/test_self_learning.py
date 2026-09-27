@@ -6,6 +6,7 @@ from pathlib import Path
 # 确保项目根目录在路径中，支持直接运行 `python tests/test_self_learning.py`
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src import trading_calendar
 from src.database import db as db_module
 from src.database.db import get_db_session, init_db
 from src.database.models import (
@@ -229,6 +230,39 @@ def test_self_learning_updates_weights_and_confidence(tmp_path):
         os.remove(db_path)
 
 
+def test_buy_signal_is_evaluated_on_next_trade_day(tmp_path):
+    """收盘后生成的 buy 信号不能用当天（已知）行情评估，必须看下一个交易日。"""
+    db_path = tmp_path / "unit_next_day.db"
+    _reset_db_engine()
+    init_db(str(db_path))
+    signal_day, holiday, next_day = "2026-09-30", "2026-10-01", "2026-10-08"
+    trading_calendar._set_days({"2026-09-29", signal_day, next_day, "2026-10-09"})
+
+    with get_db_session(str(db_path)) as session:
+        # 信号当天已涨停（生成信号时已知），下一个交易日下跌
+        session.add(StockDaily(code="600001", name="样本", trade_date=signal_day, close=11.0, change_pct=10.0))
+        session.add(LimitUpStock(code="600001", name="样本", trade_date=signal_day, continuous_days=1))
+        session.add(StockDaily(code="600001", name="样本", trade_date=holiday, close=11.0, change_pct=5.0))
+        session.add(StockDaily(code="600001", name="样本", trade_date=next_day, close=10.67, change_pct=-3.0))
+        session.add(
+            TradeSignal(
+                code="600001", name="样本", signal_date=signal_day,
+                signal_type="buy", signal_strength=0.8, composite_score=80, reason="综合80分",
+            )
+        )
+
+    service = SelfLearningService({"database": {"sqlite_path": str(db_path)}, "strategy": {"learning": {}}})
+    try:
+        assert service._evaluate_signal_outcomes(as_of_date=signal_day, lookback_days=10) == []  # 验证日未到
+        rows = service._evaluate_signal_outcomes(as_of_date=next_day, lookback_days=10)
+        assert len(rows) == 1
+        assert rows[0]["realized_change_pct"] == -3.0
+        assert rows[0]["hit_limit_up"] is False
+    finally:
+        trading_calendar._set_days(set())
+        _reset_db_engine()
+
+
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as tmp:
         temp_path = Path(tmp)
@@ -236,4 +270,6 @@ if __name__ == "__main__":
         print("[PASS] test_yizi_filter_no_crash")
         test_self_learning_updates_weights_and_confidence(temp_path)
         print("[PASS] test_self_learning_updates_weights_and_confidence")
+        test_buy_signal_is_evaluated_on_next_trade_day(temp_path)
+        print("[PASS] test_buy_signal_is_evaluated_on_next_trade_day")
         print("\n===== self_learning 测试通过 =====")

@@ -14,6 +14,7 @@ from typing import Any
 
 from loguru import logger
 
+from src import trading_calendar
 from src.config_loader import load_config, save_config
 from src.database.db import get_db_session, init_db
 from src.database.models import (
@@ -56,6 +57,8 @@ class SelfLearningService:
 
         logger.info(f"自学习启动: 截止={as_of_date}, 回看={lookback_days}天")
 
+        # 只读本地缓存，不联网；调度器和桌面端启动时已负责更新交易日历
+        trading_calendar.load(self.db_path, refresh=False)
         outcomes = self._evaluate_signal_outcomes(as_of_date, lookback_days)
         factor_stats = self._compute_factor_stats(as_of_date, lookback_days)
         adaptive_weights = self._derive_adaptive_weights(factor_stats)
@@ -85,8 +88,16 @@ class SelfLearningService:
         )
         return result
 
+    @staticmethod
+    def _evaluation_date(sig: TradeSignal) -> str:
+        """信号的验证日：盘前预测的 signal_date 已是目标交易日；其余信号在收盘后
+        用当天数据生成，必须用下一个交易日验证，否则会拿已知行情给自己打分。"""
+        if (sig.signal_type or "").lower() == "premarket":
+            return sig.signal_date
+        return trading_calendar.next_trade_day(sig.signal_date).strftime("%Y-%m-%d")
+
     def _evaluate_signal_outcomes(self, as_of_date: str, lookback_days: int) -> list[dict[str, Any]]:
-        """评估最近信号效果并写入 SignalOutcome。"""
+        """评估最近信号效果并写入 SignalOutcome（验证日行情尚未采集的信号跳过，下次再评估）。"""
         start_date = (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
         rows: list[dict[str, Any]] = []
 
@@ -102,14 +113,17 @@ class SelfLearningService:
             )
 
             for sig in signals:
-                daily = self._find_stock_daily(session, sig.code, sig.signal_date)
+                eval_date = self._evaluation_date(sig)
+                if eval_date > as_of_date:
+                    continue
+                daily = self._find_stock_daily(session, sig.code, eval_date)
                 if not daily or daily.change_pct is None:
                     continue
 
                 source, predict_type = self._parse_reason(sig.reason or "")
                 confidence = float(sig.signal_strength or 0) * 10.0
                 change_pct = float(daily.change_pct or 0.0)
-                hit_limit_up = self._is_limit_up(session, sig.code, sig.signal_date)
+                hit_limit_up = self._is_limit_up(session, sig.code, eval_date)
                 outcome_score = self._calc_outcome_score(
                     change_pct=change_pct,
                     hit_limit_up=hit_limit_up,
