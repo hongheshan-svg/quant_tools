@@ -123,6 +123,21 @@ class PipelineService:
             logger.error(f"止损止盈检查异常: {e}")
             return {"exit_orders": 0, "confirmed": 0, "error": str(e)}
 
+    def check_alerts(self) -> dict[str, Any]:
+        """盘中提醒：封板/炸板/跌破止损/达到目标价/大跌/自定义规则，交易时段外直接跳过。"""
+        from src.services.alert_service import AlertService
+
+        try:
+            return AlertService(self.config).run()
+        except Exception as e:
+            logger.error(f"盘中提醒检查异常: {e}")
+            return {"alerts": 0, "error": str(e)}
+
+    def recent_alerts(self, limit: int = 200) -> list[dict[str, Any]]:
+        from src.services.alert_service import AlertService
+
+        return AlertService(self.config).recent(limit)
+
     def confirm_order(self, order_id: str) -> dict[str, Any]:
         with self._execution_lock:
             return self.execution.confirm_and_send(order_id, operator="desktop")

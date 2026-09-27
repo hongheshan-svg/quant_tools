@@ -24,6 +24,7 @@ MIN_COVERAGE_DAYS = 30           # 缓存至少要覆盖到今天之后 30 天�
 REFRESH_RETRY_SECONDS = 6 * 3600  # 联网失败或新一年日历未发布时，同一进程 6 小时内不重复尝试
 MAX_LOOKAHEAD_DAYS = 30
 MARKET_DATA_READY_HHMM = (9, 25)  # 集合竞价结束后当天的行情和涨停池才是今天的数据
+TRADE_SESSIONS = ((925, 1130), (1300, 1500))  # 含集合竞价结果公布后的 9:25
 
 _lock = threading.Lock()
 _trade_days: set[str] = set()
@@ -115,6 +116,13 @@ def market_data_ready(now: datetime | None = None) -> bool:
     节假日或开盘前，行情接口返回的是上一个交易日的数据，不能按今天的日期入库。"""
     now = now or datetime.now()
     return is_trade_day(now) and (now.hour, now.minute) >= MARKET_DATA_READY_HHMM
+
+
+def in_trade_session(now: datetime | None = None) -> bool:
+    """当前是否处于交易时段（交易日 9:25-11:30、13:00-15:00）。"""
+    now = now or datetime.now()
+    hhmm = now.hour * 100 + now.minute
+    return is_trade_day(now) and any(start <= hhmm <= end for start, end in TRADE_SESSIONS)
 
 
 def trade_days_only(dates):

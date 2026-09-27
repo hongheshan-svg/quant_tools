@@ -193,6 +193,8 @@ notifier:
   # 每日报告：定时任务在 scheduler.daily_report_time 推送，桌面端 AI涨停预测完成后也会推送
   # 内容：大盘复盘、交易信号（含价格计划）、待确认订单、模拟盘账户、近 60 天信号绩效
   daily_report_enabled: true
+  # 免打扰时段（如 ["22:00", "08:00"]，可跨午夜），期间只推送紧急提醒；为空表示不启用
+  quiet_hours: []
   # 企业微信
   wechat:
     enabled: false
@@ -207,6 +209,20 @@ notifier:
     enabled: false
     webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/your-hook"
     secret: ""
+
+# --- 盘中提醒 ---
+# 交易时段内每次采集行情后检查：今日信号股、模拟盘持仓、watchlist 中的股票
+# 内置提醒：封涨停、炸板、持仓跌破止损（紧急）、达到目标价、大跌；推送渠道见 notifier
+alerts:
+  enabled: true
+  cooldown_minutes: 30     # 同一提醒的冷却时间（封涨停每只每天只提醒一次）
+  big_drop_pct: -7         # 跌幅达到该值提醒
+  watchlist: []            # 额外关注的股票代码，如 ["600519", "300750"]（加引号）
+  # 自定义规则：
+  #   - {code: "600519", type: price_cross, direction: above, price: 1800}   # 价格上破/下破（above/below）
+  #   - {code: "300750", type: change_pct, direction: down, change_pct: 5}  # 涨跌幅达到（up/down）
+  #   - {code: "002594", type: volume_spike, multiplier: 2}                 # 成交量达到近 20 日均量的倍数
+  rules: []
 
 # --- Web仪表盘配置 ---
 dashboard:

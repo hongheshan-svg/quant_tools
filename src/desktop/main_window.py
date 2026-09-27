@@ -850,7 +850,11 @@ class MainWindow(QMainWindow):
         self._theme_tab = self._build_theme_tab()
         self.main_tabs.addTab(self._theme_tab, "主线分析")
 
-        # ---- Tab 6: 数据源状态 ----
+        # ---- Tab 6: 盘中提醒 ----
+        self._alert_tab = self._build_alert_tab()
+        self.main_tabs.addTab(self._alert_tab, "盘中提醒")
+
+        # ---- Tab 7: 数据源状态 ----
         self._source_tab = self._build_source_status_tab()
         self.main_tabs.addTab(self._source_tab, "数据源状态")
         self.main_tabs.currentChanged.connect(self._on_main_tab_changed)
@@ -1000,6 +1004,35 @@ class MainWindow(QMainWindow):
         if self._theme_pending:
             self._theme_pending = False
             self._refresh_themes()
+
+    def _build_alert_tab(self) -> QWidget:
+        """盘中提醒记录：今日信号股、持仓和自定义规则触发的提醒。"""
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 4, 0, 0)
+        label = QLabel("盘中提醒：交易时段内每次采集后检查今日信号股、模拟盘持仓和 alerts 配置中的股票")
+        label.setStyleSheet("font-weight: 600; color: #8be9fd; padding: 2px 6px;")
+        label.setToolTip("类型：封涨停、炸板、跌破止损（紧急）、达到目标价、大跌、价格突破、涨跌幅、放量。\n"
+                         "同一提醒在冷却期内不重复；免打扰时段只推送紧急提醒。")
+        tab_layout.addWidget(label)
+        self.table_alerts = self._build_table(["时间", "代码", "名称", "类型", "级别", "内容", "推送"])
+        tab_layout.addWidget(self.table_alerts, stretch=1)
+        return tab
+
+    def _refresh_alerts(self):
+        worker = WorkerTask(self.pipeline.recent_alerts)
+        worker.signals.finished.connect(self._on_alerts_ready)
+        self.thread_pool.start(worker)
+
+    def _on_alerts_ready(self, rows: list):
+        level = {"critical": ("紧急", "#ff5555"), "warning": ("注意", "#ffb86c"), "info": ("提示", "#8be9fd")}
+        self.table_alerts.setRowCount(len(rows))
+        for i, r in enumerate(rows):
+            text, color = level.get(r["severity"], (r["severity"], "#dbe7ff"))
+            pushed = "已推送" if r["notified"] else (r["reason"] or "未推送")
+            for col, value in enumerate([r["time"], r["code"], r["name"], r["type"], text, r["message"], pushed]):
+                self.table_alerts.setItem(i, col, _item(value))
+            self.table_alerts.item(i, 4).setForeground(QColor(color))
 
     def _build_source_status_tab(self) -> QWidget:
         """各数据源最近的成功/失败情况与熔断状态（本进程内统计）。"""
@@ -1287,6 +1320,16 @@ class MainWindow(QMainWindow):
         if result.get("exit_orders"):
             self._log(f"持仓触发止损/止盈，已生成 {result['exit_orders']} 笔卖出订单，请到【模拟交易】页确认。")
             self._refresh_trading()
+        # 接着检查盘中提醒（交易时段外会直接跳过）
+        worker = WorkerTask(self.pipeline.check_alerts)
+        worker.signals.finished.connect(self._on_alerts_checked)
+        self.thread_pool.start(worker)
+
+    def _on_alerts_checked(self, result: dict):
+        if result.get("alerts"):
+            self._log(f"盘中提醒 {result['alerts']} 条（已推送 {result.get('pushed', 0)} 条），详见【盘中提醒】页。")
+            if self.main_tabs.currentWidget() is self._alert_tab:
+                self._refresh_alerts()
 
     def _on_auto_collect_error(self, err: str):
         self._auto_collect_inflight = False
@@ -1653,6 +1696,8 @@ class MainWindow(QMainWindow):
             self._refresh_performance()
         elif widget is self._theme_tab:
             self._refresh_themes()
+        elif widget is self._alert_tab:
+            self._refresh_alerts()
         elif widget is self._source_tab:
             self._refresh_source_status()
 
@@ -2370,6 +2415,8 @@ class MainWindow(QMainWindow):
             "order_id": "订单号",
             "error": "错误",
             "exit_orders": "卖出订单",
+            "alerts": "提醒",
+            "skipped": "跳过",
             "report": "日报推送",
             "pushed": "已推送",
             "channels": "渠道",

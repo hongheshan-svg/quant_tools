@@ -164,6 +164,27 @@ class StockFundFlow(Base):
     )
 
 
+class AlertRecord(Base):
+    """盘中提醒记录"""
+    __tablename__ = "alert_record"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, comment="股票代码（6位）")
+    name = Column(String(20), comment="股票名称")
+    alert_type = Column(String(20), comment="类型：limit_up/limit_open/stop_loss/take_profit/big_drop/price_cross/change_pct/volume_spike")
+    severity = Column(String(10), comment="级别：info/warning/critical")
+    message = Column(String(300), comment="提醒内容")
+    observed = Column(Float, comment="观察值（价格/涨跌幅/量比）")
+    threshold = Column(Float, comment="触发阈值")
+    notified = Column(Boolean, default=False, comment="是否已推送")
+    suppressed_reason = Column(String(20), comment="未推送原因：冷却中/免打扰时段/未启用推送")
+    triggered_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index("idx_alert_record_time", "triggered_at"),
+    )
+
+
 class StockDiagnosis(Base):
     """个股 AI 诊断结果（决策仪表盘 JSON）"""
     __tablename__ = "stock_diagnosis"

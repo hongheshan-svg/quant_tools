@@ -105,6 +105,14 @@ def _run_stock_data_collection(config: dict):
     except Exception as e:
         logger.error(f"止损止盈检查异常: {e}")
 
+    # 盘中提醒（封板/炸板/跌破止损/大跌/自定义规则）
+    try:
+        from src.services.alert_service import AlertService
+
+        AlertService(config).run()
+    except Exception as e:
+        logger.error(f"盘中提醒检查异常: {e}")
+
 
 def _run_global_data_collection(config: dict):
     """执行国际数据采集任务"""

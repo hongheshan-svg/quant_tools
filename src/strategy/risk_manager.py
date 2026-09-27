@@ -18,10 +18,6 @@ STOCK_POOL_CONFIG_PATH = "config/stock_pool.yaml"
 
 HIGH_RISK_REASON_COUNT = 2
 
-MORNING_SESSION_START = 925
-MORNING_SESSION_END = 1130
-AFTERNOON_SESSION_START = 1300
-AFTERNOON_SESSION_END = 1500
 
 
 class RiskManager:
@@ -345,10 +341,4 @@ class RiskManager:
 
     @staticmethod
     def _is_trade_session_now(now: datetime | None = None) -> bool:
-        dt = now or datetime.now()
-        if not trading_calendar.is_trade_day(dt):
-            return False
-        hhmm = dt.hour * 100 + dt.minute
-        return (MORNING_SESSION_START <= hhmm <= MORNING_SESSION_END) or (
-            AFTERNOON_SESSION_START <= hhmm <= AFTERNOON_SESSION_END
-        )
+        return trading_calendar.in_trade_session(now)
