@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+
+      # 测试不访问网络，也不需要 Playwright 浏览器
+      - name: Run tests
+        run: python -m pytest -q -p no:cacheprovider tests/
+
+      - name: Run script-style tests
+        run: |
+          python tests/test_basic.py
+          python tests/test_self_learning.py
