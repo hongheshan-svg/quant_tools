@@ -78,11 +78,14 @@ class DailyReportService:
             logger.warning(f"日报获取市场概况失败: {e}")
             return {}
 
-    @staticmethod
-    def _market_section(ov: dict) -> str:
+    def _market_section(self, ov: dict) -> str:
+        from src.analyzers.market_regime import MarketRegimeAnalyzer
+
+        regime = MarketRegimeAnalyzer(self.config).analyze(overview=ov)
+        regime_line = f"- {regime.summary()}" if regime.regime != "未知" else ""
         if not ov or not (ov.get("up_count") or ov.get("sh_index")):
-            return "### 大盘复盘\n暂无市场数据"
-        lines = ["### 大盘复盘"]
+            return "\n".join(["### 大盘复盘", regime_line or "暂无市场数据"])
+        lines = ["### 大盘复盘", *([regime_line] if regime_line else [])]
         indices = [
             f"{label} {ov[key]}（{_pct(ov.get(pct_key))}）"
             for label, key, pct_key in (("上证", "sh_index", "sh_change_pct"), ("深证", "sz_index", "sz_change_pct"), ("创业板", "cy_index", "cy_change_pct"))

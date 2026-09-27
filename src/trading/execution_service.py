@@ -53,6 +53,7 @@ class ExecutionService:
         self.enabled = bool(trading_cfg.get("execution_enabled", True))
         self.auto_confirm = bool(trading_cfg.get("auto_confirm", False))
         self.default_budget = float(trading_cfg.get("default_order_budget", 100_000))
+        self.regime_position_control = bool(trading_cfg.get("regime_position_control", True))
         self.max_orders_per_run = int(trading_cfg.get("max_orders_per_run", 10))
         initial_cash = float(trading_cfg.get("paper_initial_cash", 1_000_000))
         # 默认模拟盘的账户只存在内存里，每次使用前从 trade_fill 重放，保证重启后和多进程间一致
@@ -183,6 +184,22 @@ class ExecutionService:
                     confirmed += 1
         return {"exit_orders": len(created), "confirmed": confirmed}
 
+    def _regime_adjusted_budget(self) -> tuple[float, str]:
+        """按大盘环境调整单笔预算：进攻 ×1.0、均衡 ×0.6、防守 ×0.3、冰点暂停开仓；数据不足时不调整。"""
+        if not self.regime_position_control:
+            return self.default_budget, ""
+        from src.analyzers.market_regime import MarketRegimeAnalyzer
+
+        regime = MarketRegimeAnalyzer(self.config).analyze()
+        if regime.regime == "未知" or regime.position_factor >= 1:
+            return self.default_budget, ""
+        if regime.position_factor <= 0:
+            logger.warning(f"{regime.summary()}，暂停新开仓")
+            return 0.0, ""
+        note = f"大盘{regime.regime}，仓位×{regime.position_factor:.1f}"
+        logger.info(f"{regime.summary()}，单笔预算调整为 {self.default_budget * regime.position_factor:,.0f}")
+        return self.default_budget * regime.position_factor, note
+
     def _exit_plan(self, session, code: str, avg_cost: float) -> tuple[float, float]:
         """持仓的止损价和目标价：优先用最近一笔已成交买单所对应信号的价格计划，否则按风控比例。"""
         plan = (
@@ -214,6 +231,9 @@ class ExecutionService:
             return []
 
         self._sync_paper_account()
+        budget, regime_note = self._regime_adjusted_budget()
+        if budget <= 0:
+            return []
         created_ids: list[str] = []
         account = self.broker.get_account()
         logger.info(f"prepare_orders: signal_date={target_date}, account_total={account.total_assets:.2f}")
@@ -252,7 +272,7 @@ class ExecutionService:
                     close_price=close_price,
                     recommendation=sig.ai_verdict or "",
                     reason=sig.reason or "",
-                    budget=self.default_budget,
+                    budget=budget,
                 )
                 if intent is None:
                     continue
@@ -309,7 +329,7 @@ class ExecutionService:
                     broker=self.broker.name,
                     strategy_tag=intent.strategy_tag,
                     idempotency_key=intent.idempotency_key,
-                    risk_note="; ".join(risk_result.get("reasons", [])),
+                    risk_note="; ".join([*risk_result.get("reasons", []), *([regime_note] if regime_note else [])]),
                 )
                 session.add(order)
                 self._add_event(

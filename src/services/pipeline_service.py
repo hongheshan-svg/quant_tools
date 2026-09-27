@@ -62,6 +62,13 @@ class PipelineService:
             logger.error(f"每日报告推送异常: {e}")
             return {"pushed": False, "error": str(e)}
 
+    def market_regime(self) -> dict[str, Any]:
+        """大盘环境评估（进攻/均衡/防守/冰点 + 情绪周期）。"""
+        from src.analyzers.market_regime import MarketRegimeAnalyzer
+
+        regime = MarketRegimeAnalyzer(self.config).analyze()
+        return {**regime.to_dict(), "summary": regime.summary()}
+
     @staticmethod
     def data_source_status() -> list[dict[str, Any]]:
         """本进程内各数据源的健康状态（内存数据，无 IO）。"""

@@ -668,6 +668,13 @@ class MainWindow(QMainWindow):
         )
         market_outer.addWidget(self.volume_warning_label)
 
+        # 大盘环境（进攻/均衡/防守/冰点）与短线情绪周期
+        self.regime_label = QLabel("")
+        self.regime_label.setWordWrap(True)
+        self.regime_label.setStyleSheet("font-weight: bold; font-size: 13px; padding: 2px 4px;")
+        market_outer.addWidget(self.regime_label)
+        self._regime_inflight = False
+
         # 指标卡行 — 放在 QScrollArea 中支持水平滚动
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -1431,8 +1438,29 @@ class MainWindow(QMainWindow):
     def refresh_dashboard(self, force: bool = False):
         self.refresh_dashboard_async(force=force)
         self._refresh_trading()
+        self._refresh_regime()
         if self.main_tabs.currentWidget() is self._source_tab:
             self._refresh_source_status()
+
+    # ---------- 大盘环境 ----------
+    def _refresh_regime(self):
+        if self._regime_inflight:
+            return
+        self._regime_inflight = True
+        worker = WorkerTask(self.pipeline.market_regime)
+        worker.signals.finished.connect(self._on_regime_ready)
+        worker.signals.error.connect(lambda _detail: setattr(self, "_regime_inflight", False))
+        self.thread_pool.start(worker)
+
+    def _on_regime_ready(self, regime: dict):
+        self._regime_inflight = False
+        if regime.get("regime") == "未知":
+            self.regime_label.setText("")
+            return
+        color = {"进攻": "#ff5555", "均衡": "#f1fa8c", "防守": "#8be9fd", "冰点": "#50fa7b"}.get(regime["regime"], "#dbe7ff")
+        self.regime_label.setStyleSheet(f"font-weight: bold; font-size: 13px; padding: 2px 4px; color: {color};")
+        self.regime_label.setText(regime["summary"])
+        self.regime_label.setToolTip("\n".join(regime.get("reasons", [])))
 
     # ---------- 模拟交易 ----------
     def _refresh_trading(self):

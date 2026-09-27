@@ -1112,10 +1112,25 @@ class LimitUpPredictor:
                     parts.append(f"上证: {ov['sh_index']} ({ov.get('sh_change_pct', 0):+.2f}%)")
                 if ov.get("northbound_net_yi") is not None:
                     parts.append(f"北向资金: {ov['northbound_net_yi']}亿")
-                return "\n".join(parts)
+                parts.append(self._market_regime_line())
+                return "\n".join(p for p in parts if p)
         except Exception:
             pass
-        return "市场数据暂不可用"
+        return self._market_regime_line() or "市场数据暂不可用"
+
+    def _market_regime_line(self) -> str:
+        """量化的大盘环境与短线情绪周期（进攻/均衡/防守/冰点），作为选股激进程度的依据。"""
+        try:
+            from src.analyzers.market_regime import MarketRegimeAnalyzer
+
+            regime = MarketRegimeAnalyzer(self.config).analyze()
+            if regime.regime == "未知":
+                return ""
+            hint = {"进攻": "可积极参与", "均衡": "精选主线龙头", "防守": "只做最强确定性机会", "冰点": "以观望为主"}
+            return f"{regime.summary()}（操作倾向：{hint.get(regime.regime, '')}）"
+        except Exception as e:
+            logger.debug(f"大盘环境评估失败: {e}")
+            return ""
 
     def _get_sentiment_context(self) -> str:
         """获取最新AI舆情分析（bullish个股）。排除今日大跌的。"""

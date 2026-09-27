@@ -98,6 +98,8 @@ trading:
   paper_initial_cash: 1000000
   # 仅在交易时段内允许下单（信号在收盘后生成，开启后需在次日盘中确认）
   strict_session_check: false
+  # 按大盘环境（进攻/均衡/防守/冰点）调整新开仓预算，系数见 risk.market_regime_position
+  regime_position_control: true
 
 # --- 策略权重配置 ---
 strategy:
@@ -140,6 +142,12 @@ risk:
   market_circuit_breaker_pct: -0.02
   # 连续止损次数限制
   max_consecutive_losses: 3
+  # 大盘环境对应的新开仓仓位系数（冰点为 0 表示暂停新开仓）
+  market_regime_position:
+    进攻: 1.0
+    均衡: 0.6
+    防守: 0.3
+    冰点: 0.0
   # 黑名单关键词（过滤ST等）
   blacklist_keywords:
     - "ST"
