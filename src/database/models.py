@@ -143,6 +143,24 @@ class StockInfo(Base):
     )
 
 
+class StockDiagnosis(Base):
+    """个股 AI 诊断结果（决策仪表盘 JSON）"""
+    __tablename__ = "stock_diagnosis"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, comment="股票代码（6位）")
+    name = Column(String(20), comment="股票名称")
+    trade_date = Column(String(10), comment="诊断所用行情日期")
+    action = Column(String(10), comment="操作建议 buy/add/hold/watch/reduce/sell/avoid")
+    score = Column(Float, comment="评分 0-100")
+    result_json = Column(Text, comment="完整诊断结果 JSON")
+    created_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index("idx_stock_diagnosis_code", "code", "created_at"),
+    )
+
+
 class TradeCalendar(Base):
     """A股交易日历（来自新浪交易日历）"""
     __tablename__ = "trade_calendar"

@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
+    QTextBrowser,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -361,11 +362,12 @@ class CandlestickWidget(QWidget):
 
 
 class StockDetailDialog(QDialog):
-    """股票详情：日/周/年K线 + 全量日线数据。"""
+    """股票详情：日/周/年K线 + 全量日线数据 + AI 诊断。"""
 
-    def __init__(self, query: DataQueryService, code: str, name: str, parent=None):
+    def __init__(self, query: DataQueryService, code: str, name: str, parent=None, pipeline: PipelineService | None = None):
         super().__init__(parent)
         self.query = query
+        self.pipeline = pipeline
         self.code = (code or "").strip()
         self.name = (name or "").strip()
         self.daily_rows: list[dict] = []
@@ -499,6 +501,55 @@ class StockDetailDialog(QDialog):
         self.table_all.setColumnWidth(9, 120)
         self.table_all.setColumnWidth(10, 120)
         self.tabs.addTab(self.table_all, "全量数据")
+        if self.pipeline is not None:
+            self.tabs.addTab(self._build_diagnosis_tab(), "AI诊断")
+
+    def _build_diagnosis_tab(self) -> QWidget:
+        """个股 AI 诊断：打开时显示上次结果，点击按钮才调用 AI。"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        bar = QHBoxLayout()
+        self.diagnosis_status = QLabel("结合技术面、涨停记录、主线地位、大盘环境和相关资讯，由 AI 给出操作建议")
+        self.btn_diagnose = QPushButton("开始诊断")
+        self.btn_diagnose.clicked.connect(self._run_diagnosis)
+        bar.addWidget(self.diagnosis_status)
+        bar.addStretch()
+        bar.addWidget(self.btn_diagnose)
+        layout.addLayout(bar)
+        self.diagnosis_view = QTextBrowser()
+        self.diagnosis_view.setOpenExternalLinks(True)
+        layout.addWidget(self.diagnosis_view, stretch=1)
+        try:
+            previous = self.pipeline.latest_diagnosis(self.code)
+        except Exception as e:
+            previous = None
+            logger.debug(f"读取历史诊断失败: {e}")
+        if previous:
+            self._show_diagnosis(previous)
+            self.btn_diagnose.setText("重新诊断")
+        return tab
+
+    def _run_diagnosis(self):
+        self.btn_diagnose.setEnabled(False)
+        self.diagnosis_status.setText("AI 诊断中，通常需要 10~30 秒…")
+        worker = WorkerTask(self.pipeline.diagnose_stock, self.code, True)
+        worker.signals.finished.connect(self._on_diagnosis_done)
+        worker.signals.error.connect(lambda detail: self._on_diagnosis_done({"code": self.code, "error": detail.splitlines()[0]}))
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_diagnosis_done(self, result: dict):
+        self.btn_diagnose.setEnabled(True)
+        self.btn_diagnose.setText("重新诊断")
+        self._show_diagnosis(result)
+
+    def _show_diagnosis(self, result: dict):
+        from src.services.stock_diagnosis import render_markdown
+
+        self.diagnosis_view.setMarkdown(render_markdown(result))
+        if result.get("error"):
+            self.diagnosis_status.setText("诊断失败")
+        else:
+            self.diagnosis_status.setText(f"{result['action_label']}｜评分 {result['score']}｜{result['created_at']}")
 
     def _build_chart_tab(self, chart: CandlestickWidget, hint_label: QLabel) -> QWidget:
         w = QWidget()
@@ -2177,7 +2228,7 @@ class MainWindow(QMainWindow):
         name_item = self.table_trade.item(row, 2)
         name = (name_item.text() if name_item else "").strip()
         try:
-            dialog = StockDetailDialog(self.query, code, name, self)
+            dialog = StockDetailDialog(self.query, code, name, self, pipeline=self.pipeline)
             dialog.exec()
         except Exception as e:
             self._log(f"打开股票详情失败: code={code}, err={e}")

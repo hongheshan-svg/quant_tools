@@ -69,6 +69,21 @@ class PipelineService:
         regime = MarketRegimeAnalyzer(self.config).analyze()
         return {**regime.to_dict(), "summary": regime.summary()}
 
+    def diagnose_stock(self, code: str, force: bool = False) -> dict[str, Any]:
+        """个股 AI 诊断（决策仪表盘）；30 分钟内的结果直接复用，force=True 时重新诊断。"""
+        from src.services.stock_diagnosis import StockDiagnosisService
+
+        try:
+            return StockDiagnosisService(self.config).diagnose(code, force=force)
+        except Exception as e:
+            logger.error(f"个股诊断异常 [{code}]: {e}")
+            return {"code": code, "error": str(e)}
+
+    def latest_diagnosis(self, code: str) -> dict[str, Any] | None:
+        from src.services.stock_diagnosis import StockDiagnosisService
+
+        return StockDiagnosisService(self.config).latest(code)
+
     def main_themes(self) -> list[dict[str, Any]]:
         """近 5 日涨停池量化的板块主线（阶段、热度、梯队、龙头）。"""
         from src.analyzers.theme_tracker import ThemeTracker
