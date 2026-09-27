@@ -2,11 +2,13 @@
 个股 AI 诊断（参考 daily_stock_analysis 的决策仪表盘：核心结论 + 数据透视 + 情报 + 作战计划）
 
 按打板短线的视角汇总单只股票的上下文（行情、技术面、资金流、筹码、业绩、涨停记录、主线地位、
-大盘环境、相关资讯、龙虎榜、模拟盘持仓）并给出数据完整度，交给 LLM 输出结构化结论；代码端再做护栏：
+大盘环境、相关资讯、个股新闻与公告、龙虎榜、模拟盘持仓）并给出数据完整度，交给 LLM 输出结构化结论；
+本地日线不足时先联网补齐。代码端再做护栏：
 - 操作建议归一为八态 action，缺失时按评分推断
 - 评分 < 50 却给出买入/加仓时降级为观望；大盘冰点时不给买入
 - 数据质量：核心行情缺失或数据完整度 < 60% 时不给买入，置信度降为低
 - 决策稳定性：当日资金大幅净流出时不给买入；与 3 天内上次诊断方向相反（空转多）但评分变化不足 15 分时暂按观望
+- 近 30 天公告含立案调查、退市风险警示等严重风险时不给买入
 - 价格计划按最新价和涨跌幅限制校验
 结果写入 stock_diagnosis 表，同一只股票 30 分钟内重复诊断直接返回上次结果。
 """
@@ -35,6 +37,8 @@ from src.utils.stock_code import bare_code, board_of, code_candidates
 
 CACHE_MINUTES = 30
 NEWS_DAYS = 3
+STOCK_NEWS_LIMIT = 6   # 东方财富个股新闻最多取几条
+NOTICE_LIMIT = 8       # 公告最多取几条
 LIMIT_UP_DAYS = 10
 MIN_BUY_SCORE = 50
 MIN_DATA_QUALITY = 60
@@ -130,10 +134,16 @@ class StockDiagnosisService:
         from src.analyzers.theme_tracker import ThemeTracker
         from src.strategy.tech_score import analyze_technical
 
+        from src.collectors.daily_history import ensure_daily_history
         from src.collectors.fund_flow import describe as describe_flow
         from src.collectors.fund_flow import latest_fund_flow
         from src.collectors.fundamentals import EarningsCache, describe_chips, describe_earnings, earnings_risk, fetch_chip_summary
+        from src.collectors.stock_news import get_stock_news
 
+        try:  # 本地日线不足时先联网补齐，技术面和筹码估算都依赖它
+            ensure_daily_history(code, self.db_path)
+        except Exception as e:
+            logger.debug(f"补齐日线失败 [{code}]: {e}")
         cands = code_candidates(code)
         with get_db_session(self.db_path) as session:
             bar_count = session.query(StockDaily.id).filter(StockDaily.code.in_(cands)).count()
@@ -198,11 +208,22 @@ class StockDiagnosisService:
         except Exception as e:
             logger.debug(f"业绩数据获取失败: {e}")
             earnings = None
+        try:
+            stock_news = get_stock_news(code)
+        except Exception as e:
+            logger.debug(f"个股新闻/公告获取失败: {e}")
+            stock_news = {"news": [], "notices": []}
+        seen = set(news_lines)
+        news_lines += [f"{n['date'][:10]} [{n['source'] or '东方财富'}] {n['title']}" for n in stock_news["news"][:STOCK_NEWS_LIMIT]
+                       if n["title"] not in seen]
+        notices = stock_news["notices"]
+        notice_lines = [f"{n['date']} {n['title']}" + (f"（风险：{n['risk']}）" if n["risk"] else "") for n in notices[:NOTICE_LIMIT]]
+        risk_notices = [n for n in notices if n["risk"]]
 
         present = {
             "行情": bool(quote), "日线": bar_count >= MIN_DAILY_BARS, "技术面": bool(tech.brief()),
             "资金流": bool(flow_text), "筹码": chip is not None, "大盘": regime.regime != "未知",
-            "资讯": bool(news_lines or sentiment_lines), "业绩": earnings is not None,
+            "资讯": bool(news_lines or sentiment_lines or notices), "业绩": earnings is not None,
         }
         data_quality = {
             "score": sum(DATA_QUALITY_WEIGHTS[k] for k, ok in present.items() if ok),
@@ -222,7 +243,8 @@ class StockDiagnosisService:
             "【近期涨停】" + ("；".join(limit_up_lines) if limit_up_lines else "近期无涨停"),
             "【主线地位】" + (f"{role['role']}，所属{role['dimension']}{theme.brief()}" if role and theme else "不在近期涨停主线中"),
             f"【大盘环境】{regime.summary()}",
-            "【相关资讯】" + ("；".join(news_lines) if news_lines else "近 3 日无相关资讯"),
+            "【相关资讯】" + ("；".join(news_lines) if news_lines else "近期无相关资讯"),
+            "【近 30 天公告】" + ("；".join(notice_lines) if notice_lines else "无"),
             "【AI舆情】" + ("；".join(sentiment_lines) if sentiment_lines else "无"),
             "【龙虎榜】" + ("；".join(dragon_lines) if dragon_lines else "近期未上榜"),
             "【持仓】" + (
@@ -236,6 +258,7 @@ class StockDiagnosisService:
             "position": position, "text": "\n".join(sections), "data_quality": data_quality,
             "flow_text": flow_text, "flow_ratio": flow_ratio, "chip": chip,
             "earnings_text": describe_earnings(earnings), "earnings_risk": earnings_risk(earnings),
+            "risk_notices": risk_notices,
         }
 
     @staticmethod
@@ -295,6 +318,10 @@ class StockDiagnosisService:
         if action in BULLISH_ACTIONS and flow_ratio is not None and flow_ratio <= FLOW_OUTFLOW_RATIO:
             guardrails.append(f"资金净流出占成交额 {abs(flow_ratio):.1f}%，与买入建议矛盾，降级为观望")
             action = "watch"
+        severe = next((n for n in context.get("risk_notices") or [] if n.get("severe")), None)
+        if action in BULLISH_ACTIONS and severe:
+            guardrails.append(f"近 30 天公告含「{severe['risk']}」（{severe['date']} {severe['title'][:40]}），不建议买入，降级为观望")
+            action = "watch"
         if previous and not previous.get("error"):
             prev_action, prev_score = previous.get("action"), float(previous.get("score") or 0)
             flipped_up = action in BULLISH_ACTIONS and prev_action in BEARISH_ACTIONS
@@ -331,7 +358,8 @@ class StockDiagnosisService:
             },
             "catalysts": _as_list(raw.get("catalysts")),
             "risks": _as_list(raw.get("risks")) + [f"技术面：{r}" for r in context["tech"].risks]
-            + ([f"业绩：{context['earnings_risk']}"] if context.get("earnings_risk") else []),
+            + ([f"业绩：{context['earnings_risk']}"] if context.get("earnings_risk") else [])
+            + [f"公告：{n['date']} {n['title']}" for n in (context.get("risk_notices") or [])[:3]],
             "checklist": checklist,
             "analysis": str(raw.get("analysis", "")),
             "guardrails": guardrails,

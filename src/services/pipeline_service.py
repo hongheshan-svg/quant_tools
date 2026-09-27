@@ -72,6 +72,30 @@ class PipelineService:
             logger.error(f"每日报告推送异常: {e}")
             return {"pushed": False, "error": str(e)}
 
+    # ---- 个股查询 ----
+
+    def search_stocks(self, text: str, limit: int = 20) -> list[dict[str, Any]]:
+        """按代码、名称、拼音首字母搜索股票。"""
+        from src.services.stock_search import StockSearch
+
+        return StockSearch(self.db_path).search(text, limit)
+
+    def ensure_history(self, code: str, name: str = "") -> int:
+        """本地日线不足时联网补齐，返回新写入的根数。"""
+        from src.collectors.daily_history import ensure_daily_history
+
+        try:
+            return ensure_daily_history(code, self.db_path, name)
+        except Exception as e:
+            logger.warning(f"补齐日线异常 [{code}]: {e}")
+            return 0
+
+    def stock_news(self, code: str, refresh: bool = False) -> dict[str, Any]:
+        """个股近 7 天新闻和近 30 天公告（东方财富）。"""
+        from src.collectors.stock_news import get_stock_news
+
+        return get_stock_news(code, refresh=refresh)
+
     def market_review(self, force: bool = False) -> dict[str, Any]:
         """LLM 大盘复盘（趋势/情绪/主线 → 次日姿态、仓位、关注与回避方向）。"""
         from src.services.market_review import MarketReviewService

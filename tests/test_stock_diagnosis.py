@@ -7,7 +7,9 @@ import pytest
 
 from src.analyzers import market_regime as regime_mod
 from src.analyzers.market_regime import MarketRegime
+from src.collectors import daily_history as daily_history_mod
 from src.collectors import fundamentals as fundamentals_mod
+from src.collectors import stock_news as stock_news_mod
 from src.database import db as db_module
 from src.database.db import get_db_session, init_db
 from src.database.models import DragonTigerBoard, FinanceNews, LimitUpStock, StockDaily, StockDiagnosis, StockFundFlow
@@ -18,13 +20,20 @@ CHIP = {"date": "2026-09-25", "profit_ratio": 85.0, "avg_cost": 21.3, "cost_90_l
         "concentration_90": 12.5, "source": "东方财富"}
 EARNINGS = {"type": "业绩预告", "period": "20260930", "change_type": "预增", "summary": "预计1-9月净利润增长50%",
             "change_pct": 50.0, "notice_date": "2026-09-20"}
+STOCK_NEWS = {
+    "news": [{"kind": "新闻", "title": "比亚迪9月销量创新高", "date": "2026-09-24 18:00", "source": "证券时报网", "url": "", "risk": "", "severe": False}],
+    "notices": [{"kind": "公告", "title": "比亚迪:关于股票交易异常波动的公告", "date": "2026-09-23", "source": "风险提示",
+                 "url": "", "risk": "异常波动", "severe": False}],
+}
 
 
 @pytest.fixture(autouse=True)
 def offline_fundamentals(monkeypatch):
-    """筹码和业绩默认用固定数据，测试不联网。"""
+    """筹码、业绩、个股新闻公告默认用固定数据，也不补齐日线，测试不联网。"""
     monkeypatch.setattr(fundamentals_mod, "fetch_chip_summary", lambda code, db_path: dict(CHIP))
     monkeypatch.setattr(fundamentals_mod.EarningsCache, "get", classmethod(lambda cls, code: dict(EARNINGS)))
+    monkeypatch.setattr(stock_news_mod, "get_stock_news", lambda code, refresh=False, now=None: {k: list(v) for k, v in STOCK_NEWS.items()})
+    monkeypatch.setattr(daily_history_mod, "ensure_daily_history", lambda code, db_path, name="", min_bars=60, now=None: 0)
 
 
 class _FakeLLM:
@@ -89,6 +98,8 @@ def test_context_collects_all_sections(db_path):
     assert StockDiagnosisService._quote_text({"trade_date": "2026-09-25", "close": 20.35, "change_pct": 10.0}) == "2026-09-25 收盘 20.35（+10.00%）"
     assert "2板 首封09:35 炸板0次 封单3.00亿 原因:固态电池" in text
     assert "比亚迪固态电池量产提速" in text and "无关新闻" not in text
+    assert "2026-09-24 [证券时报网] 比亚迪9月销量创新高" in text
+    assert "【近 30 天公告】2026-09-23 比亚迪:关于股票交易异常波动的公告（风险：异常波动）" in text
     assert "日涨幅偏离7% 净买入5000万" in text
     assert "【主线地位】龙头，所属行业汽车整车" in text
     assert "【持仓】未持仓" in text
@@ -184,3 +195,20 @@ def test_earnings_risk_is_listed(db_path, monkeypatch):
     monkeypatch.setattr(fundamentals_mod.EarningsCache, "get", classmethod(lambda cls, code: {**EARNINGS, "change_type": "首亏"}))
     result = _with(db_path, GOOD_REPLY)
     assert "业绩：最新业绩预告为「首亏」" in result["risks"]
+    assert "公告：2026-09-23 比亚迪:关于股票交易异常波动的公告" in result["risks"]
+
+
+def test_severe_notice_blocks_buy(db_path, monkeypatch):
+    notice = {"kind": "公告", "title": "比亚迪:关于收到中国证监会立案告知书的公告", "date": "2026-09-22", "source": "",
+              "url": "", "risk": "立案", "severe": True}
+    monkeypatch.setattr(stock_news_mod, "get_stock_news", lambda code, refresh=False, now=None: {"news": [], "notices": [notice]})
+    result = _with(db_path, GOOD_REPLY)
+    assert result["action"] == "watch"
+    assert any("近 30 天公告含「立案」" in g for g in result["guardrails"])
+
+
+def test_context_backfills_short_history(db_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(daily_history_mod, "ensure_daily_history", lambda code, db_path, name="", min_bars=60, now=None: calls.append(code) or 0)
+    _service(db_path, {})[0].build_context("002594")
+    assert calls == ["002594"]

@@ -14,16 +14,18 @@ from functools import partial
 from typing import Any
 
 from loguru import logger
-from PyQt6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QRunnable, QStringListModel, Qt, QThreadPool, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import (
     QComboBox,
+    QCompleter,
     QDialog,
     QFrame,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -362,6 +364,24 @@ class CandlestickWidget(QWidget):
         painter.drawText(plot.right() - right_text, plot.bottom() + 18, last_date)
 
 
+def render_news_markdown(data: dict) -> str:
+    """个股新闻与公告转为 markdown（标题带链接，风险公告加标注）。"""
+    lines = ["### 公告（近 30 天）"]
+    notices = data.get("notices") or []
+    for n in notices:
+        title = f"[{n['title']}]({n['url']})" if n.get("url") else n["title"]
+        flag = f" ⚠️ **{'严重风险' if n.get('severe') else '风险'}：{n['risk']}**" if n.get("risk") else ""
+        lines.append(f"- {n['date']} {('【' + n['source'] + '】') if n.get('source') else ''}{title}{flag}")
+    if not notices:
+        lines.append("- 暂无")
+    lines.append("### 个股新闻（近 7 天）")
+    news = data.get("news") or []
+    lines += [f"- {n['date']} [{n.get('source') or '东方财富'}] " + (f"[{n['title']}]({n['url']})" if n.get("url") else n["title"]) for n in news]
+    if not news:
+        lines.append("- 暂无")
+    return "\n".join(lines)
+
+
 class StockDetailDialog(QDialog):
     """股票详情：日/周/年K线 + 全量日线数据 + AI 诊断。"""
 
@@ -379,6 +399,7 @@ class StockDetailDialog(QDialog):
         self.resize(1260, 860)
         self._build_ui()
         self._load_data()
+        self._backfill_history()
 
     @staticmethod
     def _to_float(v: Any, default: float = 0.0) -> float:
@@ -504,6 +525,64 @@ class StockDetailDialog(QDialog):
         self.tabs.addTab(self.table_all, "全量数据")
         if self.pipeline is not None:
             self.tabs.addTab(self._build_diagnosis_tab(), "AI诊断")
+            self._news_tab = self._build_news_tab()
+            self.tabs.addTab(self._news_tab, "新闻公告")
+            self.tabs.currentChanged.connect(self._on_detail_tab_changed)
+
+    def _backfill_history(self):
+        """本地日线不足 60 根时在后台联网补齐，补齐后重新加载图表。"""
+        if self.pipeline is None or len(self.daily_rows) >= 60:
+            return
+        self.summary_label.setText(self.summary_label.text() + "（本地日线不足，正在联网补齐…）")
+        worker = WorkerTask(self.pipeline.ensure_history, self.code, self.name)
+        worker.signals.finished.connect(self._on_history_backfilled)
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_history_backfilled(self, added: int):
+        if added:
+            self._load_data()
+        else:
+            self.summary_label.setText(self.summary_label.text().replace("（本地日线不足，正在联网补齐…）", "（补齐日线失败或暂无更多数据）"))
+
+    def _build_news_tab(self) -> QWidget:
+        """个股新闻（近 7 天）和公告（近 30 天），切换到本页时才联网获取。"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        bar = QHBoxLayout()
+        self.news_status = QLabel("东方财富个股新闻与公告，标题含立案、减持、问询等关键词的公告会标注风险")
+        self.btn_news_refresh = QPushButton("刷新")
+        self.btn_news_refresh.clicked.connect(lambda: self._load_news(refresh=True))
+        bar.addWidget(self.news_status)
+        bar.addStretch()
+        bar.addWidget(self.btn_news_refresh)
+        layout.addLayout(bar)
+        self.news_view = QTextBrowser()
+        self.news_view.setOpenExternalLinks(True)
+        layout.addWidget(self.news_view, stretch=1)
+        self._news_loaded = False
+        return tab
+
+    def _on_detail_tab_changed(self, index: int):
+        if self.tabs.widget(index) is self._news_tab and not self._news_loaded:
+            self._load_news()
+
+    def _load_news(self, refresh: bool = False):
+        self._news_loaded = True
+        self.btn_news_refresh.setEnabled(False)
+        self.news_status.setText("获取新闻与公告中…")
+        worker = WorkerTask(self.pipeline.stock_news, self.code, refresh)
+        worker.signals.finished.connect(self._show_news)
+        worker.signals.error.connect(lambda detail: self._show_news({"news": [], "notices": [], "error": detail.splitlines()[0]}))
+        QThreadPool.globalInstance().start(worker)
+
+    def _show_news(self, data: dict):
+        self.btn_news_refresh.setEnabled(True)
+        self.news_view.setMarkdown(render_news_markdown(data))
+        notices = data.get("notices") or []
+        risky = sum(1 for n in notices if n.get("risk"))
+        self.news_status.setText(
+            data.get("error") or f"新闻 {len(data.get('news') or [])} 条，公告 {len(notices)} 条" + (f"，其中 {risky} 条含风险关键词" if risky else "")
+        )
 
     def _build_diagnosis_tab(self) -> QWidget:
         """个股 AI 诊断：打开时显示上次结果，点击按钮才调用 AI。"""
@@ -660,6 +739,7 @@ class MainWindow(QMainWindow):
         db_path = self.config.get("database", {}).get("sqlite_path", "data/quant.db")
         trading_calendar.load(db_path, refresh=False)
         self.thread_pool.start(WorkerTask(trading_calendar.load, db_path))
+        self.thread_pool.start(WorkerTask(self.pipeline.search_stocks, "000001", 1))  # 后台预建搜索索引
         self._setup_auto_refresh()
         # 启动后自动检查是否需要评分
         # 不再自动触发全流程/AI研判，改为手动点击
@@ -684,6 +764,19 @@ class MainWindow(QMainWindow):
         top_bar.addWidget(self.trade_day_label)
         top_bar.addWidget(self.trade_session_label)
         top_bar.addStretch()
+        self.stock_search = QLineEdit()
+        self.stock_search.setPlaceholderText("搜索股票：代码 / 名称 / 拼音首字母，回车打开")
+        self.stock_search.setClearButtonEnabled(True)
+        self.stock_search.setFixedWidth(300)
+        self._search_model = QStringListModel(self)
+        self._search_completer = QCompleter(self._search_model, self)
+        self._search_completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
+        self._search_completer.setMaxVisibleItems(12)
+        self.stock_search.setCompleter(self._search_completer)
+        self.stock_search.textEdited.connect(self._on_search_edited)
+        self.stock_search.returnPressed.connect(self._on_search_return)
+        self._search_completer.activated.connect(self._open_searched_stock)
+        top_bar.addWidget(self.stock_search)
         top_bar.addWidget(self.last_refresh_label)
         layout.addLayout(top_bar)
 
@@ -2431,6 +2524,38 @@ class MainWindow(QMainWindow):
                         table_item.setForeground(QColor("#ff5555"))
 
                 self.table_news.setItem(i, j, table_item)
+
+    def _on_search_edited(self, text: str):
+        results = self.pipeline.search_stocks(text, 15) if text.strip() else []
+        self._search_model.setStringList([f"{r['code']} {r['name']}" for r in results])
+        if results:
+            self._search_completer.complete()
+
+    def _on_search_return(self):
+        if self._search_completer.popup().isVisible():
+            return  # 由补全列表的 activated 处理
+        results = self.pipeline.search_stocks(self.stock_search.text(), 1)
+        if results:
+            self._open_searched_stock(f"{results[0]['code']} {results[0]['name']}")
+
+    def _open_searched_stock(self, text: str):
+        code, _, name = (text or "").strip().partition(" ")
+        if not code:
+            return
+        # 等补全列表关闭、输入框事件处理完再打开对话框，避免回车同时触发两次
+        QTimer.singleShot(0, lambda: self._show_stock_dialog(code, name))
+
+    def _show_stock_dialog(self, code: str, name: str):
+        if getattr(self, "_detail_open", False):
+            return
+        self._detail_open = True
+        self.stock_search.clear()
+        try:
+            StockDetailDialog(self.query, code, name, self, pipeline=self.pipeline).exec()
+        except Exception as e:
+            self._log(f"打开股票详情失败: code={code}, err={e}")
+        finally:
+            self._detail_open = False
 
     def _open_stock_detail(self, row: int, _column: int):
         code_item = self.table_trade.item(row, 1)

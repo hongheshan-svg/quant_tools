@@ -16,6 +16,18 @@ from sqlalchemy.orm import Session
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from src.collectors.daily_history import (  # noqa: E402,F401  日线下载与解析（测试和旧调用方仍从本模块引用）
+    CHANGE_LOOKBACK_DAYS,
+    RETRYABLE_ERROR_KEYWORDS,
+    call_with_retry,
+    fetch_daily_df_with_fallback,
+    is_retryable_exception,
+    normalize_daily_date_column,
+    pick,
+    records_from_daily_df,
+    safe_float,
+    to_ak_symbol,
+)
 from src.collectors.em_client import get_em_client  # noqa: E402
 from src.collectors.limit_up_reasons import fetch_ths_limit_up_reasons  # noqa: E402
 from src.database.db import _auto_migrate  # noqa: E402
@@ -29,21 +41,9 @@ from src.database.models import (  # noqa: E402
 A_SHARE_OPEN_DATE = "1990-12-19"
 DEFAULT_START = A_SHARE_OPEN_DATE
 GAP_TOLERANCE_DAYS = 10  # stored history starting within this many days after --start-date counts as covered
-CHANGE_LOOKBACK_DAYS = 10  # extra days fetched before the range so the first day's change_pct has a previous close
 SLEEP_INTERVAL = 0.3
 BATCH_SIZE = 500
 
-RETRYABLE_ERROR_KEYWORDS = (
-    "connection aborted",
-    "remote end closed connection",
-    "read timed out",
-    "timed out",
-    "connection reset",
-    "temporarily unavailable",
-    "max retries exceeded",
-    "proxyerror",
-    "ssl",
-)
 
 def get_db_engine():
     db_path = ROOT / "data" / "quant.db"
@@ -58,18 +58,6 @@ def get_db_engine():
     return engine
 
 
-def safe_float(value, default: float = 0.0) -> float:
-    try:
-        if value is None:
-            return default
-        num = float(value)
-        if num != num:  # NaN
-            return default
-        return num
-    except Exception:
-        return default
-
-
 def safe_int(value, default: int = 0) -> int:
     try:
         if value is None:
@@ -77,64 +65,6 @@ def safe_int(value, default: int = 0) -> int:
         return int(value)
     except Exception:
         return default
-
-
-def pick(row, keys: list[str], default=None):
-    for key in keys:
-        if key in row.index:
-            value = row.get(key)
-            if value is not None and str(value).strip() != "":
-                return value
-    return default
-
-
-def is_retryable_exception(exc: Exception) -> bool:
-    msg = str(exc).lower()
-    return any(k in msg for k in RETRYABLE_ERROR_KEYWORDS)
-
-
-def call_with_retry(fn, attempts: int = 3, base_sleep: float = 0.6):
-    last_exc = None
-    for attempt in range(1, attempts + 1):
-        try:
-            return fn()
-        except Exception as exc:
-            last_exc = exc
-            if attempt >= attempts or not is_retryable_exception(exc):
-                raise
-            time.sleep(base_sleep * attempt)
-    raise RuntimeError(f"retry failed: {last_exc}")
-
-
-def normalize_daily_date_column(df):
-    if df is None or df.empty:
-        return df
-
-    normalized = df.copy()
-    date_candidates = ["date", "日期", "trade_date", "交易日期", "datetime", "时间", "Date", "DATE"]
-    date_col = next((c for c in date_candidates if c in normalized.columns), None)
-
-    if date_col is None:
-        normalized = normalized.reset_index()
-        date_col = next((c for c in date_candidates if c in normalized.columns), None)
-        if date_col is None and "index" in normalized.columns:
-            date_col = "index"
-
-    if date_col is None:
-        return None
-
-    normalized["date"] = normalized[date_col].astype(str).str[:10]
-    return normalized
-
-
-def to_ak_symbol(code: str) -> str:
-    if code.startswith("92"):
-        return f"bj{code}"
-    if code.startswith(("6", "9")):
-        return f"sh{code}"
-    if code.startswith(("4", "8")):
-        return f"bj{code}"
-    return f"sz{code}"
 
 
 def get_trade_dates(start_date: str, end_date: str) -> list[str]:
@@ -245,149 +175,6 @@ def fetch_stock_list() -> list[dict]:
     except Exception as e:
         logger.error(f"failed to get stock list: {e}")
         return []
-
-
-def fetch_daily_df_with_fallback(code: str, start_date: str, end_date: str):
-    start_compact = start_date.replace("-", "")
-    end_compact = end_date.replace("-", "")
-    symbol = to_ak_symbol(code)
-    errors: list[str] = []
-
-    try:
-        df_tx = call_with_retry(
-            lambda: ak.stock_zh_a_hist_tx(
-                symbol=symbol,
-                start_date=start_compact,
-                end_date=end_compact,
-                adjust="qfq",
-            ),
-            attempts=2,
-        )
-        if df_tx is not None and not df_tx.empty:
-            return "tx", df_tx
-        errors.append("tx empty")
-    except Exception as e:
-        errors.append(f"tx: {e}")
-
-    try:
-        df_daily = call_with_retry(
-            lambda: ak.stock_zh_a_daily(symbol=symbol, adjust="qfq"),
-            attempts=2,
-        )
-        if df_daily is not None and not df_daily.empty:
-            df_daily = normalize_daily_date_column(df_daily)
-            if df_daily is None:
-                errors.append("daily: missing date column")
-            else:
-                ds = df_daily["date"].astype(str).str[:10]
-                df_daily = df_daily.loc[(ds >= start_date) & (ds <= end_date)].copy()
-                if not df_daily.empty:
-                    return "daily", df_daily
-                errors.append("daily empty")
-        else:
-            errors.append("daily empty")
-    except Exception as e:
-        errors.append(f"daily: {e}")
-
-    try:
-        df_em = call_with_retry(
-            lambda: ak.stock_zh_a_hist(
-                symbol=code,
-                period="daily",
-                start_date=start_compact,
-                end_date=end_compact,
-                adjust="qfq",
-            ),
-            attempts=3,
-        )
-        if df_em is not None and not df_em.empty:
-            return "em", df_em
-        errors.append("em empty")
-    except Exception as e:
-        errors.append(f"em: {e}")
-
-    raise RuntimeError(" | ".join(errors))
-
-
-def records_from_daily_df(code: str, name: str, source: str, df) -> list[dict]:
-    records: list[dict] = []
-
-    if source == "em":
-        for _, row in df.iterrows():
-            records.append(
-                {
-                    "code": code,
-                    "name": name,
-                    "trade_date": str(pick(row, ["日期", "trade_date"], ""))[:10],
-                    "open": safe_float(pick(row, ["开盘", "open"], 0)),
-                    "close": safe_float(pick(row, ["收盘", "close"], 0)),
-                    "high": safe_float(pick(row, ["最高", "high"], 0)),
-                    "low": safe_float(pick(row, ["最低", "low"], 0)),
-                    "volume": safe_float(pick(row, ["成交量", "volume"], 0)),
-                    "amount": safe_float(pick(row, ["成交额", "amount"], 0)),
-                    "change_pct": safe_float(pick(row, ["涨跌幅", "change_pct"], 0)),
-                    "turnover": safe_float(pick(row, ["换手率", "turnover"], 0)),
-                    "total_mv": safe_float(pick(row, ["总市值", "total_mv"], 0)),
-                    "circ_mv": safe_float(pick(row, ["流通市值", "circ_mv"], 0)),
-                }
-            )
-        return [r for r in records if r["trade_date"]]
-
-    df = df.copy()
-    if "date" not in df.columns:
-        df = normalize_daily_date_column(df)
-        if df is None:
-            return records
-
-    df["__trade_date"] = df["date"].astype(str).str[:10]
-    df = df[df["__trade_date"] != ""].sort_values("__trade_date")
-
-    prev_close = None
-    for _, row in df.iterrows():
-        trade_date = str(row.get("__trade_date", ""))[:10]
-        if not trade_date:
-            continue
-
-        close_val = safe_float(row.get("close", 0))
-        if prev_close and close_val:
-            change_pct = (close_val - prev_close) / prev_close * 100
-        else:
-            change_pct = 0.0
-        if close_val:
-            prev_close = close_val
-
-        if source == "tx" and "volume" not in df.columns:
-            # 旧版 akshare 的腾讯日线只有 amount 列，实为成交量（手）
-            tx_amount = safe_float(row.get("amount", 0))
-            volume = tx_amount * 100 if tx_amount else 0.0
-            amount = close_val * volume if (close_val and volume) else 0.0
-            turnover = 0.0
-        else:
-            # 新版腾讯日线与新浪日线：volume=成交量（股），amount=成交额（元），turnover=换手率（小数）
-            volume = safe_float(row.get("volume", 0))
-            amount = safe_float(row.get("amount", 0))
-            raw_turnover = safe_float(row.get("turnover", 0))
-            turnover = raw_turnover * 100 if 0 < raw_turnover <= 1 else raw_turnover
-
-        records.append(
-            {
-                "code": code,
-                "name": name,
-                "trade_date": trade_date,
-                "open": safe_float(row.get("open", 0)),
-                "close": close_val,
-                "high": safe_float(row.get("high", 0)),
-                "low": safe_float(row.get("low", 0)),
-                "volume": volume,
-                "amount": amount,
-                "change_pct": change_pct,
-                "turnover": turnover,
-                "total_mv": 0.0,
-                "circ_mv": 0.0,
-            }
-        )
-
-    return records
 
 
 def fetch_daily_ohlcv(engine, start_date: str, end_date: str, resume: bool = True, workers: int = 8, fill_gaps: bool = False,
