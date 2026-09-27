@@ -17,6 +17,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from src.collectors.em_client import get_em_client  # noqa: E402
+from src.collectors.limit_up_reasons import fetch_ths_limit_up_reasons  # noqa: E402
+from src.database.db import _auto_migrate  # noqa: E402
 from src.database.models import (  # noqa: E402
     Base,
     DragonTigerBoard,
@@ -50,6 +52,7 @@ def get_db_engine():
         execution_options={"isolation_level": "AUTOCOMMIT"},
     )
     Base.metadata.create_all(engine)
+    _auto_migrate(engine)  # 老数据库补齐新增列（如 limit_up_stock.concepts）
     return engine
 
 
@@ -414,6 +417,15 @@ def fmt_hhmm(v) -> str:
         return ""
 
 
+def fetch_limit_up_reasons_safe(trade_date: str) -> dict[str, str]:
+    """同花顺涨停原因（题材标签），失败时返回空字典，不影响涨停池回补。"""
+    try:
+        return fetch_ths_limit_up_reasons(trade_date)
+    except Exception as e:
+        logger.warning(f"{trade_date} limit_up concepts failed: {e}")
+        return {}
+
+
 def fetch_limit_up_history(engine, start_date: str, end_date: str, resume: bool = True):
     effective_start = max(start_date, "2019-01-01")
     trade_dates = get_trade_dates(effective_start, end_date)
@@ -439,6 +451,7 @@ def fetch_limit_up_history(engine, start_date: str, end_date: str, resume: bool 
             if df is None or df.empty:
                 logger.debug(f"[{idx}/{total}] {td} limit_up empty")
                 continue
+            concepts_by_code = fetch_limit_up_reasons_safe(td)
 
             records: list[dict] = []
             for _, row in df.iterrows():
@@ -462,7 +475,8 @@ def fetch_limit_up_history(engine, start_date: str, end_date: str, resume: bool 
                         "last_limit_time": fmt_hhmm(pick(row, ["最后封板时间", "lbt"], "")),
                         "open_count": safe_int(pick(row, ["炸板次数", "开板次数", "zbc"], 0), 0),
                         "sector": str(pick(row, ["所属行业", "hybk"], "")),
-                        "reason": "",
+                        "reason": concepts_by_code.get(code, ""),
+                        "concepts": concepts_by_code.get(code, ""),
                         "circ_mv": safe_float(pick(row, ["流通市值", "ltsz"], 0)),
                     }
                 )
@@ -475,6 +489,36 @@ def fetch_limit_up_history(engine, start_date: str, end_date: str, resume: bool 
             time.sleep(SLEEP_INTERVAL)
 
     logger.info("limit_up history collection done")
+
+
+def fetch_limit_up_concepts(engine, start_date: str, end_date: str) -> int:
+    """给已入库但缺少题材标签的涨停记录补齐同花顺涨停原因，返回更新的行数。"""
+    with Session(engine) as session:
+        dates = [
+            d for (d,) in session.query(LimitUpStock.trade_date)
+            .filter(LimitUpStock.trade_date >= start_date, LimitUpStock.trade_date <= end_date)
+            .filter((LimitUpStock.concepts.is_(None)) | (LimitUpStock.concepts == ""))
+            .distinct().order_by(LimitUpStock.trade_date).all()
+        ]
+    updated = 0
+    for idx, td in enumerate(dates, 1):
+        reasons = fetch_limit_up_reasons_safe(td)
+        time.sleep(SLEEP_INTERVAL)
+        if not reasons:
+            continue
+        with Session(engine) as session:
+            rows = session.query(LimitUpStock).filter(LimitUpStock.trade_date == td).all()
+            for row in rows:
+                concepts = reasons.get(str(row.code)[-6:])
+                if concepts and not row.concepts:
+                    row.concepts = concepts
+                    if not row.reason or "连板 |" in row.reason or row.reason == row.sector:
+                        row.reason = concepts
+                    updated += 1
+            session.commit()
+        logger.info(f"[{idx}/{len(dates)}] {td} limit_up concepts updated")
+    logger.info(f"limit_up concepts backfill done: {updated} rows")
+    return updated
 
 
 def fetch_dragon_tiger(engine, start_date: str, end_date: str, resume: bool = True):
@@ -544,7 +588,7 @@ def main():
     parser = argparse.ArgumentParser(description="A-share history bulk collection")
     parser.add_argument(
         "--mode",
-        choices=["all", "daily", "limit_up", "dragon_tiger"],
+        choices=["all", "daily", "limit_up", "concepts", "dragon_tiger"],
         default="all",
         help="collection mode (default: all)",
     )
@@ -592,6 +636,10 @@ def main():
     if args.mode in ("all", "limit_up"):
         logger.info("=== collect limit_up ===")
         fetch_limit_up_history(engine, args.start_date, args.end_date, resume=resume)
+
+    if args.mode in ("all", "concepts"):
+        logger.info("=== backfill limit_up concepts ===")
+        fetch_limit_up_concepts(engine, args.start_date, args.end_date)
 
     if args.mode in ("all", "dragon_tiger"):
         logger.info("=== collect dragon_tiger ===")

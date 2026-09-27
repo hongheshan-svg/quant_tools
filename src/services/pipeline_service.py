@@ -84,11 +84,11 @@ class PipelineService:
 
         return StockDiagnosisService(self.config).latest(code)
 
-    def main_themes(self) -> list[dict[str, Any]]:
-        """近 5 日涨停池量化的板块主线（阶段、热度、梯队、龙头）。"""
+    def main_themes(self, dimension: str = "concept") -> list[dict[str, Any]]:
+        """近 5 日涨停池量化的主线（阶段、热度、梯队、龙头）；dimension 为 concept（题材）或 industry（行业）。"""
         from src.analyzers.theme_tracker import ThemeTracker
 
-        return [t.to_dict() for t in ThemeTracker(self.config).analyze()]
+        return [t.to_dict() for t in ThemeTracker(self.config).analyze(dimension=dimension)]
 
     @staticmethod
     def data_source_status() -> list[dict[str, Any]]:

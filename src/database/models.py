@@ -118,6 +118,7 @@ class LimitUpStock(Base):
     open_count = Column(Integer, default=0, comment="打开涨停次数")
     sector = Column(String(200), comment="所属板块")
     reason = Column(String(500), comment="涨停原因/题材")
+    concepts = Column(String(300), comment="涨停原因题材标签（同花顺，用+连接）")
     circ_mv = Column(Float, comment="流通市值（元）")
     created_at = Column(DateTime, default=datetime.now)
 

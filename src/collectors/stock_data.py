@@ -12,6 +12,7 @@ import pandas as pd
 from loguru import logger
 
 from src.collectors.base import BaseCollector
+from src.collectors.limit_up_reasons import fetch_ths_limit_up_reasons
 from src.collectors.source_chain import fetch_with_fallback, source_health
 from src.utils.stock_code import daily_limit_pct
 from src.collectors.em_client import get_em_client
@@ -808,15 +809,21 @@ class StockDataCollector(BaseCollector):
             except Exception as e:
                 logger.debug(f"强势股池采集失败(非关键): {e}")
 
+            # 同花顺涨停原因（题材标签），用于识别跨行业的题材主线；失败不影响涨停池入库
+            concepts_by_code = fetch_with_fallback(
+                "涨停原因", [("同花顺", lambda: fetch_ths_limit_up_reasons(trade_date))], attempts=2, retry_wait=1,
+            ).data or {}
+
             cm = {c: i for i, c in enumerate(df.columns)}
             records = []
             for tup in df.itertuples(index=False):
                 code = str(tup[cm["代码"]]) if "代码" in cm else ""
                 sector = str(tup[cm["所属行业"]]) if "所属行业" in cm else ""
                 continuous_days = _safe_int(tup[cm["连板数"]] if "连板数" in cm else 1) or 1
+                concepts = concepts_by_code.get(code, "")
 
-                # 组合涨停原因：强势股理由 > 连板描述 > 行业
-                reason = strong_reasons.get(code, "")
+                # 组合涨停原因：同花顺题材 > 强势股理由 > 连板描述 > 行业
+                reason = concepts or strong_reasons.get(code, "")
                 if not reason:
                     reason = f"{continuous_days}连板 | {sector}" if continuous_days > 1 else sector
 
@@ -833,6 +840,7 @@ class StockDataCollector(BaseCollector):
                     open_count=_safe_int(tup[cm["炸板次数"]] if "炸板次数" in cm else 0),
                     sector=sector,
                     reason=reason,
+                    concepts=concepts,
                     circ_mv=_safe_float(tup[cm["流通市值"]] if "流通市值" in cm else None),
                 ))
 

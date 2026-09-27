@@ -66,7 +66,7 @@ def test_theme_phases_leaders_and_ladder(tmp_path):
     assert themes[0].name == "半导体"  # 按最新热度排序
 
     roles = tracker.stock_roles(themes)
-    assert roles[first_leader] == {"theme": "半导体", "phase": "加速", "role": "龙头"}
+    assert roles[first_leader] == {"theme": "半导体", "dimension": "行业", "phase": "加速", "role": "龙头"}
     assert [t.name for t in tracker.main_lines(themes)] == ["半导体", "银行", "钢铁"]
     _reset_db_engine()
 
@@ -109,3 +109,42 @@ def test_holiday_duplicate_pool_is_ignored(tmp_path):
     finally:
         trading_calendar._set_days(set())
         _reset_db_engine()
+
+
+def test_concept_dimension_finds_cross_industry_theme(tmp_path):
+    """「海峡两岸」分散在工程机械、商贸、医疗等不同行业，按行业看不出来，按题材能识别为主线。"""
+    from src.analyzers.theme_tracker import is_generic_concept
+
+    db_path = str(tmp_path / "concepts.db")
+    _reset_db_engine()
+    init_db(db_path)
+    stocks = [
+        ("600815", "厦工股份", "工程机械", 2, "0925", "海峡两岸+工程机械+盾构机"),
+        ("002264", "新华都", "商贸零售", 1, "0930", "海峡两岸+AI营销"),
+        ("603122", "合富中国", "医疗器械", 1, "0931", "海峡两岸+AI医疗"),
+        ("002679", "福建金森", "林业", 1, "0932", "海峡两岸+福建国资"),
+        ("000753", "漳州发展", "电力", 1, "0933", "海峡两岸+福建国资+绿色电力"),
+        ("300001", "单只题材", "软件", 1, "1000", "矢量网络分析仪"),
+        ("601811", "新华文轩", "出版", 5, "0925", "教科书发行+拟收购民族出版社"),  # 5 板个股自身的事件，热度高也不算题材
+        ("300002", "业绩股A", "软件", 1, "1001", "半年报增长"),
+        ("300003", "业绩股B", "软件", 1, "1002", "业绩增长+扭亏为盈"),
+    ]
+    with get_db_session(db_path) as session:
+        for code, name, sector, days, first_time, concepts in stocks:
+            session.add(LimitUpStock(code=code, name=name, trade_date="2026-09-24", sector=sector, continuous_days=days,
+                                     first_limit_time=first_time, concepts=concepts))
+
+    tracker = ThemeTracker({"database": {"sqlite_path": db_path}})
+    concepts = {t.name: t for t in tracker.analyze(dimension="concept")}
+    assert set(concepts) == {"海峡两岸", "福建国资"}  # 只属于一只股票的标签和业绩类原因不列出
+    strait = concepts["海峡两岸"]
+    assert (strait.dimension, strait.limit_up, strait.ladder, strait.leader["name"]) == ("题材", 5, "2板1 首板4", "厦工股份")
+    assert strait.phase == "启动"
+    assert [t.name for t in tracker.main_lines(tracker.analyze(dimension="concept"))] == ["海峡两岸"]  # 福建国资只有 2 家、热度未达标
+    industry_heat = {t.name: t.heat for t in tracker.analyze(dimension="industry")}
+    assert all(industry_heat[s] < 40 for s in ("工程机械", "商贸零售", "医疗器械", "林业", "电力"))  # 按行业看每个都不热
+
+    roles = tracker.stock_roles(tracker.analyze_all())
+    assert roles["000753"] == {"theme": "海峡两岸", "dimension": "题材", "phase": "启动", "role": "跟风"}  # 多个题材取最热的
+    assert [is_generic_concept(t) for t in ("业绩增长", "半年报增长", "扭亏为盈", "海峡两岸", "人形机器人")] == [True, True, True, False, False]
+    _reset_db_engine()

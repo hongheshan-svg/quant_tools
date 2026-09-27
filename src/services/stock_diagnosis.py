@@ -169,9 +169,9 @@ class StockDiagnosisService:
 
         tech = analyze_technical(code, self.db_path)
         tracker = ThemeTracker(self.config)
-        themes = tracker.analyze()
+        themes = tracker.analyze_all()
         role = tracker.stock_roles(themes).get(code)
-        theme = next((t for t in themes if role and t.name == role["theme"]), None)
+        theme = next((t for t in themes if role and (t.dimension, t.name) == (role["dimension"], role["theme"])), None)
         regime = MarketRegimeAnalyzer(self.config).analyze()
         position = self._position(code)
 
@@ -181,7 +181,7 @@ class StockDiagnosisService:
             "【近期走势】" + ("；".join(recent) if recent else "暂无"),
             f"【技术面】{tech.brief() or '数据不足'}" + (f"；利好信号：{'、'.join(tech.reasons)}" if tech.reasons else ""),
             "【近期涨停】" + ("；".join(limit_up_lines) if limit_up_lines else "近期无涨停"),
-            "【主线地位】" + (f"{role['role']}，所属{theme.brief()}" if role and theme else "不在近期涨停主线中"),
+            "【主线地位】" + (f"{role['role']}，所属{role['dimension']}{theme.brief()}" if role and theme else "不在近期涨停主线中"),
             f"【大盘环境】{regime.summary()}",
             "【相关资讯】" + ("；".join(news_lines) if news_lines else "近 3 日无相关资讯"),
             "【AI舆情】" + ("；".join(sentiment_lines) if sentiment_lines else "无"),

@@ -114,11 +114,14 @@ class DailyReportService:
         from src.analyzers.theme_tracker import ThemeTracker
 
         tracker = ThemeTracker(self.config)
-        themes = tracker.analyze()
-        main_lines = tracker.main_lines(themes)
-        if not main_lines:
+        concept_themes = tracker.analyze(dimension="concept")
+        industry_themes = tracker.analyze(dimension="industry")
+        lines = ["### 主线梯队"]
+        for label, group in (("题材", concept_themes), ("行业", industry_themes)):
+            lines.extend(f"- {label}｜{t.brief()}" for t in tracker.main_lines(group, top=4))
+        if len(lines) == 1:
             return ""
-        lines = ["### 主线梯队", *[f"- {t.brief()}" for t in main_lines]]
+        themes = sorted(concept_themes + industry_themes, key=lambda t: -t.heat)
         cooling = [t.name for t in themes if t.phase in ("降温", "退潮")][:5]
         if cooling:
             lines.append(f"- 降温/退潮：{'、'.join(cooling)}")

@@ -74,7 +74,7 @@ def test_context_collects_all_sections(db_path):
     assert "2板 首封09:35 炸板0次 封单3.00亿 原因:固态电池" in text
     assert "比亚迪固态电池量产提速" in text and "无关新闻" not in text
     assert "日涨幅偏离7% 净买入5000万" in text
-    assert "【主线地位】龙头，所属汽车整车" in text
+    assert "【主线地位】龙头，所属行业汽车整车" in text
     assert "【持仓】未持仓" in text
 
 

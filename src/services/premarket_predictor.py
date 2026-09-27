@@ -706,10 +706,12 @@ class LimitUpPredictor:
 
         try:
             tracker = ThemeTracker(self.config)
-            themes = tracker.analyze()
+            concept_themes = tracker.analyze(dimension="concept")
+            industry_themes = tracker.analyze(dimension="industry")
         except Exception as e:
             logger.debug(f"主线追踪失败: {e}")
             return ""
+        themes = concept_themes + industry_themes
         if not themes:
             return ""
         roles = tracker.stock_roles(themes)
@@ -719,8 +721,13 @@ class LimitUpPredictor:
                 if role:
                     s["role"] = f"{role['role']}·{role['theme']}({role['phase']})"
 
-        lines = [f"- {t.brief()}" for t in tracker.main_lines(themes, top=6)]
-        cooling = [t.name for t in themes if t.phase in ("降温", "退潮")][:6]
+        lines = []
+        for label, group in (("题材主线（同花顺涨停原因）", concept_themes), ("行业主线", industry_themes)):
+            main_lines = tracker.main_lines(group, top=5)
+            if main_lines:
+                lines.append(f"{label}：")
+                lines.extend(f"- {t.brief()}" for t in main_lines)
+        cooling = [t.name for t in sorted(themes, key=lambda t: -t.heat) if t.phase in ("降温", "退潮")][:6]
         if cooling:
             lines.append(f"- 降温/退潮板块（回避跟风）：{'、'.join(cooling)}")
         return "\n".join(lines)

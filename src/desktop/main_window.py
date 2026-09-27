@@ -17,6 +17,7 @@ from loguru import logger
 from PyQt6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen
 from PyQt6.QtWidgets import (
+    QComboBox,
     QDialog,
     QFrame,
     QGroupBox,
@@ -942,26 +943,37 @@ class MainWindow(QMainWindow):
         tab = QWidget()
         tab_layout = QVBoxLayout(tab)
         tab_layout.setContentsMargins(0, 4, 0, 0)
+        bar = QHBoxLayout()
         self.theme_label = QLabel("主线分析（切换到本页时自动计算）")
         self.theme_label.setStyleSheet("font-weight: 600; color: #8be9fd; padding: 2px 6px;")
+        self.theme_dimension = QComboBox()
+        self.theme_dimension.addItem("按题材（同花顺涨停原因）", "concept")
+        self.theme_dimension.addItem("按行业（所属行业）", "industry")
+        self.theme_dimension.currentIndexChanged.connect(lambda _i: self._refresh_themes())
         self.theme_label.setToolTip(
             "热度 = 10×涨停家数 + 8×(最高连板-1) + 5×连板家数，满分 100，40 以上视为热门。\n"
             "阶段：启动（新晋热门）/ 加速（热度快速上升）/ 持续发酵（近 5 日多数时间热门）/ 降温（热度回落 20 以上）/ 退潮（今日无涨停）。\n"
-            "龙头 = 板块内连板最高、同高度时封板最早的股票。"
+            "龙头 = 板块内连板最高、同高度时封板最早的股票。\n"
+            "题材维度：一只股票可属于多个题材，当天至少 2 家涨停的题材才列出，业绩类涨停原因不算题材。"
         )
-        tab_layout.addWidget(self.theme_label)
+        bar.addWidget(self.theme_label)
+        bar.addStretch()
+        bar.addWidget(self.theme_dimension)
+        tab_layout.addLayout(bar)
         self.table_themes = self._build_table(
-            ["板块", "阶段", "热度", "近5日热度", "趋势", "持续性", "涨停", "最高板", "梯队", "龙头", "跟风"]
+            ["题材/板块", "阶段", "热度", "近5日热度", "趋势", "持续性", "涨停", "最高板", "梯队", "龙头", "跟风"]
         )
         tab_layout.addWidget(self.table_themes, stretch=1)
         self._theme_inflight = False
+        self._theme_pending = False
         return tab
 
     def _refresh_themes(self):
         if self._theme_inflight:
+            self._theme_pending = True  # 计算中切换了维度，完成后再算一次
             return
         self._theme_inflight = True
-        worker = WorkerTask(self.pipeline.main_themes)
+        worker = WorkerTask(self.pipeline.main_themes, self.theme_dimension.currentData())
         worker.signals.finished.connect(self._on_themes_ready)
         worker.signals.error.connect(lambda _detail: setattr(self, "_theme_inflight", False))
         self.thread_pool.start(worker)
@@ -982,7 +994,12 @@ class MainWindow(QMainWindow):
                 self.table_themes.setItem(i, col, _item(value))
             self.table_themes.item(i, 1).setForeground(QColor(phase_color.get(t["phase"], "#8994b3")))
         hot = [t["name"] for t in themes if t["heat"] >= 40 and t["phase"] not in ("降温", "退潮")][:5]
-        self.theme_label.setText(f"主线分析：{'、'.join(hot) if hot else '暂无明确主线'}（鼠标悬停查看计算口径）")
+        label = "题材主线" if self.theme_dimension.currentData() == "concept" else "行业主线"
+        hint = "暂无明确主线" if themes else "暂无数据（题材需要同花顺涨停原因，可运行 fetch_history.py --mode concepts 补齐）"
+        self.theme_label.setText(f"{label}：{'、'.join(hot) if hot else hint}（鼠标悬停查看计算口径）")
+        if self._theme_pending:
+            self._theme_pending = False
+            self._refresh_themes()
 
     def _build_source_status_tab(self) -> QWidget:
         """各数据源最近的成功/失败情况与熔断状态（本进程内统计）。"""
