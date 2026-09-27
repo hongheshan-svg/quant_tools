@@ -164,6 +164,22 @@ class StockFundFlow(Base):
     )
 
 
+class MarketReview(Base):
+    """LLM 大盘复盘（每个交易日一份，重新生成会覆盖）"""
+    __tablename__ = "market_review"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    trade_date = Column(String(10), nullable=False, comment="复盘对应的交易日")
+    stance = Column(String(10), comment="操作姿态：进攻/均衡/防守")
+    content_json = Column(Text, comment="复盘结构化结果 JSON")
+    markdown = Column(Text, comment="复盘正文（markdown）")
+    created_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index("idx_market_review_date", "trade_date", unique=True),
+    )
+
+
 class AlertRecord(Base):
     """盘中提醒记录"""
     __tablename__ = "alert_record"

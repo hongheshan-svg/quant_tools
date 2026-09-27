@@ -846,15 +846,19 @@ class MainWindow(QMainWindow):
         self._performance_tab = self._build_performance_tab()
         self.main_tabs.addTab(self._performance_tab, "信号绩效")
 
-        # ---- Tab 5: 主线分析 ----
+        # ---- Tab 5: 大盘复盘 ----
+        self._review_tab = self._build_review_tab()
+        self.main_tabs.addTab(self._review_tab, "大盘复盘")
+
+        # ---- Tab 6: 主线分析 ----
         self._theme_tab = self._build_theme_tab()
         self.main_tabs.addTab(self._theme_tab, "主线分析")
 
-        # ---- Tab 6: 盘中提醒 ----
+        # ---- Tab 7: 盘中提醒 ----
         self._alert_tab = self._build_alert_tab()
         self.main_tabs.addTab(self._alert_tab, "盘中提醒")
 
-        # ---- Tab 7: 数据源状态 ----
+        # ---- Tab 8: 数据源状态 ----
         self._source_tab = self._build_source_status_tab()
         self.main_tabs.addTab(self._source_tab, "数据源状态")
         self.main_tabs.currentChanged.connect(self._on_main_tab_changed)
@@ -941,6 +945,53 @@ class MainWindow(QMainWindow):
         tab_layout.addWidget(self._wrap("信号明细", self.table_performance_details), stretch=3)
         self._performance_inflight = False
         return tab
+
+    def _build_review_tab(self) -> QWidget:
+        """LLM 大盘复盘：切换到本页时显示最近一份，点击按钮才调用 AI。"""
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 4, 0, 0)
+        bar = QHBoxLayout()
+        self.review_label = QLabel("大盘复盘：按趋势结构、资金情绪、主线板块复盘，给出次日姿态、仓位和关注方向")
+        self.review_label.setStyleSheet("font-weight: 600; color: #8be9fd; padding: 2px 6px;")
+        self.review_label.setToolTip("事实来自行情、量化大盘环境、题材/行业主线和财联社重要快讯。\n"
+                                     "护栏：AI 给出的姿态不会比量化大盘环境更激进（防守/冰点时不会给出进攻）。\n"
+                                     "定时任务在每日报告推送前自动生成；收盘后做 AI涨停预测也会生成。")
+        self.btn_review = QPushButton("生成复盘")
+        self.btn_review.clicked.connect(self._run_review)
+        bar.addWidget(self.review_label)
+        bar.addStretch()
+        bar.addWidget(self.btn_review)
+        tab_layout.addLayout(bar)
+        self.review_view = QTextBrowser()
+        tab_layout.addWidget(self.review_view, stretch=1)
+        return tab
+
+    def _refresh_review(self):
+        worker = WorkerTask(self.pipeline.latest_market_review)
+        worker.signals.finished.connect(lambda review: review and self._show_review(review))
+        self.thread_pool.start(worker)
+
+    def _run_review(self):
+        self.btn_review.setEnabled(False)
+        self.review_label.setText("AI 复盘中，通常需要 10~30 秒…")
+        worker = WorkerTask(self.pipeline.market_review, True)
+        worker.signals.finished.connect(self._on_review_done)
+        worker.signals.error.connect(lambda detail: self._on_review_done({"error": detail.splitlines()[0]}))
+        self.thread_pool.start(worker)
+
+    def _on_review_done(self, review: dict):
+        self.btn_review.setEnabled(True)
+        self._show_review(review)
+
+    def _show_review(self, review: dict):
+        from src.services.market_review import render_markdown
+
+        self.review_view.setMarkdown(render_markdown(review))
+        if review.get("error"):
+            self.review_label.setText("复盘失败")
+        else:
+            self.review_label.setText(f"大盘复盘 {review['trade_date']}｜{review['stance']}｜生成于 {review['created_at']}")
 
     def _build_theme_tab(self) -> QWidget:
         """近 5 日涨停池量化的板块主线：阶段、热度趋势、梯队、龙头。"""
@@ -1694,6 +1745,8 @@ class MainWindow(QMainWindow):
         widget = self.main_tabs.widget(index)
         if widget is self._performance_tab:
             self._refresh_performance()
+        elif widget is self._review_tab:
+            self._refresh_review()
         elif widget is self._theme_tab:
             self._refresh_themes()
         elif widget is self._alert_tab:

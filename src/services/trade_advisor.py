@@ -1,6 +1,7 @@
 """
 AI 综合研判服务。
-对 Top N 选股结果进行 DeepSeek 深度分析，给出买入/卖出/观望判断及操作建议。
+对 Top N 选股结果进行 LLM 深度分析，给出买入/卖出/观望判断及操作建议。
+定时任务在评分信号生成后、生成订单前调用：研判为观望/回避的信号不会下单（见 ExecutionService._is_buy_signal）。
 """
 
 from __future__ import annotations
@@ -124,12 +125,16 @@ class TradeAdvisor:
             + "\n\n请先给出一句话大盘点评（market_comment），然后逐只给出买入/观望/回避的判断和操作策略。"
         )
 
-        logger.info(f"AI综合研判: 发送 {len(stocks_info)} 只标的到 DeepSeek...")
-        result = self.llm.chat_json(
-            user_message=user_message,
-            system_message=ADVISOR_PROMPT,
-            max_tokens=4096,
-        )
+        logger.info(f"AI综合研判: 发送 {len(stocks_info)} 只标的到 LLM...")
+        try:
+            result = self.llm.chat_json(
+                user_message=user_message,
+                system_message=ADVISOR_PROMPT,
+                max_tokens=4096,
+            )
+        except Exception as e:
+            logger.error(f"AI研判 LLM 调用失败: {e}")
+            return []
 
         market_comment = result.get("market_comment", "")
         if market_comment:
@@ -139,7 +144,7 @@ class TradeAdvisor:
 
         ai_stocks = result.get("stocks", [])
         if not ai_stocks:
-            logger.warning("AI研判: DeepSeek 未返回有效结果")
+            logger.warning("AI研判: LLM 未返回有效结果")
             return []
 
         # 4) 写入数据库
@@ -154,7 +159,7 @@ class TradeAdvisor:
                 )
                 for sig in signals:
                     ai = verdict_map.get(sig.code)
-                    if ai:
+                    if ai and sig.signal_type != "premarket":  # AI 涨停预测的信号已有自己的研判
                         verdict = ai.get("verdict", "观望")
                         confidence = ai.get("confidence", 5)
                         strategy = ai.get("strategy", "")
@@ -164,7 +169,8 @@ class TradeAdvisor:
                         sig.ai_advice = f"[信心{confidence}/10] {reason} | 策略:{strategy} | 风险:{risk}"
                         saved += 1
 
-                # 对没有 TradeSignal 的 top 股票也创建记录
+                # 对没有 TradeSignal 的 top 股票也创建记录（只作参考：hold 不会生成订单，
+                # 避免 AI 把评分/风控没选中的股票变成买入）
                 existing_codes = {s.code for s in signals}
                 for s_info in stocks_info:
                     code = s_info["code"]
@@ -182,7 +188,7 @@ class TradeAdvisor:
                         code=code,
                         name=s_info["name"],
                         signal_date=score_date,
-                        signal_type="buy" if "买" in verdict else "hold",
+                        signal_type="hold",
                         signal_strength=confidence / 10.0,
                         composite_score=s_info["score"],
                         reason=f"综合{s_info['score']:.1f}分 {s_info['reason']}",
@@ -357,43 +363,18 @@ class TradeAdvisor:
         return "\n\n".join(sections) if sections else "暂无重要快讯"
 
     def _get_market_context(self) -> str:
-        """获取市场全局概况文本（成交额、涨跌家数、指数、板块、情绪）。"""
+        """大盘环境：指数、涨跌、成交额、量化大盘环境、题材/行业主线（新闻另有 _get_news_context）。"""
         try:
-            from src.collectors.stock_data import StockDataCollector
+            from src.services.market_context import build_market_facts
 
-            overview = StockDataCollector._market_overview_cache
-            if not overview or not overview.get("total_amount_yi"):
-                # 缓存为空则实时采集一次
-                collector = StockDataCollector(self.config)
-                overview = collector.collect_market_overview()
-
-            if not overview or not overview.get("total_amount_yi"):
-                return "市场概况数据暂不可用"
-
-            amount_wan_yi = overview.get("total_amount_yi", 0) / 10000
-            lines = [
-                f"两市总成交额: {amount_wan_yi:.2f}万亿元"
-                f"{'（低于2万亿，缩量严重，不宜交易）' if amount_wan_yi < LOW_LIQUIDITY_WARNING_THRESHOLD else ''}",
-                f"上涨/下跌/平盘: {overview.get('up_count', 0)}/{overview.get('down_count', 0)}/{overview.get('flat_count', 0)}",
-                f"涨停/跌停: {overview.get('limit_up_count', 0)}/{overview.get('limit_down_count', 0)}",
-                f"市场情绪: {overview.get('market_emotion', '未知')}",
-                f"上证指数: {overview.get('sh_index', '')} ({overview.get('sh_change_pct', 0):+.2f}%)",
-                f"深证成指: {overview.get('sz_index', '')} ({overview.get('sz_change_pct', 0):+.2f}%)",
-                f"创业板指: {overview.get('cy_index', '')} ({overview.get('cy_change_pct', 0):+.2f}%)",
-                f"北向资金净流入: {overview.get('northbound_net_yi', 0):+.2f}亿",
-            ]
-
-            top_secs = overview.get("top_sectors", [])
-            if top_secs:
-                sec_str = ", ".join(f"{s['name']}({s['pct']:+.1f}%)" for s in top_secs[:5])
-                lines.append(f"领涨板块: {sec_str}")
-
-            bot_secs = overview.get("bottom_sectors", [])
-            if bot_secs:
-                sec_str = ", ".join(f"{s['name']}({s['pct']:+.1f}%)" for s in bot_secs[:5])
-                lines.append(f"领跌板块: {sec_str}")
-
-            return "\n".join(lines)
+            facts = build_market_facts(self.config, news=False)
+            text = facts.text()
+            amount_wan_yi = (facts.overview.get("total_amount_yi") or 0) / 10000
+            if 0 < amount_wan_yi < LOW_LIQUIDITY_WARNING_THRESHOLD:
+                text += f"\n流动性提示：两市成交额 {amount_wan_yi:.2f} 万亿，低于 2 万亿，缩量严重"
+            if facts.overview.get("market_emotion"):
+                text += f"\n市场情绪：{facts.overview['market_emotion']}"
+            return text
         except Exception as e:
             logger.debug(f"获取市场概况失败: {e}")
             return "市场概况数据暂不可用"

@@ -175,6 +175,15 @@ def _run_signal_generation(config: dict):
         logger.error(f"信号生成任务异常: {e}")
         return
 
+    # AI 研判：给 Top 评分股写入 买入/观望/回避，观望和回避的信号不会生成订单
+    if config.get("strategy", {}).get("ai_advisor_enabled", True):
+        try:
+            from src.services.trade_advisor import TradeAdvisor
+
+            TradeAdvisor(config).advise_top_stocks(date.today().strftime("%Y-%m-%d"))
+        except Exception as e:
+            logger.error(f"AI 研判任务异常: {e}")
+
     # 信号 → 待确认订单（开启 trading.auto_confirm 时直接在模拟盘成交）
     try:
         from src.trading.execution_service import ExecutionService
@@ -187,9 +196,16 @@ def _run_signal_generation(config: dict):
 
 
 def _run_daily_report(config: dict):
-    """每日报告推送（大盘复盘 + 信号 + 订单 + 模拟盘 + 信号绩效）。"""
+    """LLM 大盘复盘 + 每日报告推送（大盘复盘 + 信号 + 订单 + 模拟盘 + 信号绩效）。"""
     if _skip_non_trade_day(config, "每日报告推送"):
         return
+    if config.get("market_review", {}).get("enabled", True):
+        from src.services.market_review import MarketReviewService
+
+        try:
+            MarketReviewService(config).generate()
+        except Exception as e:
+            logger.error(f"大盘复盘任务异常: {e}")
     if not config.get("notifier", {}).get("daily_report_enabled", True):
         return
     from src.services.daily_report import DailyReportService

@@ -19,6 +19,7 @@ from src.notifier.base import paged_titles, split_by_bytes
 from src.notifier.feishu import FeishuNotifier
 from src.notifier.wechat import WeChatNotifier
 from src.services.daily_report import DailyReportService
+from src.services.market_review import MarketReviewService
 from src.trading.constants import ORDER_STATUS_PENDING_CONFIRM
 
 TODAY = date.today().strftime("%Y-%m-%d")
@@ -143,6 +144,12 @@ def test_report_contains_all_sections(tmp_path, monkeypatch):
     assert "**贵州茅台(600519)** 评分信号 75分" in content
     assert "买入 比亚迪(002594) 4000股 @20.10" in content
     assert "### 模拟盘" in content
+    assert "AI 复盘" not in content  # 当天还没有 LLM 复盘
+
+    review = {"trade_date": TODAY, "stance": "均衡", "markdown": "🟡 次日姿态：**均衡**，建议仓位 4~6 成"}
+    MarketReviewService(config)._save(review)
+    _, content = DailyReportService(config).build(overview=overview)
+    assert "### AI 复盘与次日计划\n🟡 次日姿态：**均衡**，建议仓位 4~6 成" in content
     _reset_db_engine()
 
 
@@ -155,7 +162,8 @@ def test_push_skips_when_no_channel(tmp_path, monkeypatch):
 def test_scheduler_report_job_respects_trade_day_and_switch(monkeypatch):
     calls = []
     monkeypatch.setattr(trading_calendar, "load", lambda db_path, refresh=True: True)
-    monkeypatch.setattr(DailyReportService, "push", lambda self: calls.append(1) or {"pushed": True})
+    monkeypatch.setattr(DailyReportService, "push", lambda self: calls.append("push") or {"pushed": True})
+    monkeypatch.setattr(MarketReviewService, "generate", lambda self, overview=None, force=False: calls.append("review") or {})
 
     monkeypatch.setattr(trading_calendar, "is_trade_day", lambda d=None: False)
     scheduler_mod._run_daily_report({})
@@ -163,6 +171,10 @@ def test_scheduler_report_job_respects_trade_day_and_switch(monkeypatch):
 
     monkeypatch.setattr(trading_calendar, "is_trade_day", lambda d=None: True)
     scheduler_mod._run_daily_report({"notifier": {"daily_report_enabled": False}})
-    assert calls == []
+    assert calls == ["review"]  # 不推送日报时仍生成复盘，桌面端可查看
+    calls.clear()
+    scheduler_mod._run_daily_report({"market_review": {"enabled": False}})
+    assert calls == ["push"]
+    calls.clear()
     scheduler_mod._run_daily_report({})
-    assert calls == [1]
+    assert calls == ["review", "push"]

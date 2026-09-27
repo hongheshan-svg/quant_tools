@@ -1,7 +1,7 @@
 """桌面端统一流程编排。"""
 
 import threading
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from loguru import logger
@@ -48,6 +48,9 @@ class PipelineService:
         result: dict[str, Any] = {"prediction_count": len(predictions)}
         if predictions and self.execution.enabled:
             result["orders"] = self.prepare_orders(signal_date=date.today().strftime("%Y-%m-%d"))
+        # 收盘后的预测顺带生成当天的 LLM 大盘复盘（每个交易日只生成一次），日报里会带上
+        if predictions and datetime.now().strftime("%H:%M") >= "15:00" and self.config.get("market_review", {}).get("enabled", True):
+            result["review"] = self.market_review().get("stance", "")
         if predictions and self.config.get("notifier", {}).get("daily_report_enabled", True):
             result["report"] = self.push_daily_report()
         return result
@@ -61,6 +64,21 @@ class PipelineService:
         except Exception as e:
             logger.error(f"每日报告推送异常: {e}")
             return {"pushed": False, "error": str(e)}
+
+    def market_review(self, force: bool = False) -> dict[str, Any]:
+        """LLM 大盘复盘（趋势/情绪/主线 → 次日姿态、仓位、关注与回避方向）。"""
+        from src.services.market_review import MarketReviewService
+
+        try:
+            return MarketReviewService(self.config).generate(force=force)
+        except Exception as e:
+            logger.error(f"大盘复盘异常: {e}")
+            return {"error": str(e)}
+
+    def latest_market_review(self) -> dict[str, Any] | None:
+        from src.services.market_review import MarketReviewService
+
+        return MarketReviewService(self.config).get()
 
     def market_regime(self) -> dict[str, Any]:
         """大盘环境评估（进攻/均衡/防守/冰点 + 情绪周期）。"""

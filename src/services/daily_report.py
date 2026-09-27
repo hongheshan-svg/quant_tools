@@ -58,8 +58,10 @@ class DailyReportService:
     def build(self, overview: dict | None = None) -> tuple[str, str]:
         """返回 (标题, markdown 正文)。overview 为空时现场采集市场概况。"""
         today = date.today().strftime("%Y-%m-%d")
+        self._regime_date = ""
         sections = [
             self._market_section(self._market_overview() if overview is None else overview),
+            self._review_section(),
             self._theme_section(),
             self._signal_section(today),
             self._order_section(),
@@ -84,6 +86,7 @@ class DailyReportService:
 
         regime = MarketRegimeAnalyzer(self.config).analyze(overview=ov)
         regime_line = f"- {regime.summary()}" if regime.regime != "未知" else ""
+        self._regime_date = regime.trade_date if regime_line else ""
         if not ov or not (ov.get("up_count") or ov.get("sh_index")):
             return "\n".join(["### 大盘复盘", regime_line or "暂无市场数据"])
         lines = ["### 大盘复盘", *([regime_line] if regime_line else [])]
@@ -109,6 +112,15 @@ class DailyReportService:
         if any(sectors):
             lines.append("- 领涨板块：" + "、".join(s for s in sectors if s))
         return "\n".join(lines)
+
+    def _review_section(self) -> str:
+        """当天已生成的 LLM 大盘复盘（定时任务在推送前生成，这里只读取）。"""
+        from src.services.market_review import MarketReviewService
+
+        review = MarketReviewService(self.config).get(self._regime_date or date.today().strftime("%Y-%m-%d"))
+        if not review or review.get("error"):
+            return ""
+        return "### AI 复盘与次日计划\n" + review["markdown"]
 
     def _theme_section(self) -> str:
         from src.analyzers.theme_tracker import ThemeTracker

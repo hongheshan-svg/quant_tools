@@ -103,6 +103,8 @@ trading:
 
 # --- 策略权重配置 ---
 strategy:
+  # AI 研判：定时任务生成评分信号后，由 LLM 对 Top 股票给出 买入/观望/回避，观望和回避的信号不生成订单
+  ai_advisor_enabled: true
   weights:
     sentiment_score: 0.25   # 舆情评分权重
     limit_up_score: 0.15    # 连板高度权重
@@ -209,6 +211,12 @@ notifier:
     enabled: false
     webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/your-hook"
     secret: ""
+
+# --- LLM 大盘复盘 ---
+# 按趋势结构、资金情绪、主线板块复盘，给出次日姿态（不会比量化大盘环境更激进）、仓位、关注与回避方向
+# 定时任务在每日报告推送前生成并写进日报；桌面端「大盘复盘」页可手动生成
+market_review:
+  enabled: true
 
 # --- 盘中提醒 ---
 # 交易时段内每次采集行情后检查：今日信号股、模拟盘持仓、watchlist 中的股票
