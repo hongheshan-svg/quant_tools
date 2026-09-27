@@ -170,6 +170,8 @@ def test_pipeline_premarket_predict_prepares_orders(tmp_path, monkeypatch):
 
         def predict(self):
             with get_db_session(db_path) as session:
+                if session.query(StockDaily).filter(StockDaily.code == "000858").count():  # 再次预测：结果不变
+                    return [{"code": "000858"}]
                 session.add(StockDaily(code="000858", name="预测样本", trade_date=TODAY, close=10.0))
                 session.add(
                     TradeSignal(
@@ -187,6 +189,7 @@ def test_pipeline_premarket_predict_prepares_orders(tmp_path, monkeypatch):
     monkeypatch.setattr(pipeline_mod, "CollectorOrchestrator", lambda config: None)
     monkeypatch.setattr(pipeline_mod, "SelfLearningService", lambda config: None)
     monkeypatch.setattr("src.services.premarket_predictor.LimitUpPredictor", _DummyPredictor)
+    monkeypatch.setattr(pipeline_mod, "_after_close", lambda now=None: False)  # 盘中：不生成大盘复盘
 
     pipeline = pipeline_mod.PipelineService(config)
     result = pipeline.premarket_predict()
@@ -195,6 +198,12 @@ def test_pipeline_premarket_predict_prepares_orders(tmp_path, monkeypatch):
         "orders": {"prepared": 3, "confirmed": 0},
         "report": {"pushed": False, "reason": "未启用任何推送渠道"},
     }
+
+    # 收盘后的预测会先生成当天的大盘复盘
+    reviews = []
+    monkeypatch.setattr(pipeline_mod, "_after_close", lambda now=None: True)
+    monkeypatch.setattr(pipeline_mod.PipelineService, "market_review", lambda self, force=False: reviews.append(force) or {"stance": "防守"})
+    assert pipeline.premarket_predict()["review"] == "防守" and reviews == [False]
 
     snapshot = pipeline.trading_snapshot()
     pending = [o for o in snapshot["orders"] if o["code"] == "000858"]

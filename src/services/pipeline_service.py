@@ -12,6 +12,13 @@ from src.services.collector_orchestrator import CollectorOrchestrator
 from src.services.self_learning import SelfLearningService
 from src.trading.execution_service import ExecutionService
 
+MARKET_CLOSE_HHMM = "15:00"
+
+
+def _after_close(now: datetime | None = None) -> bool:
+    """是否已收盘（按时间判断，交易日由调用方负责）。"""
+    return (now or datetime.now()).strftime("%H:%M") >= MARKET_CLOSE_HHMM
+
 
 class PipelineService:
     """业务流水线服务。"""
@@ -49,7 +56,7 @@ class PipelineService:
         if predictions and self.execution.enabled:
             result["orders"] = self.prepare_orders(signal_date=date.today().strftime("%Y-%m-%d"))
         # 收盘后的预测顺带生成当天的 LLM 大盘复盘（每个交易日只生成一次），日报里会带上
-        if predictions and datetime.now().strftime("%H:%M") >= "15:00" and self.config.get("market_review", {}).get("enabled", True):
+        if predictions and _after_close() and self.config.get("market_review", {}).get("enabled", True):
             result["review"] = self.market_review().get("stance", "")
         if predictions and self.config.get("notifier", {}).get("daily_report_enabled", True):
             result["report"] = self.push_daily_report()
