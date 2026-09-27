@@ -116,3 +116,11 @@ def test_fetch_failure_keeps_stale_cache_and_throttles_retries(tmp_path, monkeyp
     trading_calendar.load(db_path)
     assert len(calls) == 1  # 失败后 6 小时内不重复联网
     _reset_db_engine()
+
+
+def test_market_data_ready_and_trade_days_only():
+    trading_calendar._set_days({"2026-09-24", "2026-09-28"})
+    assert trading_calendar.market_data_ready(datetime(2026, 9, 25, 10, 0)) is False  # 中秋休市
+    assert trading_calendar.market_data_ready(datetime(2026, 9, 28, 9, 0)) is False   # 开盘前
+    assert trading_calendar.market_data_ready(datetime(2026, 9, 28, 9, 25)) is True
+    assert trading_calendar.trade_days_only(["2026-09-24", "2026-09-25", "2026-09-28"]) == ["2026-09-24", "2026-09-28"]

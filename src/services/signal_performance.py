@@ -152,7 +152,8 @@ class SignalPerformanceService:
         )
         grouped: dict[str, dict[str, StockDaily]] = defaultdict(dict)
         for row in rows:
-            grouped[row.code[-6:]].setdefault(row.trade_date, row)
+            if trading_calendar.is_trade_day(row.trade_date):  # 忽略节假日按当天日期写入的重复行情
+                grouped[row.code[-6:]].setdefault(row.trade_date, row)
         return {code: list(by_date.values()) for code, by_date in grouped.items()}
 
     @staticmethod

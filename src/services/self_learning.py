@@ -220,7 +220,7 @@ class SelfLearningService:
         returns: list[float] = []
 
         with get_db_session(self.db_path) as session:
-            trade_dates = [
+            trade_dates = trading_calendar.trade_days_only(
                 d[0]
                 for d in (
                     session.query(StockDaily.trade_date)
@@ -229,7 +229,7 @@ class SelfLearningService:
                     .all()
                 )
                 if d and d[0]
-            ]
+            )
             next_map = {trade_dates[i]: trade_dates[i + 1] for i in range(len(trade_dates) - 1)}
 
             score_rows = (

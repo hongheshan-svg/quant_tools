@@ -120,9 +120,14 @@ class StockDataCollector(BaseCollector):
         return result
 
     def collect(self) -> list[dict[str, Any]]:
-        """采集全部行情数据"""
+        """采集全部行情数据（这些数据按今天的日期入库，节假日和开盘前不采集）"""
+        from src import trading_calendar
+
         today = date.today().strftime("%Y-%m-%d")
         db_path = self.config.get("database", {}).get("sqlite_path", "data/quant.db")
+        if not trading_calendar.market_data_ready():
+            logger.info("非交易日或未到 9:25，跳过行情采集（接口此时返回的是上一个交易日的数据）")
+            return []
 
         self._collect_realtime_quotes(today, db_path)
         self._collect_limit_up_pool(today, db_path)

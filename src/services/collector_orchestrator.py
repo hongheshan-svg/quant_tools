@@ -80,6 +80,11 @@ class CollectorOrchestrator:
         并发采集行情相关数据。
         Group-B: realtime/limitup/dragon_tiger/northbound 并发执行。
         """
+        from src import trading_calendar
+
+        if not trading_calendar.market_data_ready():
+            logger.info("非交易日或未到 9:25，跳过行情采集（接口此时返回的是上一个交易日的数据）")
+            return {k: "skipped" for k in ("realtime_quotes", "limit_up_pool", "dragon_tiger", "northbound_flow")}
         logger.info("并发采集行情数据...")
         try:
             from src.collectors.stock_data import StockDataCollector

@@ -88,3 +88,24 @@ def test_predictor_tags_stock_roles(tmp_path):
     assert "role" not in info["stocks"][1]
     assert "半导体【加速】" in context and "降温/退潮板块（回避跟风）：煤炭、传媒" in context
     _reset_db_engine()
+
+
+def test_holiday_duplicate_pool_is_ignored(tmp_path):
+    """桌面端过去会在节假日把上一交易日的涨停池按当天日期入库，主线热度不能把它算成新的一天。"""
+    from src import trading_calendar
+
+    db_path = str(tmp_path / "holiday.db")
+    _reset_db_engine()
+    init_db(db_path)
+    with get_db_session(db_path) as session:
+        for d in ("2026-09-24", "2026-09-25"):  # 09-25 中秋休市，是 09-24 的重复
+            for i in range(4):
+                session.add(LimitUpStock(code=f"{600000 + i}", name=f"S{i}", trade_date=d, sector="出版", continuous_days=1))
+    trading_calendar._set_days({"2026-09-23", "2026-09-24", "2026-09-28"})
+    try:
+        theme = ThemeTracker({"database": {"sqlite_path": db_path}}).analyze()[0]
+        assert theme.heat_history == [40.0]
+        assert theme.phase == "启动"
+    finally:
+        trading_calendar._set_days(set())
+        _reset_db_engine()

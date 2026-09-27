@@ -15,6 +15,7 @@ from typing import Any
 
 from loguru import logger
 
+from src import trading_calendar
 from src.config_loader import load_config
 from src.database.db import get_db_session
 from src.database.models import LimitUpStock, StockDaily
@@ -108,7 +109,8 @@ class MarketRegimeAnalyzer:
         query = session.query(StockDaily.trade_date).distinct()
         if trade_date:
             query = query.filter(StockDaily.trade_date <= trade_date)
-        return [d for (d,) in query.order_by(StockDaily.trade_date.desc()).limit(2).all()]
+        recent = [d for (d,) in query.order_by(StockDaily.trade_date.desc()).limit(10).all()]
+        return trading_calendar.trade_days_only(recent)[:2]
 
     @staticmethod
     def _day_stats(session, trade_date: str) -> DayStats:

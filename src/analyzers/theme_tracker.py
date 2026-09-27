@@ -5,7 +5,7 @@
     热度 = min(100, 10 × 涨停家数 + 8 × (最高连板 - 1) + 5 × 连板家数)
 再看最近 5 个交易日：
 - 趋势 = 最新热度 - 窗口首日热度；降温 = max(前一日热度 - 最新热度, 0)
-- 持续性 = 热度达到 40 的天数占比
+- 持续性 = 热度达到 40 的天数占比（至少 3 个交易日的数据才判为持续发酵）
 阶段：启动 / 加速 / 持续发酵 / 降温 / 退潮 / 观察。
 龙头 = 最新交易日该板块连板最高（同高度取首次封板更早）的股票，其余涨停股为跟风。
 """
@@ -18,6 +18,7 @@ from typing import Any
 
 from loguru import logger
 
+from src import trading_calendar
 from src.config_loader import load_config
 from src.database.db import get_db_session
 from src.database.models import LimitUpStock
@@ -28,6 +29,7 @@ HOT_HEAT = 40.0
 ACCELERATE_TREND = 20.0
 COOLING_DROP = 20.0
 PERSISTENT_RATIO = 60.0
+MIN_PERSISTENT_DAYS = 3  # 至少 3 个交易日的数据才谈得上「持续」
 UNKNOWN_SECTORS = {"", "未知", "None", "nan"}
 
 
@@ -72,7 +74,8 @@ class ThemeTracker:
                 query = session.query(LimitUpStock.trade_date).distinct()
                 if trade_date:
                     query = query.filter(LimitUpStock.trade_date <= trade_date)
-                dates = sorted(d for (d,) in query.order_by(LimitUpStock.trade_date.desc()).limit(window).all())
+                recent = [d for (d,) in query.order_by(LimitUpStock.trade_date.desc()).limit(window * 3).all()]
+                dates = sorted(trading_calendar.trade_days_only(recent)[:window])
                 if not dates:
                     return []
                 rows = (
@@ -121,7 +124,7 @@ class ThemeTracker:
             phase = "降温"
         elif latest >= HOT_HEAT and trend >= ACCELERATE_TREND and persistence < PERSISTENT_RATIO:
             phase = "加速" if previous >= HOT_HEAT else "启动"
-        elif latest >= HOT_HEAT and persistence >= PERSISTENT_RATIO:
+        elif latest >= HOT_HEAT and persistence >= PERSISTENT_RATIO and len(history) >= MIN_PERSISTENT_DAYS:
             phase = "持续发酵"
         elif latest >= HOT_HEAT:
             phase = "启动"

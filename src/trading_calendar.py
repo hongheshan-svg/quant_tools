@@ -23,6 +23,7 @@ REFRESH_INTERVAL_DAYS = 7        # 缓存超过 7 天重新拉取
 MIN_COVERAGE_DAYS = 30           # 缓存至少要覆盖到今天之后 30 天（跨年时等待新一年日历）
 REFRESH_RETRY_SECONDS = 6 * 3600  # 联网失败或新一年日历未发布时，同一进程 6 小时内不重复尝试
 MAX_LOOKAHEAD_DAYS = 30
+MARKET_DATA_READY_HHMM = (9, 25)  # 集合竞价结束后当天的行情和涨停池才是今天的数据
 
 _lock = threading.Lock()
 _trade_days: set[str] = set()
@@ -107,6 +108,18 @@ def is_trade_day(d: date | datetime | str | None = None) -> bool:
     if _trade_days and _first_day <= key <= _last_day:
         return key in _trade_days
     return day.weekday() < WEEKEND_START
+
+
+def market_data_ready(now: datetime | None = None) -> bool:
+    """今天是否已有当日行情：交易日且已过 9:25。
+    节假日或开盘前，行情接口返回的是上一个交易日的数据，不能按今天的日期入库。"""
+    now = now or datetime.now()
+    return is_trade_day(now) and (now.hour, now.minute) >= MARKET_DATA_READY_HHMM
+
+
+def trade_days_only(dates):
+    """从日期列表中去掉非交易日（兼容此前在节假日按当天日期写入的重复数据）。"""
+    return [d for d in dates if is_trade_day(d)]
 
 
 def next_trade_day(d: date | datetime | str | None = None, include_self: bool = False) -> date:
