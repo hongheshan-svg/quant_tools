@@ -143,6 +143,19 @@ class StockInfo(Base):
     )
 
 
+class TradeCalendar(Base):
+    """A股交易日历（来自新浪交易日历）"""
+    __tablename__ = "trade_calendar"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    trade_date = Column(String(10), nullable=False, comment="交易日 YYYY-MM-DD")
+    updated_at = Column(DateTime, default=datetime.now, comment="最后刷新时间")
+
+    __table_args__ = (
+        Index("idx_trade_calendar_date", "trade_date", unique=True),
+    )
+
+
 class DragonTigerBoard(Base):
     """龙虎榜数据"""
     __tablename__ = "dragon_tiger_board"

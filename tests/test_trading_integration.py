@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from src import scheduler as scheduler_mod
+from src import trading_calendar
 from src.collectors.stock_info import StockInfoCollector
 from src.database import db as db_module
 from src.database.db import get_db_session, init_db
@@ -125,6 +126,8 @@ def test_scheduler_signal_job_prepares_orders(tmp_path, monkeypatch):
             return []
 
     monkeypatch.setattr(scorer_mod, "CompositeScorer", _DummyScorer)
+    monkeypatch.setattr(trading_calendar, "load", lambda db_path, refresh=True: True)
+    monkeypatch.setattr(trading_calendar, "is_trade_day", lambda d=None: True)
 
     config = _setup(tmp_path, monkeypatch, execution_enabled=False)
     scheduler_mod._run_signal_generation(config)
@@ -133,6 +136,27 @@ def test_scheduler_signal_job_prepares_orders(tmp_path, monkeypatch):
     config["trading"]["execution_enabled"] = True
     scheduler_mod._run_signal_generation(config)
     assert len(_orders(config["database"]["sqlite_path"])) == 2
+    _reset_db_engine()
+
+
+def test_scheduler_skips_signal_job_on_non_trade_day(tmp_path, monkeypatch):
+    calls = []
+
+    class _DummyScorer:
+        def __init__(self, config):
+            calls.append("init")
+
+        def generate_signals(self):
+            calls.append("generate")
+
+    monkeypatch.setattr(scorer_mod, "CompositeScorer", _DummyScorer)
+    monkeypatch.setattr(trading_calendar, "load", lambda db_path, refresh=True: True)
+    monkeypatch.setattr(trading_calendar, "is_trade_day", lambda d=None: False)
+
+    config = _setup(tmp_path, monkeypatch)
+    scheduler_mod._run_signal_generation(config)
+    assert calls == []
+    assert _orders(config["database"]["sqlite_path"]) == {}
     _reset_db_engine()
 
 

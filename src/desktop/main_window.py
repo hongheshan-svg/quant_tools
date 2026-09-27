@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from src import trading_calendar
 from src.config_loader import load_config, reload_config
 from src.desktop.ai_settings_dialog import AISettingsDialog
 from src.services.data_query_service import DataQueryService
@@ -62,7 +63,6 @@ ORDER_STATUS_CN = {
 ORDER_SIDE_CN = {"buy": "买入", "sell": "卖出"}
 
 PLOT_MIN_DIMENSION = 10
-WEEKEND_WEEKDAY_INDEX = 5
 PRE_OPEN_END_HHMM = 915
 OPEN_AUCTION_END_HHMM = 925
 OPEN_MATCH_END_HHMM = 930
@@ -604,6 +604,10 @@ class MainWindow(QMainWindow):
         self._bind_actions()
         self._setup_loguru_sink()
         self.refresh_dashboard(force=True)
+        # 交易日历：先读本地缓存（不联网），再在后台按需联网更新
+        db_path = self.config.get("database", {}).get("sqlite_path", "data/quant.db")
+        trading_calendar.load(db_path, refresh=False)
+        self.thread_pool.start(WorkerTask(trading_calendar.load, db_path))
         self._setup_auto_refresh()
         # 启动后自动检查是否需要评分
         # 不再自动触发全流程/AI研判，改为手动点击
@@ -910,30 +914,8 @@ class MainWindow(QMainWindow):
     # ---------- 交易日 / 交易时段判断 ----------
     @staticmethod
     def _is_trade_day(d: datetime | None = None) -> bool:
-        """判断指定日期是否为A股交易日（简易规则：周一~周五，排除已知节假日）。"""
-        if d is None:
-            d = datetime.now()
-        # 周末
-        if d.weekday() >= WEEKEND_WEEKDAY_INDEX:
-            return False
-        # 已知2026年A股休市日（可按年更新）
-        holidays_2026 = {
-            # 元旦
-            "2026-01-01", "2026-01-02",
-            # 春节
-            "2026-02-16", "2026-02-17", "2026-02-18", "2026-02-19",
-            "2026-02-20", "2026-02-23", "2026-02-24",
-            # 清明
-            "2026-04-06",
-            # 劳动节
-            "2026-05-01", "2026-05-04", "2026-05-05",
-            # 端午
-            "2026-06-19",
-            # 中秋+国庆
-            "2026-10-01", "2026-10-02", "2026-10-05",
-            "2026-10-06", "2026-10-07", "2026-10-08",
-        }
-        return d.strftime("%Y-%m-%d") not in holidays_2026
+        """判断指定日期是否为A股交易日（交易日历只查内存，可在界面线程高频调用）。"""
+        return trading_calendar.is_trade_day(d)
 
     @staticmethod
     def _get_trade_session(now: datetime | None = None) -> tuple[str, str]:

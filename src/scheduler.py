@@ -10,6 +10,18 @@ from apscheduler.triggers.interval import IntervalTrigger
 from loguru import logger
 
 
+def _skip_non_trade_day(config: dict, job_name: str) -> bool:
+    """非交易日（周末、法定节假日）跳过行情和分析类任务。"""
+    from src import trading_calendar
+
+    db_path = config.get("database", {}).get("sqlite_path", "data/quant.db")
+    trading_calendar.load(db_path)
+    if trading_calendar.is_trade_day():
+        return False
+    logger.info(f"今日非交易日，跳过: {job_name}")
+    return True
+
+
 def _run_hot_search_collection(config: dict):
     """执行热搜采集任务"""
     from src.collectors.douyin import DouyinCollector
@@ -73,6 +85,8 @@ def _run_cailianshe_collection(config: dict):
 
 def _run_stock_data_collection(config: dict):
     """执行行情数据采集任务"""
+    if _skip_non_trade_day(config, "行情数据采集"):
+        return
     from src.collectors.stock_data import StockDataCollector
     collector = StockDataCollector(config)
     try:
@@ -96,6 +110,8 @@ def _run_global_data_collection(config: dict):
 
 def _run_daily_analysis(config: dict):
     """每日综合分析 - 收盘后运行"""
+    if _skip_non_trade_day(config, "每日综合分析"):
+        return
     from src.analyzers.global_impact import GlobalImpactAnalyzer
     from src.analyzers.limit_up import LimitUpAnalyzer
     from src.analyzers.sentiment import SentimentAnalyzer
@@ -127,6 +143,8 @@ def _run_daily_analysis(config: dict):
 
 def _run_signal_generation(config: dict):
     """每日信号生成"""
+    if _skip_non_trade_day(config, "交易信号生成"):
+        return
     from src.strategy.scorer import CompositeScorer
 
     logger.info("===== 开始生成交易信号 =====")
@@ -151,6 +169,8 @@ def _run_signal_generation(config: dict):
 
 def _run_self_learning(config: dict):
     """每日自学习任务。"""
+    if _skip_non_trade_day(config, "系统自学习"):
+        return
     from src.services.self_learning import SelfLearningService
 
     logger.info("===== 开始系统自学习 =====")

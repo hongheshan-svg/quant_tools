@@ -7,6 +7,7 @@ from datetime import date, datetime
 
 from loguru import logger
 
+from src import trading_calendar
 from src.config_loader import load_config
 from src.database.db import get_db_session
 from src.database.models import LimitUpStock, StockDaily, StockInfo, TradeSignal
@@ -19,7 +20,6 @@ EXCHANGE_PREFIX_LEN = 2
 
 HIGH_RISK_REASON_COUNT = 2
 
-WEEKEND_START = 5
 MORNING_SESSION_START = 925
 MORNING_SESSION_END = 1130
 AFTERNOON_SESSION_START = 1300
@@ -367,7 +367,7 @@ class RiskManager:
     @staticmethod
     def _is_trade_session_now(now: datetime | None = None) -> bool:
         dt = now or datetime.now()
-        if dt.weekday() >= WEEKEND_START:
+        if not trading_calendar.is_trade_day(dt):
             return False
         hhmm = dt.hour * 100 + dt.minute
         return (MORNING_SESSION_START <= hhmm <= MORNING_SESSION_END) or (

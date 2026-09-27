@@ -150,7 +150,6 @@ SESSION_RULES = {
     ),
 }
 
-WEEKEND_WEEKDAY_INDEX = 5
 FAKE_LIMIT_UP_MIN_CHANGE = 5.0
 MARKET_CRASH_THRESHOLD = -5.0
 LIMIT_UP_LIKE_CHANGE_THRESHOLD = 9.5
@@ -197,9 +196,14 @@ class LimitUpPredictor:
         盘后/盘前: 预测明日（下一个交易日）的机会
         盘中: 预测今日的机会
         """
+        from src import trading_calendar
+
         now = datetime.now()
         today = now.strftime("%Y-%m-%d")
-        session = self._get_session(now)
+        trading_calendar.load(self.db_path)
+        is_trade_day = trading_calendar.is_trade_day(now)
+        # 非交易日按盘前模式：以最近交易日数据为主，预测下一个交易日
+        session = self._get_session(now) if is_trade_day else "premarket"
 
         logger.info(f"涨停预测启动 | 时段: {session} | {now.strftime('%H:%M')}")
 
@@ -404,9 +408,9 @@ class LimitUpPredictor:
         predictions = self._apply_source_confidence(predictions)
 
         # 4) 写入数据库
-        #    盘后：预测明日，signal_date 存为下一个交易日
-        #    盘前/盘中：预测今日，signal_date 存为今天
-        target_date = self._next_trade_date(now) if session == "aftermarket" else today
+        #    盘后或非交易日：预测下一个交易日，signal_date 存为该交易日
+        #    交易日盘前/盘中：预测今日，signal_date 存为今天
+        target_date = today if is_trade_day and session != "aftermarket" else self._next_trade_date(now)
         self._save_predictions(target_date, predictions, market_outlook, main_theme)
 
         logger.info(f"涨停预测完成: {len(predictions)} 只标的 ({session_desc})")
@@ -453,16 +457,13 @@ class LimitUpPredictor:
     @staticmethod
     def _next_trade_date(now: datetime) -> str:
         """
-        计算下一个交易日日期（简易规则：跳过周末）。
-        盘后(15:00后)返回明天或下周一；盘前(9:25前)返回今天。
+        计算下一个交易日日期（按交易日历，跳过周末和法定节假日）。
+        盘前(9:25前)且当天是交易日时返回今天，否则返回之后第一个交易日。
         """
-        h, m = now.hour, now.minute
-        t = h * 60 + m
-        candidate = now.date() if t < 9 * 60 + 25 else now.date() + timedelta(days=1)
-        # 跳过周末
-        while candidate.weekday() >= WEEKEND_WEEKDAY_INDEX:  # 5=Saturday, 6=Sunday
-            candidate += timedelta(days=1)
-        return candidate.strftime("%Y-%m-%d")
+        from src import trading_calendar
+
+        t = now.hour * 60 + now.minute
+        return trading_calendar.next_trade_day(now.date(), include_self=t < 9 * 60 + 25).strftime("%Y-%m-%d")
 
     # ---- 数据采集 ----
 
