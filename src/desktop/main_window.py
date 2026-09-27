@@ -786,6 +786,10 @@ class MainWindow(QMainWindow):
         # ---- Tab 4: 信号绩效 ----
         self._performance_tab = self._build_performance_tab()
         self.main_tabs.addTab(self._performance_tab, "信号绩效")
+
+        # ---- Tab 5: 数据源状态 ----
+        self._source_tab = self._build_source_status_tab()
+        self.main_tabs.addTab(self._source_tab, "数据源状态")
         self.main_tabs.currentChanged.connect(self._on_main_tab_changed)
 
         layout.addWidget(self.main_tabs, stretch=1)
@@ -870,6 +874,43 @@ class MainWindow(QMainWindow):
         tab_layout.addWidget(self._wrap("信号明细", self.table_performance_details), stretch=3)
         self._performance_inflight = False
         return tab
+
+    def _build_source_status_tab(self) -> QWidget:
+        """各数据源最近的成功/失败情况与熔断状态（本进程内统计）。"""
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 4, 0, 0)
+        self.source_status_label = QLabel("数据源状态：采集运行后显示（连续失败 3 次的数据源会熔断 5 分钟后再试）")
+        self.source_status_label.setStyleSheet("font-weight: 600; color: #8be9fd; padding: 2px 6px;")
+        tab_layout.addWidget(self.source_status_label)
+        self.table_sources = self._build_table(
+            ["数据集", "数据源", "状态", "最近成功", "最近失败", "连续失败", "累计成功/失败", "耗时(秒)", "最近错误"]
+        )
+        tab_layout.addWidget(self.table_sources, stretch=1)
+        return tab
+
+    def _refresh_source_status(self):
+        rows = self.pipeline.data_source_status()
+        status_cn = {"ok": ("正常", "#50fa7b"), "failing": ("失败", "#f1fa8c"), "circuit_open": ("熔断中", "#ff5555")}
+
+        def fmt(t):
+            return t.strftime("%H:%M:%S") if t else "--"
+
+        self.table_sources.setRowCount(len(rows))
+        for i, r in enumerate(rows):
+            text, color = status_cn.get(r["status"], (r["status"], "#dbe7ff"))
+            values = [
+                r["dataset"], r["source"], text, fmt(r["last_success"]), fmt(r["last_failure"]),
+                r["consecutive_failures"], f"{r['total_success']}/{r['total_failure']}",
+                "" if r["last_elapsed"] is None else r["last_elapsed"], r["last_error"],
+            ]
+            for col, value in enumerate(values):
+                self.table_sources.setItem(i, col, _item(value))
+            self.table_sources.item(i, 2).setForeground(QColor(color))
+        bad = sum(1 for r in rows if r["status"] != "ok")
+        self.source_status_label.setText(
+            f"数据源状态：共 {len(rows)} 个，异常 {bad} 个（连续失败 3 次的数据源会熔断 5 分钟后再试）"
+        )
 
     def _bind_actions(self):
         self.btn_premarket.clicked.connect(lambda: self._run_task("AI涨停预测", self.pipeline.premarket_predict))
@@ -1390,6 +1431,8 @@ class MainWindow(QMainWindow):
     def refresh_dashboard(self, force: bool = False):
         self.refresh_dashboard_async(force=force)
         self._refresh_trading()
+        if self.main_tabs.currentWidget() is self._source_tab:
+            self._refresh_source_status()
 
     # ---------- 模拟交易 ----------
     def _refresh_trading(self):
@@ -1458,8 +1501,11 @@ class MainWindow(QMainWindow):
 
     # ---------- 信号绩效 ----------
     def _on_main_tab_changed(self, index: int):
-        if self.main_tabs.widget(index) is self._performance_tab:
+        widget = self.main_tabs.widget(index)
+        if widget is self._performance_tab:
             self._refresh_performance()
+        elif widget is self._source_tab:
+            self._refresh_source_status()
 
     def _refresh_performance(self):
         if self._performance_inflight:

@@ -42,6 +42,13 @@ class CircuitBreaker:
             logger.info(f"[{self.name}] {source} 熔断冷却结束，放行一次探测")
             return True
 
+    def is_open(self, source: str) -> bool:
+        """是否处于熔断冷却中（只读，不会放行探测）。"""
+        with self._lock:
+            if self._failures.get(source, 0) < self.failure_threshold:
+                return False
+            return time.monotonic() - self._opened_at.get(source, 0.0) < self.cooldown_seconds
+
     def record_success(self, source: str) -> None:
         with self._lock:
             if self._failures.get(source, 0) >= self.failure_threshold:

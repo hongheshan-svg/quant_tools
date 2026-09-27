@@ -62,6 +62,13 @@ class PipelineService:
             logger.error(f"每日报告推送异常: {e}")
             return {"pushed": False, "error": str(e)}
 
+    @staticmethod
+    def data_source_status() -> list[dict[str, Any]]:
+        """本进程内各数据源的健康状态（内存数据，无 IO）。"""
+        from src.collectors.source_chain import source_health
+
+        return source_health.snapshot()
+
     def signal_performance(self, lookback_days: int = 60) -> dict[str, Any]:
         """近 lookback_days 天交易信号的绩效回测（只读统计）。"""
         from src.services.signal_performance import SignalPerformanceService

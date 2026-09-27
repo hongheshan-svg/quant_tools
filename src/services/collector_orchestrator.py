@@ -10,6 +10,7 @@ from typing import Any
 
 from loguru import logger
 
+from src.collectors.source_chain import source_health
 from src.config_loader import load_config
 from src.database.db import get_db_session, init_db
 from src.database.models import FinanceNews, HotSearch
@@ -66,9 +67,11 @@ class CollectorOrchestrator:
                 name = future_map[future]
                 try:
                     results[name] = int(future.result())
+                    source_health.record("资讯采集", name, results[name] > 0)
                 except Exception as e:
                     logger.error(f"[{name}] 采集异常: {e}")
                     results[name] = 0
+                    source_health.record("资讯采集", name, False, str(e))
         logger.info(f"新闻并发采集完成: {results}")
         return results
 
@@ -368,6 +371,8 @@ class CollectorOrchestrator:
             got_sources = {str(x.get("source", "")) for x in (items or []) if isinstance(x, dict)}
             required_sources = {"cailianshe_global", "wallstreetcn", "jin10", "eastmoney_global"}
             missing = sorted(required_sources - got_sources)
+            for source in sorted(required_sources):
+                source_health.record("国际新闻", source, source in got_sources)
             if missing:
                 logger.warning(f"国际新闻源不完整，缺失: {missing}")
                 return 0
@@ -384,6 +389,8 @@ class CollectorOrchestrator:
             collector = USEarningsCollector(self.config)
             collector.collect()
             metrics = getattr(collector, "last_run_metrics", {}) or {}
+            for key, value in metrics.items():
+                source_health.record("美股数据", key, int(value or 0) > 0)
 
             market_ok = int(metrics.get("us_market_daily", 0)) > 0
             stocks_ok = int(metrics.get("us_stock_earnings", 0)) > 0

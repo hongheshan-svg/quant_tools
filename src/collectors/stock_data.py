@@ -12,7 +12,8 @@ import pandas as pd
 from loguru import logger
 
 from src.collectors.base import BaseCollector
-from src.collectors.circuit_breaker import CircuitBreaker
+from src.collectors.source_chain import fetch_with_fallback, source_health
+from src.utils.stock_code import daily_limit_pct
 from src.collectors.em_client import get_em_client
 from src.database.db import get_db_session
 from src.database.models import (
@@ -44,9 +45,7 @@ TENCENT_MIN_FIELDS = 45
 TENCENT_TOTAL_MV_INDEX = 45
 TENCENT_CIRC_MV_INDEX = 44
 NORTHBOUND_UNIT_SPLIT_THRESHOLD = 10000
-
-# 实时行情各数据源共用的熔断器（进程级，跨采集轮次保留状态）
-_realtime_quote_breaker = CircuitBreaker("实时行情")
+LIMIT_UP_PCT_TOLERANCE = 0.5  # 涨停价四舍五入导致实际涨幅略低于 10%/20%/30%
 
 
 class StockDataCollector(BaseCollector):
@@ -304,7 +303,9 @@ class StockDataCollector(BaseCollector):
                     f"深证={overview['sz_index']}({overview['sz_change_pct']:+.2f}%) "
                     f"创业={overview['cy_index']}({overview['cy_change_pct']:+.2f}%)"
                 )
+            source_health.record("指数行情", "东方财富", idx_ok)
         except Exception as e:
+            source_health.record("指数行情", "东方财富", False, str(e))
             logger.debug(f"指数采集(eastmoney)失败: {e}")
 
         # 源2: 新浪 hq.sinajs.cn
@@ -330,7 +331,9 @@ class StockDataCollector(BaseCollector):
                 if overview.get("sh_index"):
                     idx_ok = True
                     logger.info(f"指数采集(sina): 上证={overview['sh_index']}")
+                source_health.record("指数行情", "新浪", idx_ok)
             except Exception as e:
+                source_health.record("指数行情", "新浪", False, str(e))
                 logger.debug(f"指数采集(sina)失败: {e}")
 
         # 源3: Playwright 东方财富兜底
@@ -365,7 +368,9 @@ class StockDataCollector(BaseCollector):
                         overview["total_amount_yi"] = round(total_ak / 1e8, 0)
                         logger.info(f"两市成交额(akshare兜底): {overview['total_amount_yi']:,.0f}亿")
                     logger.info(f"指数采集(akshare): 上证={overview.get('sh_index','')}")
+                source_health.record("指数行情", "东方财富(Playwright)", bool(overview.get("sh_index")))
             except Exception as e:
+                source_health.record("指数行情", "东方财富(Playwright)", False, str(e))
                 logger.debug(f"指数采集(akshare)失败: {e}")
 
         # ======== 板块涨幅排行 ========
@@ -399,7 +404,9 @@ class StockDataCollector(BaseCollector):
                 ]
                 sec_ok = True
                 logger.info(f"板块采集(eastmoney): 领涨={[s['name'] for s in overview['top_sectors'][:3]]}")
+            source_health.record("板块排行", "东方财富", sec_ok)
         except Exception as e:
+            source_health.record("板块排行", "东方财富", False, str(e))
             logger.debug(f"板块采集(eastmoney)失败: {e}")
 
         # 源2: 从DB涨停股的板块统计
@@ -446,7 +453,9 @@ class StockDataCollector(BaseCollector):
                         nb_total += float(parts[1])
             overview["northbound_net_yi"] = round(nb_total, 2)
             logger.info(f"北向资金(direct): {overview['northbound_net_yi']}亿")
+            source_health.record("北向资金", "东方财富", bool(data))
         except Exception as e:
+            source_health.record("北向资金", "东方财富", False, str(e))
             logger.debug(f"北向资金(direct)失败: {e}")
 
     def _get_all_stock_codes(self) -> list[str]:
@@ -545,7 +554,6 @@ class StockDataCollector(BaseCollector):
         优先级：腾讯财经(HTTP) -> AKShare(em) -> AKShare(sina)
         任一源成功即返回，全部失败才报错。
         """
-        import time
 
         # ——— 数据源定义 ———
         def _try_tencent():
@@ -669,29 +677,12 @@ class StockDataCollector(BaseCollector):
             ("新浪(AKShare)", _try_sina),
         ]
 
-        df = None
-        fetchers = dict(sources)
-        for source_name in _realtime_quote_breaker.available_sources([name for name, _ in sources]):
-            fetch_fn = fetchers[source_name]
-            last_error = "空数据"
-            for attempt in range(2):
-                try:
-                    df = fetch_fn()
-                    if df is not None and not df.empty:
-                        logger.info(f"实时行情数据源 [{source_name}] 第{attempt+1}次成功, {len(df)} 条")
-                        break
-                except Exception as e:
-                    last_error = str(e)
-                    logger.warning(f"实时行情 [{source_name}] 第{attempt+1}次失败: {e}")
-                    time.sleep(1.5)
-            if df is not None and not df.empty:
-                _realtime_quote_breaker.record_success(source_name)
-                break
-            _realtime_quote_breaker.record_failure(source_name, last_error)
-
-        if df is None or df.empty:
-            logger.error("实时行情：所有数据源均失败")
+        # 行情按交易日写库，不能用之前缓存的数据冒充当前行情，所以不允许 stale
+        fetched = fetch_with_fallback("实时行情", sources, attempts=2, retry_wait=1.5)
+        if not fetched.ok:
             return
+        df = fetched.data
+        logger.info(f"实时行情数据源 [{fetched.source}] 成功, {len(df)} 条")
 
         try:
             # 使用列名→列索引映射 + itertuples（比 iterrows 快 5~10 倍）
@@ -764,28 +755,31 @@ class StockDataCollector(BaseCollector):
         except Exception as e:
             logger.error(f"实时行情入库失败: {e}")
 
+    @staticmethod
+    def _limit_up_rows_only(df: pd.DataFrame | None) -> pd.DataFrame | None:
+        """强势股池包含未涨停的强势股，作为涨停池备用源时只保留涨幅达到涨停幅度的行。"""
+        if df is None or df.empty or not {"代码", "涨跌幅"} <= set(df.columns):
+            return df
+        names = df["名称"] if "名称" in df.columns else [""] * len(df)
+        keep = [
+            _safe_float(chg) is not None and _safe_float(chg) >= daily_limit_pct(str(code), str(name)) * 100 - LIMIT_UP_PCT_TOLERANCE
+            for code, name, chg in zip(df["代码"], names, df["涨跌幅"])
+        ]
+        return df[keep]
+
     def _collect_limit_up_pool(self, trade_date: str, db_path: str):
         """采集涨停池数据（含涨停原因） —— 多源兜底"""
-        import time
-        df = None
-        # 源1：东方财富涨停池
-        for attempt in range(3):
-            try:
-                df = get_em_client().stock_zt_pool_em(date=trade_date.replace("-", ""))
-                if df is not None and not df.empty:
-                    break
-            except Exception as e:
-                logger.warning(f"涨停池(em)第{attempt+1}次失败: {e}")
-                time.sleep(1)
-
-        # 源2：如果 em 失败，尝试涨停强势股池作为备选
-        if df is None or df.empty:
-            try:
-                df = get_em_client().stock_zt_pool_strong_em(date=trade_date.replace("-", ""))
-                if df is not None and not df.empty:
-                    logger.info(f"涨停池备选源(strong)成功: {len(df)} 条")
-            except Exception as e2:
-                logger.warning(f"涨停池备选源也失败: {e2}")
+        day = trade_date.replace("-", "")
+        fetched = fetch_with_fallback(
+            "涨停池",
+            [
+                ("东方财富涨停池", lambda: get_em_client().stock_zt_pool_em(date=day)),
+                ("东方财富强势股池(仅涨停)", lambda: self._limit_up_rows_only(get_em_client().stock_zt_pool_strong_em(date=day))),
+            ],
+            attempts=2,
+            retry_wait=1,
+        )
+        df = fetched.data
 
         try:
             if df is None or df.empty:

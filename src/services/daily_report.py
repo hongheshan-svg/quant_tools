@@ -64,6 +64,7 @@ class DailyReportService:
             self._order_section(),
             self._account_section(),
             self._performance_section(),
+            self._source_health_section(),
             "> 仅供学习研究，不构成投资建议",
         ]
         return f"A股量化日报 {today}", "\n\n".join(s for s in sections if s)
@@ -176,6 +177,21 @@ class DailyReportService:
             f"总资产 {acc['total_assets']:,.0f} | 可用资金 {acc['cash']:,.0f} | "
             f"持仓 {len(snapshot['positions'])} 只 | 浮动盈亏 {acc['unrealized_pnl']:+,.0f}"
         )
+
+    @staticmethod
+    def _source_health_section() -> str:
+        from src.collectors.source_chain import source_health
+
+        failing = source_health.failing()
+        if not failing:
+            return ""
+        status_cn = {"circuit_open": "熔断中", "failing": "失败"}
+        lines = [
+            f"- {r['dataset']} / {r['source']}：{status_cn.get(r['status'], r['status'])}，"
+            f"连续失败 {r['consecutive_failures']} 次（{r['last_error'][:40]}）"
+            for r in failing[:8]
+        ]
+        return "\n".join(["### 数据源异常", *lines])
 
     def _performance_section(self) -> str:
         try:
