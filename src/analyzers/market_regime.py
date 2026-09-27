@@ -14,7 +14,6 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import func
 
 from src.config_loader import load_config
 from src.database.db import get_db_session
