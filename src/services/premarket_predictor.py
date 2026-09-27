@@ -80,6 +80,7 @@ PREDICT_PROMPT = """你是A股短线实战专家，擅长从新闻热点、市�
 - 涨停板标的优先低位首板和2-3连板（高位追涨风险大）
 - 全市场标的优先涨幅7-9%且换手率合理的（{next_day}冲板概率高）
 - 如果热点里有多只相关个股，选技术形态最好的那只（多头排列优先）
+- ★ 优先选择主线（持续发酵/加速/启动阶段）中的龙头和前排；降温、退潮板块的跟风股回避
 
 价格计划（buy_price / stop_loss / target_price）：
 - 必须以数据中给出的最新价/收盘价为基准，买入价不能超出{next_day}涨跌停范围
@@ -219,6 +220,7 @@ class LimitUpPredictor:
         # 1) 收集所有可用数据
         limit_up_info = self._get_limit_up_data(session)
         self._attach_technical(limit_up_info)
+        theme_context = self._attach_theme_roles(limit_up_info)
         market_strong_stocks = self._get_market_strong_stocks(session)
         news_context = self._get_recent_news()
         hot_context = self._get_jiuyan_hot()
@@ -320,6 +322,8 @@ class LimitUpPredictor:
             f"当前时间: {now.strftime('%Y-%m-%d %H:%M')} | 时段: {session_desc}\n\n"
             f"===== 大盘环境 =====\n{market_context}\n"
         )
+        if theme_context:
+            user_message += f"\n===== 主线梯队（近5日涨停池量化） =====\n{theme_context}\n"
         if us_context:
             user_message += f"\n===== 隔夜美股/全球市场 =====\n{us_context}\n"
         if global_impact_context:
@@ -645,6 +649,32 @@ class LimitUpPredictor:
             "close": lu.close or 0,
         }
 
+    def _attach_theme_roles(self, limit_up_info: dict) -> str:
+        """给涨停股标注所属主线与角色（龙头/跟风），返回主线梯队摘要文本。"""
+        from src.analyzers.theme_tracker import ThemeTracker
+        from src.utils.stock_code import bare_code
+
+        try:
+            tracker = ThemeTracker(self.config)
+            themes = tracker.analyze()
+        except Exception as e:
+            logger.debug(f"主线追踪失败: {e}")
+            return ""
+        if not themes:
+            return ""
+        roles = tracker.stock_roles(themes)
+        for key in ("stocks", "today_stocks"):
+            for s in limit_up_info.get(key, []):
+                role = roles.get(bare_code(s.get("code")))
+                if role:
+                    s["role"] = f"{role['role']}·{role['theme']}({role['phase']})"
+
+        lines = [f"- {t.brief()}" for t in tracker.main_lines(themes, top=6)]
+        cooling = [t.name for t in themes if t.phase in ("降温", "退潮")][:6]
+        if cooling:
+            lines.append(f"- 降温/退潮板块（回避跟风）：{'、'.join(cooling)}")
+        return "\n".join(lines)
+
     def _attach_technical(self, limit_up_info: dict, max_stocks: int = 80) -> None:
         """给主要涨停数据集的个股附上一行技术面摘要（均线/MACD/RSI/乖离率/风险）。"""
         from src.strategy.tech_score import analyze_technical
@@ -669,6 +699,8 @@ class LimitUpPredictor:
             )
             if s.get("close"):
                 line += f" 收盘价={s['close']:.2f}"
+            if s.get("role"):
+                line += f" 主线角色={s['role']}"
             if s.get("tech"):
                 line += f" 技术面={s['tech']}"
             lines.append(line)

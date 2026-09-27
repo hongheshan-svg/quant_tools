@@ -794,7 +794,11 @@ class MainWindow(QMainWindow):
         self._performance_tab = self._build_performance_tab()
         self.main_tabs.addTab(self._performance_tab, "信号绩效")
 
-        # ---- Tab 5: 数据源状态 ----
+        # ---- Tab 5: 主线分析 ----
+        self._theme_tab = self._build_theme_tab()
+        self.main_tabs.addTab(self._theme_tab, "主线分析")
+
+        # ---- Tab 6: 数据源状态 ----
         self._source_tab = self._build_source_status_tab()
         self.main_tabs.addTab(self._source_tab, "数据源状态")
         self.main_tabs.currentChanged.connect(self._on_main_tab_changed)
@@ -881,6 +885,53 @@ class MainWindow(QMainWindow):
         tab_layout.addWidget(self._wrap("信号明细", self.table_performance_details), stretch=3)
         self._performance_inflight = False
         return tab
+
+    def _build_theme_tab(self) -> QWidget:
+        """近 5 日涨停池量化的板块主线：阶段、热度趋势、梯队、龙头。"""
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 4, 0, 0)
+        self.theme_label = QLabel("主线分析（切换到本页时自动计算）")
+        self.theme_label.setStyleSheet("font-weight: 600; color: #8be9fd; padding: 2px 6px;")
+        self.theme_label.setToolTip(
+            "热度 = 10×涨停家数 + 8×(最高连板-1) + 5×连板家数，满分 100，40 以上视为热门。\n"
+            "阶段：启动（新晋热门）/ 加速（热度快速上升）/ 持续发酵（近 5 日多数时间热门）/ 降温（热度回落 20 以上）/ 退潮（今日无涨停）。\n"
+            "龙头 = 板块内连板最高、同高度时封板最早的股票。"
+        )
+        tab_layout.addWidget(self.theme_label)
+        self.table_themes = self._build_table(
+            ["板块", "阶段", "热度", "近5日热度", "趋势", "持续性", "涨停", "最高板", "梯队", "龙头", "跟风"]
+        )
+        tab_layout.addWidget(self.table_themes, stretch=1)
+        self._theme_inflight = False
+        return tab
+
+    def _refresh_themes(self):
+        if self._theme_inflight:
+            return
+        self._theme_inflight = True
+        worker = WorkerTask(self.pipeline.main_themes)
+        worker.signals.finished.connect(self._on_themes_ready)
+        worker.signals.error.connect(lambda _detail: setattr(self, "_theme_inflight", False))
+        self.thread_pool.start(worker)
+
+    def _on_themes_ready(self, themes: list):
+        self._theme_inflight = False
+        phase_color = {"加速": "#ff5555", "启动": "#ff79c6", "持续发酵": "#ffb86c", "降温": "#8be9fd", "退潮": "#50fa7b"}
+        self.table_themes.setRowCount(len(themes))
+        for i, t in enumerate(themes):
+            leader = t["leader"]
+            values = [
+                t["name"], t["phase"], f"{t['heat']:.0f}", " → ".join(f"{h:.0f}" for h in t["heat_history"]),
+                f"{t['trend']:+.0f}", f"{t['persistence']:.0f}%", t["limit_up"], t["max_height"], t["ladder"],
+                f"{leader['name']}({leader['height']}板)" if leader else "--",
+                "、".join(f"{f['name']}({f['height']})" for f in t["followers"][:6]),
+            ]
+            for col, value in enumerate(values):
+                self.table_themes.setItem(i, col, _item(value))
+            self.table_themes.item(i, 1).setForeground(QColor(phase_color.get(t["phase"], "#8994b3")))
+        hot = [t["name"] for t in themes if t["heat"] >= 40 and t["phase"] not in ("降温", "退潮")][:5]
+        self.theme_label.setText(f"主线分析：{'、'.join(hot) if hot else '暂无明确主线'}（鼠标悬停查看计算口径）")
 
     def _build_source_status_tab(self) -> QWidget:
         """各数据源最近的成功/失败情况与熔断状态（本进程内统计）。"""
@@ -1532,6 +1583,8 @@ class MainWindow(QMainWindow):
         widget = self.main_tabs.widget(index)
         if widget is self._performance_tab:
             self._refresh_performance()
+        elif widget is self._theme_tab:
+            self._refresh_themes()
         elif widget is self._source_tab:
             self._refresh_source_status()
 

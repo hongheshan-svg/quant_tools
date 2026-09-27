@@ -69,6 +69,12 @@ class PipelineService:
         regime = MarketRegimeAnalyzer(self.config).analyze()
         return {**regime.to_dict(), "summary": regime.summary()}
 
+    def main_themes(self) -> list[dict[str, Any]]:
+        """近 5 日涨停池量化的板块主线（阶段、热度、梯队、龙头）。"""
+        from src.analyzers.theme_tracker import ThemeTracker
+
+        return [t.to_dict() for t in ThemeTracker(self.config).analyze()]
+
     @staticmethod
     def data_source_status() -> list[dict[str, Any]]:
         """本进程内各数据源的健康状态（内存数据，无 IO）。"""

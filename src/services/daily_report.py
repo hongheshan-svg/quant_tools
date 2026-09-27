@@ -60,6 +60,7 @@ class DailyReportService:
         today = date.today().strftime("%Y-%m-%d")
         sections = [
             self._market_section(self._market_overview() if overview is None else overview),
+            self._theme_section(),
             self._signal_section(today),
             self._order_section(),
             self._account_section(),
@@ -107,6 +108,20 @@ class DailyReportService:
         sectors = [s.get("name", "") if isinstance(s, dict) else str(s) for s in ov.get("top_sectors") or []]
         if any(sectors):
             lines.append("- 领涨板块：" + "、".join(s for s in sectors if s))
+        return "\n".join(lines)
+
+    def _theme_section(self) -> str:
+        from src.analyzers.theme_tracker import ThemeTracker
+
+        tracker = ThemeTracker(self.config)
+        themes = tracker.analyze()
+        main_lines = tracker.main_lines(themes)
+        if not main_lines:
+            return ""
+        lines = ["### 主线梯队", *[f"- {t.brief()}" for t in main_lines]]
+        cooling = [t.name for t in themes if t.phase in ("降温", "退潮")][:5]
+        if cooling:
+            lines.append(f"- 降温/退潮：{'、'.join(cooling)}")
         return "\n".join(lines)
 
     def _signal_section(self, today: str) -> str:
