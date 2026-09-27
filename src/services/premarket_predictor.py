@@ -44,8 +44,9 @@ PREDICT_PROMPT = """你是A股短线实战专家，擅长从新闻热点、市�
 - **第三维度：涨停板数据验证**
   涨停板作为市场已确认的强势方向（非唯一选股来源），验证热点是否已有资金进场
   连板股代表市场公认的主线方向，可作为参考
-- **第四维度：全市场强势股补充**
-  涨幅较高但未涨停的个股，可能{next_day}冲板或继续走强
+- **第四维度：全市场强势股与策略选股补充**
+  涨幅较高但未涨停的个股，可能{next_day}冲板或继续走强；
+  策略选股（放量突破/强势未板/龙回头/主线补涨等）是按规则从全市场筛出的形态标的，优先看与当前大盘环境匹配的策略
 
 分析维度：
 1. **热点新闻+AI舆情**：财联社红色新闻中的利好个股、AI舆情看多标的（impact>=7优先）
@@ -71,7 +72,7 @@ PREDICT_PROMPT = """你是A股短线实战专家，擅长从新闻热点、市�
 **source 字段要求**：
 - "热点驱动" = 来自新闻/政策/多平台热点驱动的标的（应占比最多！）
 - "涨停板" = 来自涨停板数据中的标的
-- "全市场" = 来自全市场强势股扫描的标的
+- "全市场" = 来自全市场强势股扫描或策略选股的标的
 
 选股规则：
 - 剔除一字板（开盘即涨停无法买入）
@@ -223,6 +224,8 @@ class LimitUpPredictor:
         self._attach_technical(limit_up_info)
         theme_context = self._attach_theme_roles(limit_up_info)
         market_strong_stocks = self._get_market_strong_stocks(session)
+        strategy_result = self._get_strategy_picks(session)
+        strategy_picks = strategy_result.picks if strategy_result else []
         self._attach_fund_flow([*limit_up_info.get("stocks", []), *limit_up_info.get("today_stocks", []), *market_strong_stocks])
         news_context = self._get_recent_news()
         hot_context = self._get_jiuyan_hot()
@@ -234,7 +237,7 @@ class LimitUpPredictor:
 
         # 放宽数据检查：只要有新闻/热点/涨停板任一数据就可以预测
         has_limit_up = bool(limit_up_info["stocks"] or limit_up_info.get("today_stocks"))
-        has_market = bool(market_strong_stocks)
+        has_market = bool(market_strong_stocks or strategy_picks)
         has_news = bool(news_context.strip() and news_context != "暂无重要新闻")
         has_hot = bool(news_driven_context.strip() or multi_hot_context.strip())
         if not has_limit_up and not has_market and not has_news and not has_hot:
@@ -245,6 +248,7 @@ class LimitUpPredictor:
         candidate_codes = self._collect_candidate_codes(
             limit_up_info, market_strong_stocks, news_driven_context,
         )
+        candidate_codes = list(dict.fromkeys([*candidate_codes, *(p.code for p in strategy_picks)]))
         logger.info(f"技术分析: 对 {len(candidate_codes)} 只候选股计算技术指标...")
         tech_context = self._get_technical_context(candidate_codes)
 
@@ -356,6 +360,12 @@ class LimitUpPredictor:
             user_message += (
                 f"\n\n===== 全市场强势股（涨幅靠前、尚未涨停）共{len(market_strong_stocks)}只 =====\n"
                 + "\n".join(strong_lines[:40])
+            )
+        if strategy_picks:
+            user_message += (
+                f"\n\n===== 策略选股（全市场规则筛选，{strategy_result.trade_date}，"
+                f"大盘环境：{strategy_result.regime or '未知'}）共{len(strategy_picks)}只 =====\n"
+                + "\n".join(strategy_result.prompt_lines(20))
             )
 
         user_message += f"\n\n===== 韭研公社/雪球热点 =====\n{hot_context[:800]}"
@@ -1794,6 +1804,18 @@ class LimitUpPredictor:
                 closes.append(float(parts[2]))
                 volumes.append(float(parts[5]))
         return closes, volumes
+
+    def _get_strategy_picks(self, session: str):
+        """全市场策略选股（盘后/盘前用最近完整交易日的日线；盘中成交量不完整，不做）。"""
+        if session not in ("aftermarket", "premarket") or not self.config.get("screening", {}).get("enabled", True):
+            return None
+        try:
+            from src.strategy.screener import StrategyScreener
+
+            return StrategyScreener(self.config).run()
+        except Exception as e:
+            logger.warning(f"策略选股失败: {e}")
+            return None
 
     def _collect_candidate_codes(
         self,

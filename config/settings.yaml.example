@@ -212,6 +212,21 @@ notifier:
     webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/your-hook"
     secret: ""
 
+# --- 全市场策略选股 ---
+# 每日分析后（及 AI涨停预测的盘前/盘后时段）按规则扫描全市场，结果作为 AI 涨停预测的候选来源之一
+# 股票池过滤沿用 config/stock_pool.yaml；依赖日线历史，首次使用先运行 python scripts/fetch_history.py --mode daily
+# 内置策略：volume_breakout 放量突破、strong_close 强势未板、dragon_pullback 龙回头、theme_follow 主线补涨、
+#           trend_pullback 缩量回踩、oversold_rebound 超跌反弹；按大盘环境标注是否适配（适配的排在前面）
+screening:
+  enabled: true
+  max_per_strategy: 10   # 每个策略最多入选数量
+  max_total: 30          # 合并后最多保留数量
+  # 覆盖策略参数或关闭策略，例如：
+  # strategies:
+  #   volume_breakout: {vol_ratio_min: 2.5, amount_min: 200000000}
+  #   oversold_rebound: {enabled: false}
+  strategies: {}
+
 # --- LLM 大盘复盘 ---
 # 按趋势结构、资金情绪、主线板块复盘，给出次日姿态（不会比量化大盘环境更激进）、仓位、关注与回避方向
 # 定时任务在每日报告推送前生成并写进日报；桌面端「大盘复盘」页可手动生成

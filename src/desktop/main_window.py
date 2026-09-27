@@ -850,15 +850,19 @@ class MainWindow(QMainWindow):
         self._review_tab = self._build_review_tab()
         self.main_tabs.addTab(self._review_tab, "大盘复盘")
 
-        # ---- Tab 6: 主线分析 ----
+        # ---- Tab 6: 策略选股 ----
+        self._screening_tab = self._build_screening_tab()
+        self.main_tabs.addTab(self._screening_tab, "策略选股")
+
+        # ---- Tab 7: 主线分析 ----
         self._theme_tab = self._build_theme_tab()
         self.main_tabs.addTab(self._theme_tab, "主线分析")
 
-        # ---- Tab 7: 盘中提醒 ----
+        # ---- Tab 8: 盘中提醒 ----
         self._alert_tab = self._build_alert_tab()
         self.main_tabs.addTab(self._alert_tab, "盘中提醒")
 
-        # ---- Tab 8: 数据源状态 ----
+        # ---- Tab 9: 数据源状态 ----
         self._source_tab = self._build_source_status_tab()
         self.main_tabs.addTab(self._source_tab, "数据源状态")
         self.main_tabs.currentChanged.connect(self._on_main_tab_changed)
@@ -992,6 +996,100 @@ class MainWindow(QMainWindow):
             self.review_label.setText("复盘失败")
         else:
             self.review_label.setText(f"大盘复盘 {review['trade_date']}｜{review['stance']}｜生成于 {review['created_at']}")
+
+    def _build_screening_tab(self) -> QWidget:
+        """全市场策略选股：最近一次结果（含次日涨幅）和各策略近 30 天的次日表现。"""
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 4, 0, 0)
+        bar = QHBoxLayout()
+        self.screening_label = QLabel("策略选股：按规则扫描全市场（股票池过滤见 stock_pool.yaml），结果供 AI涨停预测参考")
+        self.screening_label.setStyleSheet("font-weight: 600; color: #8be9fd; padding: 2px 6px;")
+        self.screening_label.setToolTip(
+            "放量突破：放量突破 20 日平台高点、站上 MA20、收盘强势\n"
+            "强势未板：大涨未封板、收在全天高位、放量，次日冲板候选\n"
+            "龙回头：近 15 日多次涨停的强势股缩量回调到均线附近\n"
+            "主线补涨：当前主线里近期涨停过、今天跟涨未涨停的辨识度个股\n"
+            "缩量回踩：均线多头的趋势股缩量回踩 MA10\n"
+            "超跌反弹：20 日深跌后放量反弹\n"
+            "与当前大盘环境适配的策略排在前面；依赖日线历史，可运行 fetch_history.py --mode daily 补齐。双击查看个股。"
+        )
+        self.btn_screening = QPushButton("重新选股")
+        self.btn_screening.clicked.connect(self._run_screening)
+        bar.addWidget(self.screening_label)
+        bar.addStretch()
+        bar.addWidget(self.btn_screening)
+        tab_layout.addLayout(bar)
+        self.table_screening = self._build_table(["选股日", "代码", "名称", "策略", "得分", "适配环境", "当日涨幅", "收盘", "次日涨幅", "入选理由"])
+        self.table_screening.cellDoubleClicked.connect(self._open_screening_detail)
+        self.table_screening_perf = self._build_table(["策略", "适配环境", "近30天入选", "已验证", "次日平均涨幅", "次日上涨比例", "次日涨停比例"])
+        tab_layout.addWidget(self._wrap("选股结果", self.table_screening), stretch=3)
+        tab_layout.addWidget(self._wrap("策略次日表现（近 30 天）", self.table_screening_perf), stretch=2)
+        self._screening_ran = False
+        return tab
+
+    def _refresh_screening(self):
+        worker = WorkerTask(self.pipeline.latest_screening)
+        worker.signals.finished.connect(self._on_screening_ready)
+        self.thread_pool.start(worker)
+
+    def _run_screening(self):
+        self.btn_screening.setEnabled(False)
+        self.screening_label.setText("全市场选股中…")
+        worker = WorkerTask(self.pipeline.screen_stocks)
+        worker.signals.finished.connect(self._on_screening_done)
+        worker.signals.error.connect(lambda detail: self._on_screening_done({"notes": [detail.splitlines()[0]], "picks": []}))
+        self.thread_pool.start(worker)
+
+    def _on_screening_done(self, result: dict):
+        self.btn_screening.setEnabled(True)
+        self._screening_ran = True
+        stats = result.get("stats") or {}
+        summary = (f"策略选股 {result.get('trade_date', '')}｜大盘环境 {result.get('regime') or '未知'}｜"
+                   f"全市场 {stats.get('universe', 0)} → 股票池 {stats.get('pool', 0)} → 入选 {len(result.get('picks') or [])}")
+        notes = result.get("notes") or []
+        self.screening_label.setText(summary + ("｜" + "；".join(notes) if notes else ""))
+        self._refresh_screening()
+
+    def _on_screening_ready(self, data: dict):
+        picks = data.get("picks") or []
+        self.table_screening.setRowCount(len(picks))
+        for i, p in enumerate(picks):
+            nxt = p.get("next_change_pct")
+            values = [
+                p["trade_date"], p["code"], p["name"], "+".join(p["labels"]), f"{p['score']:.0f}",
+                "适配" if p["fits_regime"] else "不适配", f"{p['change_pct']:+.2f}%", f"{p['close']:.2f}",
+                "--" if nxt is None else f"{nxt:+.2f}%", "；".join(p["reasons"]),
+            ]
+            for col, value in enumerate(values):
+                self.table_screening.setItem(i, col, _item(value))
+            if not p["fits_regime"]:
+                self.table_screening.item(i, 5).setForeground(QColor("#8994b3"))
+            if nxt is not None:
+                self.table_screening.item(i, 8).setForeground(QColor("#ff5555" if nxt > 0 else "#50fa7b" if nxt < 0 else "#dbe7ff"))
+        if not picks and not self._screening_ran:  # 手动选过股时保留选股摘要（含无结果的原因）
+            self.screening_label.setText("暂无选股结果，点击「重新选股」扫描全市场")
+
+        perf = data.get("performance") or []
+        self.table_screening_perf.setRowCount(len(perf))
+
+        def fmt(v, suffix="%", signed=False):
+            return "--" if v is None else (f"{v:+.2f}{suffix}" if signed else f"{v:.1f}{suffix}")
+
+        for i, r in enumerate(perf):
+            values = [r["label"], r["regimes"], r["picks"], r["evaluated"], fmt(r["avg_next_pct"], signed=True),
+                      fmt(r["win_rate"]), fmt(r["limit_up_rate"])]
+            for col, value in enumerate(values):
+                self.table_screening_perf.setItem(i, col, _item(value))
+
+    def _open_screening_detail(self, row: int, _column: int):
+        code_item, name_item = self.table_screening.item(row, 1), self.table_screening.item(row, 2)
+        if not code_item:
+            return
+        try:
+            StockDetailDialog(self.query, code_item.text(), name_item.text() if name_item else "", self, pipeline=self.pipeline).exec()
+        except Exception as e:
+            self._log(f"打开股票详情失败: code={code_item.text()}, err={e}")
 
     def _build_theme_tab(self) -> QWidget:
         """近 5 日涨停池量化的板块主线：阶段、热度趋势、梯队、龙头。"""
@@ -1747,6 +1845,8 @@ class MainWindow(QMainWindow):
             self._refresh_performance()
         elif widget is self._review_tab:
             self._refresh_review()
+        elif widget is self._screening_tab:
+            self._refresh_screening()
         elif widget is self._theme_tab:
             self._refresh_themes()
         elif widget is self._alert_tab:

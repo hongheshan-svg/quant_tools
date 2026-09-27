@@ -159,6 +159,15 @@ def _run_daily_analysis(config: dict):
     except Exception as e:
         logger.error(f"每日分析任务异常: {e}")
 
+    # 5. 全市场策略选股（结果供 AI 涨停预测参考，并统计各策略的次日表现）
+    if config.get("screening", {}).get("enabled", True):
+        from src.strategy.screener import StrategyScreener
+
+        try:
+            StrategyScreener(config).run()
+        except Exception as e:
+            logger.error(f"策略选股任务异常: {e}")
+
 
 def _run_signal_generation(config: dict):
     """每日信号生成"""

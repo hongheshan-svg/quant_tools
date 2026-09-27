@@ -164,6 +164,27 @@ class StockFundFlow(Base):
     )
 
 
+class StrategyPick(Base):
+    """全市场策略选股结果（每个交易日每个策略一批，重新选股会覆盖当天结果）"""
+    __tablename__ = "strategy_pick"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    trade_date = Column(String(10), nullable=False, comment="选股所用行情的交易日")
+    strategy = Column(String(30), nullable=False, comment="策略标识")
+    code = Column(String(10), nullable=False, comment="股票代码（6位）")
+    name = Column(String(20), comment="股票名称")
+    score = Column(Float, comment="策略得分 0~100")
+    reason = Column(Text, comment="入选理由")
+    close = Column(Float, comment="选股日收盘价")
+    change_pct = Column(Float, comment="选股日涨跌幅 %")
+    fits_regime = Column(Boolean, default=True, comment="策略是否适配当时的大盘环境")
+    created_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index("idx_strategy_pick_unique", "trade_date", "strategy", "code", unique=True),
+    )
+
+
 class MarketReview(Base):
     """LLM 大盘复盘（每个交易日一份，重新生成会覆盖）"""
     __tablename__ = "market_review"

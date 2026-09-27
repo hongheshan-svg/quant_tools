@@ -80,6 +80,23 @@ class PipelineService:
 
         return MarketReviewService(self.config).get()
 
+    def screen_stocks(self) -> dict[str, Any]:
+        """全市场策略选股（放量突破、强势未板、龙回头、主线补涨、缩量回踩、超跌反弹）。"""
+        from src.strategy.screener import StrategyScreener
+
+        try:
+            return StrategyScreener(self.config).run().to_dict()
+        except Exception as e:
+            logger.error(f"策略选股异常: {e}")
+            return {"picks": [], "notes": [f"选股失败: {e}"], "stats": {}, "trade_date": "", "regime": ""}
+
+    def latest_screening(self) -> dict[str, Any]:
+        """最近一次选股结果（附次日涨幅）和近 30 天各策略的次日表现。"""
+        from src.strategy.screener import StrategyScreener
+
+        screener = StrategyScreener(self.config)
+        return {"picks": screener.latest(), "performance": screener.performance()}
+
     def market_regime(self) -> dict[str, Any]:
         """大盘环境评估（进攻/均衡/防守/冰点 + 情绪周期）。"""
         from src.analyzers.market_regime import MarketRegimeAnalyzer
