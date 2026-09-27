@@ -115,7 +115,13 @@ python run_dashboard.py
 | `notifier` | 企业微信、钉钉机器人 Webhook |
 | `dashboard` | Web 仪表盘地址和端口 |
 
-股票池过滤规则在 `config/stock_pool.yaml`。目前生效的是黑名单代码、股价范围（默认 3–100 元）和流通市值范围（默认 20–5000 亿元）；文件中的名称关键词、最少上市天数和关注板块暂未被代码使用。ST、\*ST 股票通过 `settings.yaml` 中的 `risk.blacklist_keywords` 过滤。
+股票池过滤规则在 `config/stock_pool.yaml`，下单前由风控模块逐条校验：
+
+- **黑名单：** 指定代码，以及名称中含 ST、\*ST、退 等关键词的股票。
+- **上市天数：** 默认上市不足 60 个自然日的次新股不参与。上市日期取自沪深北交易所官方列表，每天首次校验时自动更新到数据库的 `stock_info` 表。
+- **关注板块：** 按涨停池中的「所属行业」匹配，为空则不限制。
+- **股价范围：** 默认 3–100 元。
+- **流通市值范围：** 默认 20–5000 亿元。
 
 > **注意：** 自学习和桌面端【AI设置】会改写 `config/settings.yaml`，文件中的注释会丢失。如果不希望自学习写回文件，设置 `strategy.learning.persist_to_yaml: false`。
 

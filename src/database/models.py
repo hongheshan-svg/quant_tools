@@ -127,6 +127,22 @@ class LimitUpStock(Base):
     )
 
 
+class StockInfo(Base):
+    """股票基础信息（来自沪深北交易所官方列表）"""
+    __tablename__ = "stock_info"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, comment="股票代码（6位，不带交易所前缀）")
+    name = Column(String(20), comment="股票简称")
+    exchange = Column(String(4), comment="交易所: sh/sz/bj")
+    list_date = Column(String(10), comment="上市日期 YYYY-MM-DD")
+    updated_at = Column(DateTime, default=datetime.now, comment="最后刷新时间")
+
+    __table_args__ = (
+        Index("idx_stock_info_code", "code", unique=True),
+    )
+
+
 class DragonTigerBoard(Base):
     """榫欒檸姒滄暟鎹?"""
     __tablename__ = "dragon_tiger_board"
