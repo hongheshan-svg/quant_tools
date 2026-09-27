@@ -118,6 +118,5 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
 
 - 文档字符串、注释和日志信息用中文（辅助文档采用中文）。
 - 提交信息遵循 Conventional Commits 前缀（`feat:`、`fix:`、`refactor:`、`test:`、`docs:`、`chore:`），一个提交只做一件事。
-- `AGENTS.md` 提到的 Alembic、`frontend/`、`infra/` 在本仓库中都不存在，这些部分请忽略。
 
 每次修改提交git
