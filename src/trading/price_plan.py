@@ -10,6 +10,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from src.utils.stock_code import daily_limit_pct
+
 MIN_STOP_RATIO = 0.8     # 止损价不低于买入价的 80%
 MAX_TARGET_RATIO = 1.6   # 目标价不高于买入价的 160%
 _NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
@@ -20,18 +22,6 @@ class PricePlan:
     entry_price: float | None = None
     stop_loss: float | None = None
     target_price: float | None = None
-
-
-def daily_limit_pct(code: str, name: str = "") -> float:
-    """A股涨跌幅限制：ST 5%，创业板/科创板 20%，北交所 30%，其余 10%。"""
-    bare = (code or "").strip().lower()[-6:]
-    if "ST" in (name or "").upper():
-        return 0.05
-    if bare.startswith(("30", "68")):
-        return 0.20
-    if bare.startswith(("8", "4", "92")):
-        return 0.30
-    return 0.10
 
 
 def to_price(value: Any) -> float | None:

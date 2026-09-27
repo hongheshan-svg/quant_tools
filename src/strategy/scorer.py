@@ -17,6 +17,7 @@ from src.strategy.global_score import calculate_global_score
 from src.strategy.limit_up_score import calculate_limit_up_score
 from src.strategy.sentiment_score import calculate_sentiment_score
 from src.strategy.tech_score import calculate_tech_score
+from src.utils.stock_code import bare_code
 
 TIME_RAW_WITH_SECONDS_LEN = 6
 TIME_RAW_WITH_MINUTES_LEN = 4
@@ -31,8 +32,6 @@ BUY_SCORE = 60
 HOLD_TOP_PCT = 0.50
 HOLD_SCORE = 45
 
-EXCHANGE_CODE_LEN = 8
-EXCHANGE_PREFIX_LEN = 2
 NEUTRAL_BASE_SCORE = 50
 
 
@@ -237,7 +236,7 @@ class CompositeScorer:
                 )
                 for d in daily_rows:
                     daily_map[d.code] = d
-                    bare = self._bare_code(d.code)
+                    bare = bare_code(d.code)
                     if bare:
                         daily_map.setdefault(bare, d)
 
@@ -248,7 +247,7 @@ class CompositeScorer:
                         continue
 
                     # ---- 一字板过滤 ----
-                    daily = daily_map.get(r.code) or daily_map.get(self._bare_code(r.code))
+                    daily = daily_map.get(r.code) or daily_map.get(bare_code(r.code))
                     is_yizi = _is_yizi_ban(r, daily)
 
                     if is_yizi:
@@ -269,13 +268,6 @@ class CompositeScorer:
         except Exception as e:
             logger.error(f"获取候选股票失败: {e}")
         return candidates
-
-    @staticmethod
-    def _bare_code(code: str | None) -> str:
-        raw = (code or "").strip().lower()
-        if len(raw) == EXCHANGE_CODE_LEN and raw[:EXCHANGE_PREFIX_LEN] in {"sh", "sz", "bj"} and raw[EXCHANGE_PREFIX_LEN:].isdigit():
-            return raw[EXCHANGE_PREFIX_LEN:]
-        return raw
 
     def _score_stock(self, code: str) -> dict:
         """对单只股票进行多维评分"""

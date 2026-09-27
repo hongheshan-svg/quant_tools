@@ -25,10 +25,9 @@ from src.database.models import (
     StockScore,
     TradeSignal,
 )
+from src.utils.stock_code import code_candidates
 
 MIN_CORRELATION_SAMPLE_SIZE = 3
-STOCK_CODE_LENGTH = 6
-PREFIXED_STOCK_CODE_LENGTH = 8
 PEARSON_EPSILON = 1e-12
 
 
@@ -420,22 +419,8 @@ class SelfLearningService:
         score += conf_bias
         return round(max(0.0, min(100.0, score)), 3)
 
-    @staticmethod
-    def _candidate_codes(code: str) -> list[str]:
-        raw = (code or "").strip().lower()
-        if not raw:
-            return []
-        cands = [raw]
-        if len(raw) == STOCK_CODE_LENGTH and raw.isdigit():
-            cands.extend([f"sh{raw}", f"sz{raw}", f"bj{raw}"])
-        elif len(raw) == PREFIXED_STOCK_CODE_LENGTH and raw[:2] in {"sh", "sz", "bj"} and raw[2:].isdigit():
-            bare = raw[2:]
-            cands.extend([bare, f"sh{bare}", f"sz{bare}", f"bj{bare}"])
-        # 去重保持顺序
-        return list(dict.fromkeys(cands))
-
     def _find_stock_daily(self, session, code: str, trade_date: str) -> StockDaily | None:
-        cands = self._candidate_codes(code)
+        cands = code_candidates(code)
         if not cands:
             return None
         return (
@@ -445,7 +430,7 @@ class SelfLearningService:
         )
 
     def _is_limit_up(self, session, code: str, trade_date: str) -> bool:
-        cands = self._candidate_codes(code)
+        cands = code_candidates(code)
         if not cands:
             return False
         row = (

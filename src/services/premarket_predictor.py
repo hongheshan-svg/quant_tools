@@ -15,6 +15,7 @@ from datetime import date, datetime, timedelta
 from loguru import logger
 
 from src.analyzers.llm_client import LLMClient
+from src.utils.stock_code import code_candidates
 from src.config_loader import load_config
 from src.database.db import get_db_session
 from src.database.models import (
@@ -1710,7 +1711,7 @@ class LimitUpPredictor:
     def _latest_close(session, code: str) -> float | None:
         row = (
             session.query(StockDaily.close)
-            .filter(StockDaily.code.in_([code, f"sh{code}", f"sz{code}", f"bj{code}"]), StockDaily.close > 0)
+            .filter(StockDaily.code.in_(code_candidates(code)), StockDaily.close > 0)
             .order_by(StockDaily.trade_date.desc())
             .first()
         )

@@ -11,12 +11,10 @@ from src import trading_calendar
 from src.config_loader import load_config
 from src.database.db import get_db_session
 from src.database.models import LimitUpStock, StockDaily, StockInfo, TradeSignal
+from src.utils.stock_code import bare_code, code_candidates
 
 STOCK_POOL_CONFIG_PATH = "config/stock_pool.yaml"
 
-RAW_CODE_LEN = 6
-EXCHANGE_CODE_LEN = 8
-EXCHANGE_PREFIX_LEN = 2
 
 HIGH_RISK_REASON_COUNT = 2
 
@@ -214,8 +212,8 @@ class RiskManager:
         min_listing_days = int(blacklist_cfg.get("min_listing_days") or 0)
         focus_sectors = [str(s) for s in pool_cfg.get("focus_sectors") or [] if s]
 
-        blacklist_codes = {self._bare_code(str(c)) for c in blacklist_cfg.get("codes") or []}
-        if self._bare_code(stock_code) in blacklist_codes:
+        blacklist_codes = {bare_code(str(c)) for c in blacklist_cfg.get("codes") or []}
+        if bare_code(stock_code) in blacklist_codes:
             return self._reject_from_pool(stock_code, "黑名单代码")
 
         if min_listing_days > 0:
@@ -223,7 +221,7 @@ class RiskManager:
 
         try:
             with get_db_session(self.db_path) as session:
-                cands = self._code_candidates(stock_code)
+                cands = code_candidates(stock_code)
                 stock = (
                     session.query(StockDaily)
                     .filter(StockDaily.code.in_(cands))
@@ -291,26 +289,6 @@ class RiskManager:
     def _reject_from_pool(stock_code: str, reason: str) -> bool:
         logger.debug(f"[风控] {stock_code} 不在股票池: {reason}")
         return False
-
-    @staticmethod
-    def _bare_code(stock_code: str) -> str:
-        """去掉 sh/sz/bj 前缀，返回 6 位代码。"""
-        raw = (stock_code or "").strip().lower()
-        if len(raw) == EXCHANGE_CODE_LEN and raw[:EXCHANGE_PREFIX_LEN] in {"sh", "sz", "bj"}:
-            return raw[EXCHANGE_PREFIX_LEN:]
-        return raw
-
-    @staticmethod
-    def _code_candidates(stock_code: str) -> list[str]:
-        """同一只股票在各表中可能的代码写法（带或不带交易所前缀）。"""
-        raw = (stock_code or "").strip().lower()
-        cands = [raw]
-        if len(raw) == RAW_CODE_LEN and raw.isdigit():
-            cands.extend([f"sh{raw}", f"sz{raw}", f"bj{raw}"])
-        elif len(raw) == EXCHANGE_CODE_LEN and raw[:EXCHANGE_PREFIX_LEN] in {"sh", "sz", "bj"} and raw[EXCHANGE_PREFIX_LEN:].isdigit():
-            bare = raw[EXCHANGE_PREFIX_LEN:]
-            cands.extend([bare, f"sh{bare}", f"sz{bare}", f"bj{bare}"])
-        return list(dict.fromkeys(cands))
 
     def validate_order_intent(self, intent: dict) -> dict:
         """

@@ -14,10 +14,7 @@ from loguru import logger
 
 from src.database.db import get_db_session
 from src.database.models import StockDaily
-
-RAW_CODE_LEN = 6
-EXCHANGE_CODE_LEN = 8
-EXCHANGE_PREFIX_LEN = 2
+from src.utils.stock_code import code_candidates
 
 HISTORY_LIMIT = 60
 MIN_RECORDS_REQUIRED = 5
@@ -75,19 +72,6 @@ class TechnicalAnalysis:
         return " ".join(parts)
 
 
-def _code_candidates(stock_code: str) -> list[str]:
-    raw = (stock_code or "").strip().lower()
-    if not raw:
-        return []
-    cands = [raw]
-    if len(raw) == RAW_CODE_LEN and raw.isdigit():
-        cands.extend([f"sh{raw}", f"sz{raw}", f"bj{raw}"])
-    elif len(raw) == EXCHANGE_CODE_LEN and raw[:EXCHANGE_PREFIX_LEN] in {"sh", "sz", "bj"} and raw[EXCHANGE_PREFIX_LEN:].isdigit():
-        bare = raw[EXCHANGE_PREFIX_LEN:]
-        cands.extend([bare, f"sh{bare}", f"sz{bare}", f"bj{bare}"])
-    return list(dict.fromkeys(cands))
-
-
 def calculate_tech_score(stock_code: str, db_path: str = "data/quant.db") -> float:
     """计算技术面评分 (0-100)，数据不足或出错时返回 50。"""
     return analyze_technical(stock_code, db_path).score
@@ -99,7 +83,7 @@ def analyze_technical(stock_code: str, db_path: str = "data/quant.db") -> Techni
         with get_db_session(db_path) as session:
             records = (
                 session.query(StockDaily)
-                .filter(StockDaily.code.in_(_code_candidates(stock_code)))
+                .filter(StockDaily.code.in_(code_candidates(stock_code)))
                 .order_by(StockDaily.trade_date.desc())
                 .limit(HISTORY_LIMIT)
                 .all()

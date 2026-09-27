@@ -19,6 +19,7 @@ from src.database.models import (
     StockScore,
     TradeSignal,
 )
+from src.utils.stock_code import prefixed_code
 
 HIGH_IMPORTANCE_THRESHOLD = 7
 MEDIUM_IMPORTANCE_THRESHOLD = 4
@@ -679,14 +680,7 @@ class DataQueryService:
                     prefixed = []
                     prefix_to_bare: dict[str, str] = {}
                     for c in bare_codes:
-                        if c.startswith("6"):
-                            pc = f"sh{c}"
-                        elif c.startswith(("0", "3")):
-                            pc = f"sz{c}"
-                        elif c.startswith(("8", "4")):
-                            pc = f"bj{c}"
-                        else:
-                            pc = c  # fallback
+                        pc = prefixed_code(c)
                         prefixed.append(pc)
                         prefix_to_bare[pc] = c
                     # 同时尝试原始 code 和带前缀的 code（兼容不同存储格式）
@@ -834,14 +828,7 @@ class DataQueryService:
                 top_codes_prefixed = []
                 _prefix_bare_map: dict[str, str] = {}
                 for c in top_codes:
-                    if c.startswith("6"):
-                        pc = f"sh{c}"
-                    elif c.startswith(("0", "3")):
-                        pc = f"sz{c}"
-                    elif c.startswith(("8", "4")):
-                        pc = f"bj{c}"
-                    else:
-                        pc = c
+                    pc = prefixed_code(c)
                     top_codes_prefixed.append(pc)
                     _prefix_bare_map[pc] = c
                 all_query_codes = list(set(top_codes + top_codes_prefixed))
@@ -925,14 +912,7 @@ class DataQueryService:
         if len(bare) != STOCK_CODE_LENGTH:
             return "", []
 
-        variants = [bare]
-        if bare.startswith(("6", "9")):
-            variants.append(f"sh{bare}")
-        elif bare.startswith(("4", "8")):
-            variants.append(f"bj{bare}")
-        else:
-            variants.append(f"sz{bare}")
-        return bare, variants
+        return bare, [bare, prefixed_code(bare)]
 
     @staticmethod
     def _code_match_priority(record_code: str, bare_code: str) -> int:

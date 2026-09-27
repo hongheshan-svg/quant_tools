@@ -37,12 +37,12 @@ from src.trading.constants import (
 )
 from src.trading.models import CancelOrderRequest, OrderIntent, PlaceOrderRequest
 from src.trading.order_mapper import build_idempotency_key, signal_to_order_intent
+from src.utils.stock_code import code_candidates
 
 
 class ExecutionService:
     """统一交易执行服务。"""
 
-    STOCK_CODE_LENGTH = 6
     # 评分引擎信号（无 AI 研判）只有这些评级才下单；hold 仅作关注信号
     BUY_RECOMMENDATIONS = frozenset({"strong_buy", "buy"})
 
@@ -567,13 +567,9 @@ class ExecutionService:
             return session.query(func.max(TradeSignal.signal_date)).scalar()
 
     def _get_latest_close(self, session, code: str) -> float:
-        cands = [code]
-        raw = (code or "").strip()
-        if len(raw) == self.STOCK_CODE_LENGTH and raw.isdigit():
-            cands.extend([f"sh{raw}", f"sz{raw}", f"bj{raw}"])
         row = (
             session.query(StockDaily)
-            .filter(StockDaily.code.in_(list(dict.fromkeys(cands))))
+            .filter(StockDaily.code.in_(code_candidates(code)))
             .order_by(StockDaily.trade_date.desc())
             .first()
         )

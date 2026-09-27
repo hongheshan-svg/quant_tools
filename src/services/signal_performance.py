@@ -25,6 +25,7 @@ from src.config_loader import load_config
 from src.database.db import get_db_session
 from src.database.models import LimitUpStock, StockDaily, TradeSignal
 from src.services.self_learning import parse_signal_reason, signal_evaluation_date
+from src.utils.stock_code import bare_code, code_candidates
 
 HORIZONS = (1, 3, 5)
 DEFAULT_LOOKBACK_DAYS = 60
@@ -130,7 +131,7 @@ class SignalPerformanceService:
             signal_id=sig.id,
             signal_date=sig.signal_date,
             eval_date=signal_evaluation_date(signal_type, sig.signal_date),
-            code=(sig.code or "").strip().lower().removeprefix("sh").removeprefix("sz").removeprefix("bj"),
+            code=bare_code(sig.code),
             name=sig.name or "",
             signal_type=signal_type,
             source=source,
@@ -142,8 +143,7 @@ class SignalPerformanceService:
         """一次性取出所有相关股票在最早验证日之后的日线，按代码分组（兼容带交易所前缀的代码）。"""
         if not evaluations:
             return {}
-        codes = {ev.code for ev in evaluations}
-        cands = codes | {f"{p}{c}" for c in codes for p in ("sh", "sz", "bj")}
+        cands = {cand for ev in evaluations for cand in code_candidates(ev.code)}
         rows = (
             session.query(StockDaily)
             .filter(StockDaily.code.in_(sorted(cands)), StockDaily.trade_date >= min(ev.eval_date for ev in evaluations))
