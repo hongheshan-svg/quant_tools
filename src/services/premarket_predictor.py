@@ -80,6 +80,11 @@ PREDICT_PROMPT = """你是A股短线实战专家，擅长从新闻热点、市�
 - 全市场标的优先涨幅7-9%且换手率合理的（{next_day}冲板概率高）
 - 如果热点里有多只相关个股，选技术形态最好的那只（多头排列优先）
 
+价格计划（buy_price / stop_loss / target_price）：
+- 必须以数据中给出的最新价/收盘价为基准，买入价不能超出{next_day}涨跌停范围
+- 止损价低于买入价（一般下方 3%~8%，参考关键均线或涨停价位），目标价高于买入价（一般上方 5%~20%）
+- 数据中没有该股价格或无法判断时填 null，不要编造
+
 返回 JSON 格式：
 {{
   "market_outlook": "{predict_horizon}大盘研判(30字以内)",
@@ -93,7 +98,10 @@ PREDICT_PROMPT = """你是A股短线实战专家，擅长从新闻热点、市�
       "confidence": 1到10的整数(10=最高信心),
       "target_time": "{next_day}操作建议(如：明日集合竞价低吸/明日回封确认/明日尾盘潜伏)",
       "reason": "{next_day}核心逻辑(40字以内)",
-      "risk": "主要风险(20字以内)"
+      "risk": "主要风险(20字以内)",
+      "buy_price": 建议买入价(数字或null),
+      "stop_loss": 止损价(数字或null),
+      "target_price": 目标价(数字或null)
     }}
   ]
 }}
@@ -658,6 +666,8 @@ class LimitUpPredictor:
                 f"流通市值={s['circ_mv_yi']:.1f}亿 "
                 f"{'[一字板]' if s['is_yizi'] else ''}"
             )
+            if s.get("close"):
+                line += f" 收盘价={s['close']:.2f}"
             if s.get("tech"):
                 line += f" 技术面={s['tech']}"
             lines.append(line)
@@ -1297,6 +1307,7 @@ class LimitUpPredictor:
 
             line = (
                 f"{s['name']}({s['code']}) "
+                f"最新价={s['close']:.2f} "
                 f"涨幅={s['change_pct']:+.2f}% "
                 f"换手={s['turnover']:.1f}% "
                 f"成交={s['amount_yi']:.1f}亿 "
@@ -1695,9 +1706,21 @@ class LimitUpPredictor:
 
     # ---- 保存 ----
 
+    @staticmethod
+    def _latest_close(session, code: str) -> float | None:
+        row = (
+            session.query(StockDaily.close)
+            .filter(StockDaily.code.in_([code, f"sh{code}", f"sz{code}", f"bj{code}"]), StockDaily.close > 0)
+            .order_by(StockDaily.trade_date.desc())
+            .first()
+        )
+        return float(row[0]) if row else None
+
     def _save_predictions(self, today: str, predictions: list[dict],
                           market_outlook: str, main_theme: str):
-        """将预测结果写入 TradeSignal 表。"""
+        """将预测结果写入 TradeSignal 表（价格计划经过校验，不合理的价格丢弃）。"""
+        from src.trading.price_plan import sanitize_price_plan
+
         try:
             with get_db_session(self.db_path) as session:
                 # 清除今日旧预测
@@ -1732,6 +1755,18 @@ class LimitUpPredictor:
                     if market_outlook:
                         advice_parts.append(f"大盘:{market_outlook}")
 
+                    plan = sanitize_price_plan(
+                        code, p.get("name", ""), self._latest_close(session, code),
+                        p.get("buy_price"), p.get("stop_loss"), p.get("target_price"),
+                    )
+                    plan_text = " ".join(
+                        f"{label}{value:.2f}"
+                        for label, value in (("买入", plan.entry_price), ("止损", plan.stop_loss), ("目标", plan.target_price))
+                        if value
+                    )
+                    if plan_text:
+                        advice_parts.append(f"计划:{plan_text}")
+
                     signal = TradeSignal(
                         code=code,
                         name=p.get("name", ""),
@@ -1742,6 +1777,9 @@ class LimitUpPredictor:
                         reason=structured_reason,
                         ai_verdict="买入" if confidence >= HIGH_CONFIDENCE_THRESHOLD else "观望" if confidence >= MEDIUM_CONFIDENCE_THRESHOLD else "回避",
                         ai_advice=" | ".join(advice_parts),
+                        entry_price=plan.entry_price,
+                        stop_loss_price=plan.stop_loss,
+                        target_price=plan.target_price,
                         is_executed=False,
                     )
                     session.add(signal)

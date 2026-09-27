@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime
 from uuid import uuid4
 
 from loguru import logger
@@ -33,9 +33,10 @@ from src.trading.constants import (
     ORDER_STATUS_REJECTED,
     ORDER_STATUS_SUBMITTED,
     SIDE_BUY,
+    SIDE_SELL,
 )
 from src.trading.models import CancelOrderRequest, OrderIntent, PlaceOrderRequest
-from src.trading.order_mapper import signal_to_order_intent
+from src.trading.order_mapper import build_idempotency_key, signal_to_order_intent
 
 
 class ExecutionService:
@@ -82,18 +83,14 @@ class ExecutionService:
         with get_db_session(self.db_path) as session:
             for pos in self.broker.get_positions():
                 price = self._get_latest_close(session, pos.code) or pos.market_price or pos.avg_cost
-                name = pos.name or (
-                    session.query(TradeOrder.name)
-                    .filter(TradeOrder.code == pos.code, TradeOrder.name != "")
-                    .order_by(TradeOrder.created_at.desc())
-                    .limit(1)
-                    .scalar()
-                    or ""
-                )
+                name = pos.name or self._latest_order_name(session, pos.code)
+                stop_loss, target_price = self._exit_plan(session, pos.code, pos.avg_cost)
                 positions.append(
                     {
                         "code": pos.code,
                         "name": name,
+                        "stop_loss": stop_loss,
+                        "target_price": target_price,
                         "quantity": pos.quantity,
                         "available_quantity": pos.available_quantity,
                         "avg_cost": pos.avg_cost,
@@ -114,6 +111,101 @@ class ExecutionService:
             "positions": positions,
             "orders": self.list_orders(limit=order_limit),
         }
+
+    def generate_exit_orders(self) -> dict:
+        """持仓最新价触及止损价或目标价时生成卖出订单（每只股票每天最多一笔）；auto_confirm 时直接确认。"""
+        self._sync_paper_account()
+        today = date.today().strftime("%Y-%m-%d")
+        created: list[str] = []
+        with get_db_session(self.db_path) as session:
+            for pos in self.broker.get_positions():
+                if pos.available_quantity <= 0:  # T+1：当日买入不可卖
+                    continue
+                price = self._get_latest_close(session, pos.code)
+                if price <= 0:
+                    continue
+                stop_loss, target_price = self._exit_plan(session, pos.code, pos.avg_cost)
+                if price <= stop_loss:
+                    tag, note = "stop_loss", f"触发止损：最新价{price:.2f} ≤ 止损价{stop_loss:.2f}"
+                elif price >= target_price:
+                    tag, note = "take_profit", f"触发止盈：最新价{price:.2f} ≥ 目标价{target_price:.2f}"
+                else:
+                    continue
+
+                key = build_idempotency_key(today, pos.code, SIDE_SELL, "exit")
+                if session.query(TradeOrder.id).filter(TradeOrder.idempotency_key == key).first():
+                    continue
+                name = pos.name or self._latest_order_name(session, pos.code)
+                intent = OrderIntent(
+                    signal_id=None,
+                    signal_date=today,
+                    code=pos.code,
+                    name=name,
+                    side=SIDE_SELL,
+                    order_type="limit",
+                    price=round(price, 3),
+                    quantity=int(pos.available_quantity),
+                    strategy_tag=tag,
+                    idempotency_key=key,
+                )
+                risk_result = self.risk.validate_order_intent(
+                    {"code": pos.code, "name": name, "side": SIDE_SELL, "price": intent.price, "quantity": intent.quantity}
+                )
+                if not risk_result.get("passed", False):
+                    self._create_rejected_order(session, intent, risk_result)
+                    continue
+
+                order = TradeOrder(
+                    id=uuid4().hex,
+                    signal_date=today,
+                    code=pos.code,
+                    name=name,
+                    side=SIDE_SELL,
+                    order_type=intent.order_type,
+                    price=intent.price,
+                    quantity=intent.quantity,
+                    amount=round(intent.price * intent.quantity, 2),
+                    status=ORDER_STATUS_PENDING_CONFIRM,
+                    broker=self.broker.name,
+                    strategy_tag=tag,
+                    idempotency_key=key,
+                    risk_note=note,
+                )
+                session.add(order)
+                self._add_event(session, order_id=order.id, event_type="EXIT_ORDER_PREPARED", payload={"reason": note})
+                created.append(order.id)
+                logger.info(f"{pos.code} {note}，生成卖出订单 {intent.quantity} 股")
+
+        confirmed = 0
+        if created and self.auto_confirm and self.broker.name == "paper":
+            for order_id in created:
+                if self.confirm_and_send(order_id, operator="auto").get("ok"):
+                    confirmed += 1
+        return {"exit_orders": len(created), "confirmed": confirmed}
+
+    def _exit_plan(self, session, code: str, avg_cost: float) -> tuple[float, float]:
+        """持仓的止损价和目标价：优先用最近一笔已成交买单所对应信号的价格计划，否则按风控比例。"""
+        plan = (
+            session.query(TradeSignal.stop_loss_price, TradeSignal.target_price)
+            .join(TradeOrder, TradeOrder.signal_id == TradeSignal.id)
+            .filter(TradeOrder.code == code, TradeOrder.side == SIDE_BUY, TradeOrder.status == ORDER_STATUS_FILLED)
+            .order_by(TradeOrder.created_at.desc())
+            .first()
+        )
+        stop_loss = float(plan[0]) if plan and plan[0] else round(avg_cost * (1 + self.risk.stop_loss_pct), 3)
+        target_price = float(plan[1]) if plan and plan[1] else round(avg_cost * (1 + self.risk.take_profit_pct), 3)
+        return stop_loss, target_price
+
+    @staticmethod
+    def _latest_order_name(session, code: str) -> str:
+        return (
+            session.query(TradeOrder.name)
+            .filter(TradeOrder.code == code, TradeOrder.name != "")
+            .order_by(TradeOrder.created_at.desc())
+            .limit(1)
+            .scalar()
+            or ""
+        )
 
     def prepare_orders(self, signal_date: str | None = None) -> list[str]:
         """生成待确认订单。"""
@@ -147,7 +239,8 @@ class ExecutionService:
                 if not code:
                     continue
 
-                close_price = self._get_latest_close(session, code)
+                # 优先使用信号价格计划中的买入价，没有时用最新收盘价
+                close_price = float(sig.entry_price or 0) or self._get_latest_close(session, code)
                 intent = signal_to_order_intent(
                     signal_id=sig.id,
                     signal_date=sig.signal_date,
@@ -459,7 +552,7 @@ class ExecutionService:
         try:
             with get_db_session(self.db_path) as session:
                 rows = (
-                    session.query(TradeFill.code, TradeFill.side, TradeFill.price, TradeFill.quantity)
+                    session.query(TradeFill.code, TradeFill.side, TradeFill.price, TradeFill.quantity, TradeFill.filled_at)
                     .join(TradeOrder, TradeOrder.id == TradeFill.order_id)
                     .filter(TradeOrder.broker == self.broker.name)
                     .order_by(TradeFill.filled_at, TradeFill.id)

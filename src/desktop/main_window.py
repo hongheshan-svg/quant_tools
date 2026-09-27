@@ -812,10 +812,13 @@ class MainWindow(QMainWindow):
         self.btn_confirm_order.setToolTip("确认选中的待确认订单，提交到模拟盘")
         self.btn_cancel_order = QPushButton("撤销订单")
         self.btn_cancel_order.setToolTip("撤销选中的未完成订单")
+        self.btn_check_exits = QPushButton("检查止损止盈")
+        self.btn_check_exits.setToolTip("持仓最新价触及止损价或目标价时生成卖出订单（每次自动采集后也会检查）")
         self.btn_refresh_trading = QPushButton("刷新")
         bar.addWidget(self.trading_account_label)
         bar.addStretch()
-        for b in (self.btn_prepare_orders, self.btn_confirm_order, self.btn_cancel_order, self.btn_refresh_trading):
+        for b in (self.btn_prepare_orders, self.btn_confirm_order, self.btn_cancel_order,
+                  self.btn_check_exits, self.btn_refresh_trading):
             bar.addWidget(b)
         tab_layout.addLayout(bar)
 
@@ -824,7 +827,7 @@ class MainWindow(QMainWindow):
         )
         self.table_orders.setColumnWidth(0, 150)
         self.table_positions = self._build_table(
-            ["代码", "名称", "持仓", "可卖", "成本价", "最新价", "市值", "浮动盈亏"]
+            ["代码", "名称", "持仓", "可卖", "成本价", "最新价", "止损价", "目标价", "市值", "浮动盈亏"]
         )
         tab_layout.addWidget(self._wrap("订单（选中后可确认下单或撤单）", self.table_orders), stretch=3)
         tab_layout.addWidget(self._wrap("持仓", self.table_positions), stretch=2)
@@ -873,6 +876,7 @@ class MainWindow(QMainWindow):
         self.btn_confirm_order.clicked.connect(self._confirm_selected_order)
         self.btn_cancel_order.clicked.connect(self._cancel_selected_order)
         self.btn_refresh_trading.clicked.connect(self._refresh_trading)
+        self.btn_check_exits.clicked.connect(lambda: self._run_task("检查止损止盈", self.pipeline.check_exits))
         self.btn_refresh_performance.clicked.connect(self._refresh_performance)
 
     def _setup_loguru_sink(self):
@@ -1104,6 +1108,15 @@ class MainWindow(QMainWindow):
         self._log(f"自动采集完成: {self._humanize_result(result)}")
         # 采集完成后自动刷新界面
         self.refresh_dashboard(force=True)
+        # 行情更新后检查持仓止损止盈（后台静默执行）
+        worker = WorkerTask(self.pipeline.check_exits)
+        worker.signals.finished.connect(self._on_exit_check_done)
+        self.thread_pool.start(worker)
+
+    def _on_exit_check_done(self, result: dict):
+        if result.get("exit_orders"):
+            self._log(f"持仓触发止损/止盈，已生成 {result['exit_orders']} 笔卖出订单，请到【模拟交易】页确认。")
+            self._refresh_trading()
 
     def _on_auto_collect_error(self, err: str):
         self._auto_collect_inflight = False
@@ -1314,7 +1327,8 @@ class MainWindow(QMainWindow):
 
     def _set_busy(self, busy: bool, status: str):
         self._busy = busy
-        for b in (self.btn_premarket, self.btn_prepare_orders, self.btn_confirm_order, self.btn_cancel_order):
+        for b in (self.btn_premarket, self.btn_prepare_orders, self.btn_confirm_order,
+                  self.btn_cancel_order, self.btn_check_exits):
             b.setEnabled(not busy)
         self.status_label.setText(f"状态: {status}")
 
@@ -1429,13 +1443,15 @@ class MainWindow(QMainWindow):
                 p.get("available_quantity"),
                 f"{float(p.get('avg_cost') or 0):.3f}",
                 f"{float(p.get('market_price') or 0):.2f}",
+                f"{float(p.get('stop_loss') or 0):.2f}",
+                f"{float(p.get('target_price') or 0):.2f}",
                 f"{float(p.get('market_value') or 0):,.2f}",
                 f"{pnl:+,.2f}",
             ]
             for col, value in enumerate(values):
                 self.table_positions.setItem(i, col, _item(value))
             if pnl:
-                self.table_positions.item(i, 7).setForeground(QColor("#ff5555" if pnl > 0 else "#50fa7b"))
+                self.table_positions.item(i, 9).setForeground(QColor("#ff5555" if pnl > 0 else "#50fa7b"))
 
     # ---------- 信号绩效 ----------
     def _on_main_tab_changed(self, index: int):
@@ -2155,6 +2171,7 @@ class MainWindow(QMainWindow):
             "ok": "成功",
             "order_id": "订单号",
             "error": "错误",
+            "exit_orders": "卖出订单",
         }
 
         def transform(obj: Any):

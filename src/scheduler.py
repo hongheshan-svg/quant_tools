@@ -93,6 +93,17 @@ def _run_stock_data_collection(config: dict):
         collector.safe_collect()
     except Exception as e:
         logger.error(f"行情数据采集任务异常: {e}")
+        return
+
+    # 行情更新后检查模拟盘持仓的止损止盈
+    try:
+        from src.trading.execution_service import ExecutionService
+
+        execution = ExecutionService(config)
+        if execution.enabled:
+            execution.generate_exit_orders()
+    except Exception as e:
+        logger.error(f"止损止盈检查异常: {e}")
 
 
 def _run_global_data_collection(config: dict):

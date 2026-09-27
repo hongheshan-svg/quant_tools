@@ -366,6 +366,7 @@ class TradeSignal(Base):
     signal_date = Column(String(10), nullable=False, comment="信号日期")
     signal_type = Column(String(10), nullable=False, comment="信号类型: buy/sell")
     signal_strength = Column(Float, comment="信号强度 0-1")
+    entry_price = Column(Float, comment="建议买入价")
     target_price = Column(Float, comment="目标价")
     stop_loss_price = Column(Float, comment="止损价")
     composite_score = Column(Float, comment="综合评分")

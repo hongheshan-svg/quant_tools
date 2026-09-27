@@ -1,8 +1,8 @@
-"""Paper broker adapter for simulation."""
+"""Paper broker adapter for simulation (A股 T+1：当日买入次日可卖)."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from threading import RLock
 from uuid import uuid4
 
@@ -207,15 +207,19 @@ class PaperBrokerAdapter(BrokerAdapter):
                 fills=list(od.get("fills", [])),
             )
 
-    def restore_fills(self, fills: list[tuple[str, str, float, int]]) -> None:
-        """从初始资金开始按时间顺序重放历史成交 (code, side, price, quantity)，恢复现金和持仓。"""
+    def restore_fills(self, fills: list[tuple[str, str, float, int, datetime | None]]) -> None:
+        """从初始资金开始按时间顺序重放历史成交 (code, side, price, quantity, filled_at)，恢复现金和持仓。
+        今天之前的买入计入可卖数量，今天的买入按 T+1 不可卖。"""
+        today = date.today()
         with self._lock:
             self._cash = self._initial_cash
             self._positions = {}
-            for code, side, price, quantity in fills:
-                self._apply_fill(code, side, float(price or 0), int(quantity or 0))
+            for code, side, price, quantity, filled_at in fills:
+                settled = filled_at is None or filled_at.date() < today
+                self._apply_fill(code, side, float(price or 0), int(quantity or 0), settled=settled)
 
-    def _apply_fill(self, code: str, side: str, price: float, quantity: int) -> None:
+    def _apply_fill(self, code: str, side: str, price: float, quantity: int, settled: bool = False) -> None:
+        """settled=False 表示当日买入，按 T+1 不增加可卖数量。"""
         amount = price * quantity
         pos = self._positions.get(code)
         if side == "buy":
@@ -224,7 +228,7 @@ class PaperBrokerAdapter(BrokerAdapter):
                 self._positions[code] = Position(
                     code=code,
                     quantity=quantity,
-                    available_quantity=quantity,
+                    available_quantity=quantity if settled else 0,
                     avg_cost=price,
                     market_price=price,
                     market_value=amount,
@@ -234,7 +238,8 @@ class PaperBrokerAdapter(BrokerAdapter):
                 total_cost = pos.avg_cost * pos.quantity + amount
                 total_qty = pos.quantity + quantity
                 pos.quantity = total_qty
-                pos.available_quantity = total_qty
+                if settled:
+                    pos.available_quantity += quantity
                 pos.avg_cost = total_cost / total_qty if total_qty > 0 else 0.0
                 pos.market_price = price
                 pos.market_value = pos.market_price * pos.quantity

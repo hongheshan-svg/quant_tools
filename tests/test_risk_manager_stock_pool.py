@@ -103,10 +103,16 @@ def test_validate_order_intent_reports_stock_pool_rejection(tmp_path, monkeypatc
     rm, _ = _make_risk_manager(tmp_path, {"blacklist": {"name_keywords": ["退"]}}, monkeypatch)
 
     result = rm.validate_order_intent(
-        {"code": "000001", "name": "退市样本", "side": "sell", "price": 10.0, "quantity": 100}
+        {"code": "000001", "name": "退市样本", "side": "buy", "price": 10.0, "quantity": 100}
     )
     assert result["passed"] is False
     assert "stock not in stock_pool" in result["reasons"]
+
+    # 卖出（止损离场）不受黑名单和股票池限制
+    sell = rm.validate_order_intent(
+        {"code": "000001", "name": "*ST退市样本", "side": "sell", "price": 10.0, "quantity": 100}
+    )
+    assert sell == {"passed": True, "risk_level": "low", "reasons": []}
     _reset_db_engine()
 
 

@@ -67,6 +67,15 @@ class PipelineService:
             logger.error(f"生成订单异常: {e}")
             return {"prepared": 0, "confirmed": 0, "error": str(e)}
 
+    def check_exits(self) -> dict[str, Any]:
+        """检查模拟盘持仓的止损止盈，触发时生成卖出订单。"""
+        try:
+            with self._execution_lock:
+                return self.execution.generate_exit_orders()
+        except Exception as e:
+            logger.error(f"止损止盈检查异常: {e}")
+            return {"exit_orders": 0, "confirmed": 0, "error": str(e)}
+
     def confirm_order(self, order_id: str) -> dict[str, Any]:
         with self._execution_lock:
             return self.execution.confirm_and_send(order_id, operator="desktop")

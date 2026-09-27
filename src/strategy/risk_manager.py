@@ -342,9 +342,10 @@ class RiskManager:
             reasons.append("quantity must > 0")
         if quantity % 100 != 0:
             reasons.append("quantity must be 100-lot")
-        if name and self._is_blacklisted(name):
+        # 黑名单和股票池只限制买入；卖出（止损/止盈离场）不能被拦截
+        if side == "buy" and name and self._is_blacklisted(name):
             reasons.append("stock in blacklist")
-        if code and not self._check_stock_pool(code, name):
+        if side == "buy" and code and not self._check_stock_pool(code, name):
             reasons.append("stock not in stock_pool")
 
         if side == "buy" and self._is_market_circuit_breaker():
