@@ -6,7 +6,7 @@
 - 编排：`services/` 串联流水线、自学习和涨停预测。
 - 存储：`database/` 存放 SQLAlchemy 模型与 SQLite 会话管理。
 - 界面：`desktop/` 是 PyQt6 桌面端；`dashboard/` 是 FastAPI Web 仪表盘，页面为单个 Jinja 模板。
-- 其他：`notifier/`（企业微信、钉钉推送）、`backtest/`（回测）。
+- 其他：`notifier/`（企业微信、钉钉、飞书推送与降噪）、`backtest/`（回测）。
 
 其余目录：测试在 `tests/`，独立脚本（如历史数据回补、打包）在 `scripts/`，配置在 `config/`。仓库根目录的 `main.py`、`run_*.py` 是入口脚本。新模块放在所属功能的包里。
 
