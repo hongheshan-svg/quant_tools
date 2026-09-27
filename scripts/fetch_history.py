@@ -29,6 +29,7 @@ from src.database.models import (  # noqa: E402
 A_SHARE_OPEN_DATE = "1990-12-19"
 DEFAULT_START = A_SHARE_OPEN_DATE
 GAP_TOLERANCE_DAYS = 10  # stored history starting within this many days after --start-date counts as covered
+CHANGE_LOOKBACK_DAYS = 10  # extra days fetched before the range so the first day's change_pct has a previous close
 SLEEP_INTERVAL = 0.3
 BATCH_SIZE = 500
 
@@ -191,6 +192,26 @@ def resume_start(earliest: str | None, latest: str | None, start_date: str, fill
     return (datetime.strptime(latest, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
 
 
+def bulk_upsert_daily(engine, records: list[dict]):
+    """写入日线；已存在的行用下载的数据覆盖行情字段（修复旧版本写错单位的数据），换手率、市值只在新值有效时覆盖。"""
+    if not records:
+        return
+    cols = list(records[0].keys())
+    keep_if_empty = {"turnover", "total_mv", "circ_mv", "name"}
+    updates = ", ".join(
+        f"{c}=CASE WHEN excluded.{c} IS NULL OR excluded.{c} IN (0, '') THEN stock_daily.{c} ELSE excluded.{c} END"
+        if c in keep_if_empty else f"{c}=excluded.{c}"
+        for c in cols if c not in ("code", "trade_date")
+    )
+    sql = text(
+        f"INSERT INTO stock_daily ({', '.join(cols)}) VALUES ({', '.join(':' + c for c in cols)}) "
+        f"ON CONFLICT(code, trade_date) DO UPDATE SET {updates}"
+    )
+    with engine.begin() as conn:
+        for i in range(0, len(records), BATCH_SIZE):
+            conn.execute(sql, records[i: i + BATCH_SIZE])
+
+
 def has_any_rows(engine, table_name: str) -> bool:
     """Check whether table has at least one row."""
     with Session(engine) as s:
@@ -335,12 +356,14 @@ def records_from_daily_df(code: str, name: str, source: str, df) -> list[dict]:
         if close_val:
             prev_close = close_val
 
-        if source == "tx":
+        if source == "tx" and "volume" not in df.columns:
+            # 旧版 akshare 的腾讯日线只有 amount 列，实为成交量（手）
             tx_amount = safe_float(row.get("amount", 0))
             volume = tx_amount * 100 if tx_amount else 0.0
             amount = close_val * volume if (close_val and volume) else 0.0
             turnover = 0.0
         else:
+            # 新版腾讯日线与新浪日线：volume=成交量（股），amount=成交额（元），turnover=换手率（小数）
             volume = safe_float(row.get("volume", 0))
             amount = safe_float(row.get("amount", 0))
             raw_turnover = safe_float(row.get("turnover", 0))
@@ -367,7 +390,8 @@ def records_from_daily_df(code: str, name: str, source: str, df) -> list[dict]:
     return records
 
 
-def fetch_daily_ohlcv(engine, start_date: str, end_date: str, resume: bool = True, workers: int = 8, fill_gaps: bool = False):
+def fetch_daily_ohlcv(engine, start_date: str, end_date: str, resume: bool = True, workers: int = 8, fill_gaps: bool = False,
+                      overwrite: bool = False):
     stocks = fetch_stock_list()
     if not stocks:
         logger.error("stock list empty, skip daily")
@@ -395,19 +419,24 @@ def fetch_daily_ohlcv(engine, start_date: str, end_date: str, resume: bool = Tru
                 return
 
         try:
-            source, df = fetch_daily_df_with_fallback(code, actual_start, end_date)
+            # 多取几天：涨跌幅按前一日收盘价计算，第一天也要有前收
+            lookback_start = (datetime.strptime(actual_start, "%Y-%m-%d") - timedelta(days=CHANGE_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+            source, df = fetch_daily_df_with_fallback(code, lookback_start, end_date)
             time.sleep(SLEEP_INTERVAL)
 
             if df is None or df.empty:
                 logger.debug(f"[{idx}/{total}] {code} {name} no data")
                 return
 
-            records = records_from_daily_df(code, name, source, df)
+            records = [r for r in records_from_daily_df(code, name, source, df) if r["trade_date"] >= actual_start]
             if not records:
                 logger.debug(f"[{idx}/{total}] {code} {name} no valid records")
                 return
 
-            bulk_insert_ignore(engine, StockDaily, records)
+            if overwrite:
+                bulk_upsert_daily(engine, records)
+            else:
+                bulk_insert_ignore(engine, StockDaily, records)
             logger.info(f"[{idx}/{total}] {code} {name} inserted {len(records)} rows | source={source}")
 
         except Exception as e:
@@ -632,6 +661,11 @@ def main():
         default=8,
         help="number of concurrent download threads (default: 8)",
     )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="daily: re-download the range and overwrite existing rows (repairs volume/amount written by older versions)",
+    )
     args = parser.parse_args()
 
     if args.start_date < A_SHARE_OPEN_DATE:
@@ -647,8 +681,10 @@ def main():
     # 股票日线默认策略：
     # 1) 首次（stock_daily 空表）自动全量回补
     # 2) 后续自动增量追加
-    # 3) --force-full 仍可强制全量
-    if args.mode in ("all", "daily") and not args.force_full:
+    # 3) --force-full 仍可强制全量；--overwrite 重新下载并覆盖已有行（修复旧版本写错的成交量/成交额）
+    if args.mode in ("all", "daily") and (args.force_full or args.overwrite):
+        daily_resume = False
+    elif args.mode in ("all", "daily"):
         if has_any_rows(engine, StockDaily.__tablename__):
             daily_resume = True
             logger.info("stock_daily detected: use incremental append mode")
@@ -660,7 +696,7 @@ def main():
         logger.info("=== collect daily ===")
         # 显式指定 --start-date 时补齐该日期之后缺失的历史（日常采集只存了最新一天的行情）
         fetch_daily_ohlcv(engine, args.start_date, args.end_date, resume=daily_resume, workers=args.workers,
-                          fill_gaps=args.start_date != DEFAULT_START)
+                          fill_gaps=args.start_date != DEFAULT_START, overwrite=args.overwrite)
 
     if args.mode in ("all", "limit_up"):
         logger.info("=== collect limit_up ===")

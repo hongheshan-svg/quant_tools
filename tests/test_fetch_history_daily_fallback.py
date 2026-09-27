@@ -126,3 +126,63 @@ def test_resume_start_fills_history_gap_for_explicit_start():
     assert fh.resume_start("2026-09-24", "2026-09-24", "2026-06-01", fill_gaps=False) == "2026-09-25"
     assert fh.resume_start(None, None, "2026-06-01", fill_gaps=True) == "2026-06-01"
     assert fh.resume_start("2026-01-05", "2026-03-01", "2026-06-01", fill_gaps=True) == "2026-06-01"
+
+
+def test_tx_records_new_and_legacy_format():
+    new = pd.DataFrame({"date": ["2026-09-22", "2026-09-23"], "open": [16.68, 16.5], "close": [16.56, 16.36],
+                        "high": [16.72, 16.55], "low": [16.39, 16.29], "volume": [67682800.0, 47349300.0],
+                        "turnover": [0.0054, 0.0038], "amount": [1.119125e9, 7.752728e8]})
+    rec = fh.records_from_daily_df("601919", "中远海控", "tx", new)[1]
+    assert rec["volume"] == 47349300.0 and rec["amount"] == 7.752728e8   # 成交量（股）、成交额（元）原样保存
+    assert rec["turnover"] == pytest.approx(0.38) and rec["change_pct"] == pytest.approx(-1.2077, abs=1e-3)
+
+    legacy = pd.DataFrame({"date": ["2026-09-23"], "open": [16.5], "close": [16.36], "high": [16.55], "low": [16.29],
+                           "amount": [473493.0]})  # 旧版：amount 实为成交量（手）
+    rec = fh.records_from_daily_df("601919", "中远海控", "tx", legacy)[0]
+    assert rec["volume"] == 47349300.0 and rec["amount"] == pytest.approx(16.36 * 47349300.0)
+
+
+def test_bulk_upsert_daily_repairs_rows(tmp_path):
+    from sqlalchemy import create_engine, text
+
+    from src.database.models import Base, StockDaily
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'h.db'}")
+    Base.metadata.create_all(engine)
+    fh.bulk_insert_ignore(engine, StockDaily, [
+        {"code": "601919", "name": "中远海控", "trade_date": "2026-09-23", "close": 16.36, "volume": 7.7e10,
+         "amount": 1.27e12, "turnover": 0.4, "circ_mv": 2.0e11},
+    ])
+    fixed = {"code": "601919", "name": "", "trade_date": "2026-09-23", "close": 16.36, "volume": 47349300.0,
+             "amount": 7.752728e8, "turnover": 0.0, "circ_mv": 0.0}
+    fh.bulk_insert_ignore(engine, StockDaily, [fixed])          # 普通模式不覆盖
+    with engine.connect() as conn:
+        assert conn.execute(text("select amount from stock_daily")).scalar() == 1.27e12
+    fh.bulk_upsert_daily(engine, [fixed, {**fixed, "trade_date": "2026-09-24"}])
+    with engine.connect() as conn:
+        rows = conn.execute(text("select trade_date, name, volume, amount, turnover, circ_mv from stock_daily order by trade_date")).fetchall()
+    assert rows[0] == ("2026-09-23", "中远海控", 47349300.0, 7.752728e8, 0.4, 2.0e11)  # 行情覆盖，空的换手率/市值/名称保留原值
+    assert rows[1][0] == "2026-09-24"
+
+
+def test_daily_download_computes_first_day_change(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine, text
+
+    from src.database.models import Base
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'h.db'}")
+    Base.metadata.create_all(engine)
+    calls = []
+    df = pd.DataFrame({"date": ["2026-09-21", "2026-09-22", "2026-09-23"], "open": [16.1, 16.68, 16.5],
+                       "close": [16.71, 16.56, 16.36], "high": [16.74, 16.72, 16.55], "low": [16.06, 16.39, 16.29],
+                       "volume": [1.0e8, 6.8e7, 4.7e7], "turnover": [0.0086, 0.0054, 0.0038], "amount": [1.77e9, 1.12e9, 7.75e8]})
+    monkeypatch.setattr(fh, "fetch_stock_list", lambda: [{"code": "601919", "name": "中远海控"}])
+    monkeypatch.setattr(fh, "fetch_daily_df_with_fallback", lambda code, start, end: calls.append(start) or ("tx", df))
+    monkeypatch.setattr(fh, "SLEEP_INTERVAL", 0)
+
+    fh.fetch_daily_ohlcv(engine, "2026-09-22", "2026-09-23", resume=False, workers=1)
+    assert calls == ["2026-09-12"]  # 多取几天用于计算第一天的涨跌幅
+    with engine.connect() as conn:
+        rows = conn.execute(text("select trade_date, change_pct from stock_daily order by trade_date")).fetchall()
+    assert [r[0] for r in rows] == ["2026-09-22", "2026-09-23"]
+    assert rows[0][1] == pytest.approx((16.56 / 16.71 - 1) * 100)
