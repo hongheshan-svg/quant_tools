@@ -59,11 +59,13 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
 
 - **`main.py` → `src/scheduler.py`**（BlockingScheduler）有两类任务：
   - 间隔任务：热搜每 30 分钟，财联社每 5 分钟，行情每 15 分钟，国际新闻每 30 分钟。
-  - 工作日定时任务：15:30 每日分析（舆情 → 涨停 → 国际因子 → `CompositeScorer.score_today()`），16:00 生成信号并调用 `ExecutionService.execute_signals()` 生成订单，16:20 自学习。
+  - 工作日定时任务：15:30 每日分析（舆情 → 涨停 → 国际因子 → `CompositeScorer.score_today()`），16:00 生成信号并调用 `ExecutionService.execute_signals()` 生成订单，16:10 推送日报，16:20 自学习。
+  - 行情采集任务结束后会调用 `ExecutionService.generate_exit_orders()`，检查持仓是否触及止损或止盈。
   - 所有间隔和时间都读自 `scheduler.*` 配置项。
   - 行情采集和上面三个每日任务在非交易日跳过（`_skip_non_trade_day()`），新闻、热搜、国际新闻照常采集。
 - **桌面端**（`run_dashboard.py` → `src/desktop/main_window.py`）**不使用** `scheduler.py`：
-  - Qt 定时器和按钮驱动 `PipelineService`（`collect()` → `self_learn()` → `premarket_predict()`，预测后生成订单）。
+  - Qt 定时器和按钮驱动 `PipelineService`（`collect()` → `self_learn()` → `premarket_predict()`；预测后生成订单并推送日报）。每次自动采集完成后，在后台调用 `check_exits()`。
+  - 【信号绩效】页在切换到该页时才计算，调用的是 `PipelineService.signal_performance()`。
   - 【模拟交易】页通过 `PipelineService` 的交易方法确认、撤销订单。这些方法共用一把锁，因为它们在不同工作线程里被调用。
   - `CollectorOrchestrator` 负责并发采集。
   - `DataQueryService` 提供界面上的全部查询。
@@ -105,10 +107,14 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
 - `CompositeScorer`（`src/strategy/scorer.py`）按 `strategy.weights` 组合 8 个因子分，各因子由 `src/strategy/*_score.py` 计算。
   - 如果开启了 `strategy.learning.enabled` 且 `strategy.adaptive_weights` 非空，每个实际权重为 `base*(1-blend_ratio) + adaptive*blend_ratio`，`blend_ratio` 默认 0.35。
   - `generate_signals()` 把 Top N 中 `strong_buy`/`buy` 的评分写成 `TradeSignal` 记录。
+- `tech_score.analyze_technical()` 返回评分、趋势、MACD、RSI6、乖离率、量比，以及理由和风险；`calculate_tech_score()` 只取其中的分数。按打板策略调整过：乖离率只按高位风险扣分，RSI 高于 80 只提示偏热。预测器会把 `brief()` 摘要追加到涨停候选股的描述行里。
 - `SelfLearningService.run_daily_learning()` 用之后的 `StockDaily` 和 `LimitUpStock` 数据检验历史信号的结果，并计算各因子与结果的相关性。
-  - 信号的验证日（`_evaluation_date()`）：`premarket` 信号的 `signal_date` 已经是预测的目标交易日，就用这一天；其他信号都是收盘后用当天数据生成的，必须用下一个交易日验证。用信号当天行情评估等于拿已知结果给自己打分。
+  - 信号的验证日（模块级函数 `signal_evaluation_date()`，信号绩效回测也用它）：`premarket` 信号的 `signal_date` 已经是预测的目标交易日，就用这一天；其他信号都是收盘后用当天数据生成的，必须用下一个交易日验证。用信号当天行情评估等于拿已知结果给自己打分。
   - 它把 `strategy.adaptive_weights` 和按新闻源区分的 `strategy.source_confidence` 写回 `settings.yaml`，除非设置了 `strategy.learning.persist_to_yaml: false`。
   - 同时写入一条 `LearningSnapshot` 记录。
+- `SignalPerformanceService`（`src/services/signal_performance.py`）只读统计，不落库，统计口径如下：
+  - **入场：** 开盘前生成的信号按验证日开盘价入场，盘中生成的按收盘价入场，依据是 `created_at` 早于还是晚于验证日 9:30。
+  - **止损止盈：** 按 T+1 从入场后的下一根 K 线开始判断。开盘就越过止损价或止盈价时按开盘价离场，同一根 K 线同时触及两者时按止损处理。
 
 ### LLM
 
@@ -121,12 +127,22 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
 
 ### 交易（`src/trading/`）
 
-- `ExecutionService` 通过 `BrokerAdapter` 把 `TradeSignal` 记录转成 `TradeOrder` 记录。目前只有 `PaperBrokerAdapter`（模拟盘）一个实现。入口是 `execute_signals()`，由上面两套运行时在生成信号后调用。
+- `ExecutionService` 通过 `BrokerAdapter` 把 `TradeSignal` 记录转成 `TradeOrder` 记录。目前只有 `PaperBrokerAdapter`（模拟盘）一个实现。入口是 `execute_signals()`，由上面两套运行时在生成信号后调用。委托价优先使用 `TradeSignal.entry_price`，没有时用最新收盘价。
+- 价格计划（`src/trading/price_plan.py`）：AI 预测的 `buy_price`/`stop_loss`/`target_price` 先经过 `sanitize_price_plan()`，按最新价和各板块涨跌幅限制校验，不合理的丢弃，再写入 `TradeSignal.entry_price`/`stop_loss_price`/`target_price`。
+- `generate_exit_orders()`：持仓最新价 ≤ 止损价或 ≥ 目标价时生成卖单，幂等键为 `日期|代码|sell|exit`，所以同一只股票每天最多一笔。止损价和目标价取最近一笔已成交买单对应信号的价格计划，没有时按 `risk.stop_loss_pct`/`take_profit_pct` 计算。
+- 模拟盘实现了 T+1：重放成交时，只有今天之前的买入才计入可卖数量；当天的实时买入不增加可卖数量。
 - 新订单初始状态为 `PENDING_CONFIRM`，用 `order_mapper.build_idempotency_key` 去重。`trading.auto_confirm` 为 true 时直接确认下单，且只对模拟盘生效。
 - 评分引擎的信号没有 `ai_verdict`，而且 `hold` 评级也记为 `signal_type="buy"`。下单时按当日 `StockScore.recommendation` 过滤，只放行 `strong_buy`/`buy`。不要改 `generate_signals()` 的 `signal_type`，否则会影响自学习对 buy 信号的计分。
 - 模拟盘的现金和持仓只存在内存里。默认模拟盘在每次使用前（`_sync_paper_account()`）都会按 `trade_fill` 从初始资金重放一遍，所以测试或新代码要改账户状态，必须通过成交落库，直接改 broker 内存会被覆盖。
-- `RiskManager` 负责仓位限制、ST/*ST 黑名单和 `config/stock_pool.yaml` 股票池过滤。股票池规则只在 `validate_order_intent()`（下单前校验）里执行；`filter_signals()` 目前没有调用方。
+- `RiskManager` 负责仓位限制、ST/*ST 黑名单和 `config/stock_pool.yaml` 股票池过滤。股票池规则只在 `validate_order_intent()`（下单前校验）里执行；`filter_signals()` 目前没有调用方。黑名单和股票池只对买单生效，卖单（止损止盈离场）不能被拦截。
 - 当 `min_listing_days > 0` 时，每个 `RiskManager` 实例第一次校验股票池会调用 `StockInfoCollector.refresh_if_stale()`：如果 `stock_info` 表超过一天没更新，就联网从沪深北交易所列表采集。涉及股票池的测试要 monkeypatch 掉这一步。
+
+### 推送（`src/notifier/`、`src/services/daily_report.py`）
+
+- 统一通过 `notifier.broadcast(config, title, content)` 推送到所有已启用的渠道。`enabled_channels()` 只认 `enabled: true` 且配置了 `webhook_url` 的渠道。
+- 各渠道 `send()` 用 `split_by_bytes()` 按字节上限拆分消息并逐条发送：企业微信 3800、钉钉 18000、飞书 20000。
+- 飞书签名比较特殊：用「时间戳\n密钥」作为 HMAC 密钥，对空消息签名。
+- `DailyReportService.push()` 在没有任何渠道启用时直接返回，不会生成报告，也不会访问网络。
 
 ## 约定
 
