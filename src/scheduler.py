@@ -2,7 +2,7 @@
 任务调度器 - APScheduler 定时采集和分析
 """
 
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -160,13 +160,32 @@ def _run_daily_analysis(config: dict):
         logger.error(f"每日分析任务异常: {e}")
 
     # 5. 全市场策略选股（结果供 AI 涨停预测参考，并统计各策略的次日表现）
-    if config.get("screening", {}).get("enabled", True):
+    screening = config.get("screening", {})
+    if screening.get("enabled", True):
         from src.strategy.screener import StrategyScreener
 
+        # 距上次历史回测超过 backtest_interval_days 天时先回测，更新选股排序用的策略权重
+        interval = int(screening.get("backtest_interval_days", 7))
+        if interval > 0:
+            try:
+                _run_strategy_backtest_if_due(config, interval)
+            except Exception as e:
+                logger.error(f"策略回测任务异常: {e}")
         try:
             StrategyScreener(config).run()
         except Exception as e:
             logger.error(f"策略选股任务异常: {e}")
+
+
+def _run_strategy_backtest_if_due(config: dict, interval_days: int) -> bool:
+    from src.strategy.strategy_backtest import StrategyBacktester
+
+    backtester = StrategyBacktester(config)
+    latest = backtester.latest()
+    if latest and latest.get("created_at", "") >= (datetime.now() - timedelta(days=interval_days)).strftime("%Y-%m-%d %H:%M"):
+        return False
+    backtester.run(days=int(config.get("screening", {}).get("backtest_days", 60)))
+    return True
 
 
 def _run_signal_generation(config: dict):

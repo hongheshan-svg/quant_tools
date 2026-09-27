@@ -128,6 +128,7 @@ class WorkerSignals(QObject):
 
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
+    progress = pyqtSignal(int, int)   # 已完成、总数（需要进度的任务把 signals.progress.emit 传给 fn）
 
 
 class WorkerTask(QRunnable):
@@ -1038,8 +1039,35 @@ class MainWindow(QMainWindow):
             ["信号日", "验证日", "代码", "名称", "类型", "来源", "研判", "入场价",
              "1日", "3日", "5日", "涨停", "离场", "模拟收益"]
         )
-        tab_layout.addWidget(self._wrap("分组统计", self.table_performance), stretch=2)
-        tab_layout.addWidget(self._wrap("信号明细", self.table_performance_details), stretch=3)
+        signal_page = QWidget()
+        signal_layout = QVBoxLayout(signal_page)
+        signal_layout.setContentsMargins(0, 0, 0, 0)
+        signal_layout.addWidget(self._wrap("分组统计", self.table_performance), stretch=2)
+        signal_layout.addWidget(self._wrap("信号明细", self.table_performance_details), stretch=3)
+
+        diag_page = QWidget()
+        diag_layout = QVBoxLayout(diag_page)
+        diag_layout.setContentsMargins(0, 0, 0, 0)
+        self.diag_outcome_label = QLabel("AI 诊断事后验证：以诊断所依据行情日的收盘价为基准，看之后 1/3/5 日的涨跌")
+        self.diag_outcome_label.setToolTip(
+            "方向：买入/加仓看多，减仓/卖出/回避看空，持有/观望不判方向；看多上涨、看空下跌算判断正确。\n"
+            "价格计划：看多且给了止损价和目标价的，看之后 5 个交易日先碰到哪个（同一天都碰到按止损）。\n"
+            "同一只股票同一行情日诊断多次时只算最后一次。"
+        )
+        diag_layout.addWidget(self.diag_outcome_label)
+        self.table_diag_summary = self._build_table(
+            ["维度", "分组", "诊断数", "已验证", "1日准确率", "1日均涨跌", "3日准确率", "3日均涨跌", "5日准确率", "5日均涨跌", "止盈先到比例"]
+        )
+        self.table_diag_details = self._build_table(
+            ["行情日", "诊断时间", "代码", "名称", "建议", "评分", "基准价", "1日", "3日", "5日", "价格计划"]
+        )
+        diag_layout.addWidget(self._wrap("分组统计", self.table_diag_summary), stretch=2)
+        diag_layout.addWidget(self._wrap("诊断明细", self.table_diag_details), stretch=3)
+
+        inner = QTabWidget()
+        inner.addTab(signal_page, "交易信号")
+        inner.addTab(diag_page, "AI 诊断验证")
+        tab_layout.addWidget(inner, stretch=1)
         self._performance_inflight = False
         return tab
 
@@ -1109,15 +1137,24 @@ class MainWindow(QMainWindow):
         )
         self.btn_screening = QPushButton("重新选股")
         self.btn_screening.clicked.connect(self._run_screening)
+        self.btn_backtest = QPushButton("历史回测")
+        self.btn_backtest.setToolTip("用本地日线回测近 60 天：每天按当时能看到的数据选股，次日开盘入场，统计之后 1/3/5 日表现；\n"
+                                     "结果会用来温和调整各策略的排序权重（0.8~1.2）。需要先回补全市场日线。")
+        self.btn_backtest.clicked.connect(self._run_backtest)
         bar.addWidget(self.screening_label)
         bar.addStretch()
+        bar.addWidget(self.btn_backtest)
         bar.addWidget(self.btn_screening)
         tab_layout.addLayout(bar)
         self.table_screening = self._build_table(["选股日", "代码", "名称", "策略", "得分", "适配环境", "当日涨幅", "收盘", "次日涨幅", "入选理由"])
         self.table_screening.cellDoubleClicked.connect(self._open_screening_detail)
         self.table_screening_perf = self._build_table(["策略", "适配环境", "近30天入选", "已验证", "次日平均涨幅", "次日上涨比例", "次日涨停比例"])
+        self.table_backtest = self._build_table(["策略", "适配环境", "回测天数", "入选", "次日均收益", "次日胜率", "3日均收益",
+                                                 "5日均收益", "次日涨停率", "适配时次日均收益", "累计收益", "最大回撤", "排序权重"])
+        self.backtest_box = self._wrap("历史回测（尚未回测）", self.table_backtest)
         tab_layout.addWidget(self._wrap("选股结果", self.table_screening), stretch=3)
-        tab_layout.addWidget(self._wrap("策略次日表现（近 30 天）", self.table_screening_perf), stretch=2)
+        tab_layout.addWidget(self._wrap("策略次日表现（近 30 天实际选股）", self.table_screening_perf), stretch=2)
+        tab_layout.addWidget(self.backtest_box, stretch=2)
         self._screening_ran = False
         return tab
 
@@ -1145,6 +1182,7 @@ class MainWindow(QMainWindow):
         self._refresh_screening()
 
     def _on_screening_ready(self, data: dict):
+        self._show_backtest(data.get("backtest"))
         picks = data.get("picks") or []
         self.table_screening.setRowCount(len(picks))
         for i, p in enumerate(picks):
@@ -1174,6 +1212,42 @@ class MainWindow(QMainWindow):
                       fmt(r["win_rate"]), fmt(r["limit_up_rate"])]
             for col, value in enumerate(values):
                 self.table_screening_perf.setItem(i, col, _item(value))
+
+    def _run_backtest(self):
+        self.btn_backtest.setEnabled(False)
+        self.backtest_box.setTitle("历史回测：准备中…")
+        worker = WorkerTask(self.pipeline.backtest_strategies, 60)
+        worker.kwargs["progress"] = worker.signals.progress.emit
+        worker.signals.progress.connect(lambda done, total: self.backtest_box.setTitle(f"历史回测：{done}/{total} 天…"))
+        worker.signals.finished.connect(self._on_backtest_done)
+        worker.signals.error.connect(lambda detail: self._on_backtest_done({"note": detail.splitlines()[0]}))
+        self.thread_pool.start(worker)
+
+    def _on_backtest_done(self, report: dict):
+        self.btn_backtest.setEnabled(True)
+        self._show_backtest(report)
+
+    def _show_backtest(self, report: dict | None):
+        if not report:
+            return
+        if report.get("note") and not report.get("dates"):
+            self.backtest_box.setTitle(f"历史回测：{report['note']}")
+            return
+        self.backtest_box.setTitle(
+            f"历史回测 {report['start']} ~ {report['end']}（{report['dates']} 个交易日"
+            + (f"，{report['skipped_dates']} 天行情不全已跳过" if report.get("skipped_dates") else "")
+            + f"，{report['created_at']} 生成；次日开盘入场）"
+        )
+        rows = report.get("strategies") or []
+        self.table_backtest.setRowCount(len(rows))
+        for i, r in enumerate(rows):
+            for col, value in enumerate([r["label"], r["regimes"], r["days"], r["picks"]]):
+                self.table_backtest.setItem(i, col, _item(value))
+            cells = [(r["avg_1d"], True), (r["win_1d"], False), (r["avg_3d"], True), (r["avg_5d"], True),
+                     (r["limit_up_rate"], False), (r["avg_1d_fit"], True), (r["total_return"], True), (r["max_drawdown"], True)]
+            for col, (value, signed) in enumerate(cells, start=4):
+                self.table_backtest.setItem(i, col, self._pct_item(value, signed))
+            self.table_backtest.setItem(i, 12, _item(f"{r.get('weight', 1.0):.2f}"))
 
     def _open_screening_detail(self, row: int, _column: int):
         code_item, name_item = self.table_screening.item(row, 1), self.table_screening.item(row, 2)
@@ -1956,6 +2030,39 @@ class MainWindow(QMainWindow):
         worker.signals.finished.connect(self._on_performance_ready)
         worker.signals.error.connect(self._on_performance_error)
         self.thread_pool.start(worker)
+        diag_worker = WorkerTask(self.pipeline.diagnosis_outcomes)
+        diag_worker.signals.finished.connect(self._on_diag_outcomes_ready)
+        diag_worker.signals.error.connect(lambda detail: self._log(f"AI 诊断验证计算异常: {detail}"))
+        self.thread_pool.start(diag_worker)
+
+    def _on_diag_outcomes_ready(self, result: dict):
+        summary = result.get("summary") or []
+        self.table_diag_summary.setRowCount(len(summary))
+        for i, r in enumerate(summary):
+            for col, value in enumerate([r["dimension"], r["group"], r["total"], r["evaluated"]]):
+                self.table_diag_summary.setItem(i, col, _item(value))
+            cells = [(r["accuracy_1d"], False), (r["avg_1d"], True), (r["accuracy_3d"], False), (r["avg_3d"], True),
+                     (r["accuracy_5d"], False), (r["avg_5d"], True), (r["target_first_rate"], False)]
+            for col, (value, signed) in enumerate(cells, start=4):
+                self.table_diag_summary.setItem(i, col, self._pct_item(value, signed))
+        details = (result.get("details") or [])[:300]
+        self.table_diag_details.setRowCount(len(details))
+        for i, d in enumerate(details):
+            base = f"{d['base_close']:.2f}" if d.get("base_close") else "--"
+            for col, value in enumerate([d["trade_date"], d["created_at"], d["code"], d["name"], d["action_label"], d["score"], base]):
+                self.table_diag_details.setItem(i, col, _item(value))
+            for col, n in enumerate((1, 3, 5), start=7):
+                item = self._pct_item(d.get(f"r{n}"))
+                if d.get(f"hit{n}") is not None:
+                    item.setText(item.text() + (" ✓" if d[f"hit{n}"] else " ✗"))
+                self.table_diag_details.setItem(i, col, item)
+            self.table_diag_details.setItem(i, 10, _item(d.get("plan") or "--"))
+        verified = next((r for r in summary if r["dimension"] == "全部"), None)
+        if verified:
+            self.diag_outcome_label.setText(
+                f"AI 诊断事后验证：近 60 天 {verified['total']} 次诊断，已验证 {verified['evaluated']} 次，"
+                f"看多/看空的 3 日方向准确率 {verified['accuracy_3d'] if verified['accuracy_3d'] is not None else '--'}%（鼠标悬停查看口径）"
+            )
 
     def _on_performance_error(self, detail: str):
         self._performance_inflight = False

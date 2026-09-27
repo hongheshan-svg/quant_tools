@@ -221,6 +221,10 @@ screening:
   enabled: true
   max_per_strategy: 10   # 每个策略最多入选数量
   max_total: 30          # 合并后最多保留数量
+  # 策略权重：按最近一次历史回测中各策略的次日表现，温和调整选股排序（0.8~1.2；回测超过 30 天后不再使用）
+  adaptive_strategy_weights: true
+  backtest_interval_days: 7   # 每日分析时距上次回测超过该天数就重新回测，0 表示不自动回测
+  backtest_days: 60           # 自动回测的区间（自然日）
   # 覆盖策略参数或关闭策略，例如：
   # strategies:
   #   volume_breakout: {vol_ratio_min: 2.5, amount_min: 200000000}

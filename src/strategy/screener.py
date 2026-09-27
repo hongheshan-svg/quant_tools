@@ -12,6 +12,8 @@
 - volume_breakout 放量突破、strong_close 强势未板、dragon_pullback 龙回头、theme_follow 主线补涨
 - trend_pullback 缩量回踩、oversold_rebound 超跌反弹
 选出的股票是 AI 涨停预测的候选来源之一；performance() 统计各策略选股的次日表现。
+策略权重：最近 30 天内做过历史回测（strategy_backtest）时，按回测得出的权重（0.8~1.2）调整各策略得分；
+回测本身用 point_in_time=True 选股：权重不生效，大盘环境也不读进程内的实时行情缓存。
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ PRE_FILTER_AMOUNT = 3e7      # 成交额 3000 万以下直接跳过（所有策�
 LIMIT_TOLERANCE = 0.3        # 涨幅距涨停价 0.3 个百分点以内视为涨停
 MULTI_STRATEGY_BONUS = 5
 CHUNK = 500
+WEIGHTS_MAX_AGE_DAYS = 30   # 超过 30 天的回测不再用于调整策略权重
 
 
 # ---------- 特征 ----------
@@ -254,6 +257,7 @@ class ScreenResult:
     picks: list[Pick] = field(default_factory=list)
     stats: dict[str, int] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
+    weights: dict[str, float] = field(default_factory=dict)   # 生效的策略权重（未回测时为空）
 
     def to_dict(self) -> dict[str, Any]:
         return {**asdict(self), "picks": [p.to_dict() for p in self.picks]}
@@ -275,6 +279,7 @@ class StrategyScreener:
         cfg = self.config.get("screening") or {}
         self.max_per_strategy = int(cfg.get("max_per_strategy", 10))
         self.max_total = int(cfg.get("max_total", 30))
+        self.adaptive_weights = bool(cfg.get("adaptive_strategy_weights", True))
         self.strategies = self._load_strategies(cfg.get("strategies") or {})
         self.pool_cfg = load_config(STOCK_POOL_CONFIG_PATH) or {}
 
@@ -289,7 +294,8 @@ class StrategyScreener:
             result.append(Strategy(s.name, s.label, s.description, s.regimes, params, s.rule))
         return result
 
-    def run(self, trade_date: str | None = None, save: bool = True) -> ScreenResult:
+    def run(self, trade_date: str | None = None, save: bool = True, point_in_time: bool = False) -> ScreenResult:
+        """point_in_time=True 用于历史回测：只用 trade_date 当天及以前的数据，策略权重不生效。"""
         trading_calendar.load(self.db_path, refresh=False)
         with get_db_session(self.db_path) as session:
             trade_date = trade_date or self._latest_trade_date(session)
@@ -302,7 +308,8 @@ class StrategyScreener:
             bars = self._history(session, trade_date, [r.code for r in candidates])
             stock_themes = self._stock_themes(session, trade_date)
         main_lines = self._main_lines(trade_date)
-        result.regime = self._regime(trade_date)
+        result.regime = self._regime(trade_date, point_in_time)
+        result.weights = {} if point_in_time else self.strategy_weights()
 
         features = []
         for row in candidates:
@@ -323,21 +330,22 @@ class StrategyScreener:
                                 f"可运行 python scripts/fetch_history.py --mode daily --start-date {start} 补齐")
         if result.regime in ("", "未知"):
             result.notes.append("大盘环境未知，所有策略按适配处理")
-        result.picks = self._rank(features, result)
+        result.picks = self._rank(features, result, result.weights)
         if save:
             self._save(result)
         logger.info(f"策略选股 {trade_date}：全市场 {len(snapshot)} 只 → 股票池 {len(pool)} → 入选 {len(result.picks)} 只")
         return result
 
-    def _rank(self, features: list[Features], result: ScreenResult) -> list[Pick]:
+    def _rank(self, features: list[Features], result: ScreenResult, weights: dict[str, float] | None = None) -> list[Pick]:
         hits: dict[str, list[tuple[Strategy, float, str]]] = defaultdict(list)
         by_code = {f.code: f for f in features}
         for strategy in self.strategies:
+            weight = (weights or {}).get(strategy.name, 1.0)
             matched = []
             for f in features:
                 outcome = strategy.rule(f, strategy.params)
                 if outcome:
-                    matched.append((f.code, *outcome))
+                    matched.append((f.code, _clamp(outcome[0] * weight), outcome[1]))
             matched.sort(key=lambda m: -m[1])
             result.stats[strategy.name] = len(matched)
             for code, score, reason in matched[: self.max_per_strategy]:
@@ -448,11 +456,12 @@ class StrategyScreener:
             logger.debug(f"策略选股读取主线失败: {e}")
             return {}
 
-    def _regime(self, trade_date: str) -> str:
+    def _regime(self, trade_date: str, point_in_time: bool = False) -> str:
         try:
             from src.analyzers.market_regime import MarketRegimeAnalyzer
 
-            return MarketRegimeAnalyzer(self.config).analyze(trade_date=trade_date).regime
+            # 回测时不能用进程内的实时指数涨跌（那是今天的数据）
+            return MarketRegimeAnalyzer(self.config).analyze(trade_date=trade_date, overview={} if point_in_time else None).regime
         except Exception as e:
             logger.debug(f"策略选股评估大盘环境失败: {e}")
             return ""
@@ -466,6 +475,28 @@ class StrategyScreener:
                         trade_date=result.trade_date, strategy=strategy, code=p.code, name=p.name, score=score,
                         reason=reason, close=p.close, change_pct=p.change_pct, fits_regime=p.fits_regime,
                     ))
+
+    def strategy_weights(self) -> dict[str, float]:
+        """最近 30 天内一次历史回测得出的策略权重；没有回测或关闭 adaptive_strategy_weights 时为空（都按 1.0）。"""
+        if not self.adaptive_weights:
+            return {}
+        try:
+            from src.database.models import StrategyBacktest
+
+            since = datetime.now() - timedelta(days=WEIGHTS_MAX_AGE_DAYS)
+            with get_db_session(self.db_path) as session:
+                row = (
+                    session.query(StrategyBacktest.result_json).filter(StrategyBacktest.created_at >= since)
+                    .order_by(StrategyBacktest.created_at.desc()).first()
+                )
+            if not row:
+                return {}
+            import json
+
+            return {k: float(v) for k, v in (json.loads(row[0]).get("weights") or {}).items()}
+        except Exception as e:
+            logger.debug(f"读取策略权重失败: {e}")
+            return {}
 
     # ---- 查询 ----
 

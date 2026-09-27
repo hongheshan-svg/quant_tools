@@ -185,6 +185,17 @@ class StrategyPick(Base):
     )
 
 
+class StrategyBacktest(Base):
+    """策略选股历史回测结果（每次回测一条，最近一次的权重用于选股排序）"""
+    __tablename__ = "strategy_backtest"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    start_date = Column(String(10), comment="回测起始交易日")
+    end_date = Column(String(10), comment="回测结束交易日")
+    result_json = Column(Text, comment="各策略统计、策略权重 JSON")
+    created_at = Column(DateTime, default=datetime.now)
+
+
 class MarketReview(Base):
     """LLM 大盘复盘（每个交易日一份，重新生成会覆盖）"""
     __tablename__ = "market_review"

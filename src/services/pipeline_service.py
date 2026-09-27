@@ -121,12 +121,29 @@ class PipelineService:
             logger.error(f"策略选股异常: {e}")
             return {"picks": [], "notes": [f"选股失败: {e}"], "stats": {}, "trade_date": "", "regime": ""}
 
+    def backtest_strategies(self, days: int = 60, progress=None) -> dict[str, Any]:
+        """用本地历史数据回测各选股策略（每天按当时可见的数据选股，统计之后 1/3/5 日表现）。"""
+        from src.strategy.strategy_backtest import StrategyBacktester
+
+        return StrategyBacktester(self.config).run(days=days, progress=progress)
+
+    def latest_backtest(self) -> dict[str, Any] | None:
+        from src.strategy.strategy_backtest import StrategyBacktester
+
+        return StrategyBacktester(self.config).latest()
+
+    def diagnosis_outcomes(self, lookback_days: int = 60) -> dict[str, Any]:
+        """AI 诊断事后验证：按操作建议和评分区间统计之后 1/3/5 日表现和方向准确率。"""
+        from src.services.diagnosis_outcome import DiagnosisOutcomeService
+
+        return DiagnosisOutcomeService(self.config).evaluate(lookback_days)
+
     def latest_screening(self) -> dict[str, Any]:
-        """最近一次选股结果（附次日涨幅）和近 30 天各策略的次日表现。"""
+        """最近一次选股结果（附次日涨幅）、近 30 天各策略的次日表现和最近一次历史回测。"""
         from src.strategy.screener import StrategyScreener
 
         screener = StrategyScreener(self.config)
-        return {"picks": screener.latest(), "performance": screener.performance()}
+        return {"picks": screener.latest(), "performance": screener.performance(), "backtest": self.latest_backtest()}
 
     def market_regime(self) -> dict[str, Any]:
         """大盘环境评估（进攻/均衡/防守/冰点 + 情绪周期）。"""

@@ -119,7 +119,7 @@ def test_compute_features_basics():
 
 
 def test_screen_strategies_and_regime_order(config, monkeypatch):
-    monkeypatch.setattr(StrategyScreener, "_regime", lambda self, d: "防守")
+    monkeypatch.setattr(StrategyScreener, "_regime", lambda self, d, point_in_time=False: "防守")
     result = StrategyScreener(config).run(TRADE_DATE)
 
     picks = {p.code: p for p in result.picks}
@@ -147,7 +147,7 @@ def test_screen_strategies_and_regime_order(config, monkeypatch):
 
 
 def test_strategy_overrides(config, monkeypatch):
-    monkeypatch.setattr(StrategyScreener, "_regime", lambda self, d: "")
+    monkeypatch.setattr(StrategyScreener, "_regime", lambda self, d, point_in_time=False: "")
     config["screening"] = {"strategies": {"volume_breakout": {"vol_ratio_min": 5}, "oversold_rebound": {"enabled": False}}}
     result = StrategyScreener(config).run(TRADE_DATE, save=False)
     picks = {p.code: p for p in result.picks}
@@ -157,7 +157,7 @@ def test_strategy_overrides(config, monkeypatch):
 
 
 def test_latest_and_next_day_performance(config, monkeypatch):
-    monkeypatch.setattr(StrategyScreener, "_regime", lambda self, d: "均衡")
+    monkeypatch.setattr(StrategyScreener, "_regime", lambda self, d, point_in_time=False: "均衡")
     screener = StrategyScreener(config)
     screener.run(TRADE_DATE)
     assert all(p["next_change_pct"] is None for p in screener.latest())
