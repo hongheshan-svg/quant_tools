@@ -1,10 +1,12 @@
 """
 个股 AI 诊断（参考 daily_stock_analysis 的决策仪表盘：核心结论 + 数据透视 + 情报 + 作战计划）
 
-按打板短线的视角汇总单只股票的上下文（行情、技术面、涨停记录、主线地位、大盘环境、
-相关资讯、龙虎榜、模拟盘持仓），交给 LLM 输出结构化结论；代码端再做一致性护栏：
+按打板短线的视角汇总单只股票的上下文（行情、技术面、资金流、筹码、业绩、涨停记录、主线地位、
+大盘环境、相关资讯、龙虎榜、模拟盘持仓）并给出数据完整度，交给 LLM 输出结构化结论；代码端再做护栏：
 - 操作建议归一为八态 action，缺失时按评分推断
 - 评分 < 50 却给出买入/加仓时降级为观望；大盘冰点时不给买入
+- 数据质量：核心行情缺失或数据完整度 < 60% 时不给买入，置信度降为低
+- 决策稳定性：当日资金大幅净流出时不给买入；与 3 天内上次诊断方向相反（空转多）但评分变化不足 15 分时暂按观望
 - 价格计划按最新价和涨跌幅限制校验
 结果写入 stock_diagnosis 表，同一只股票 30 分钟内重复诊断直接返回上次结果。
 """
@@ -35,6 +37,14 @@ CACHE_MINUTES = 30
 NEWS_DAYS = 3
 LIMIT_UP_DAYS = 10
 MIN_BUY_SCORE = 50
+MIN_DATA_QUALITY = 60
+MIN_DAILY_BARS = 20
+FLOW_OUTFLOW_RATIO = -5.0   # 资金净流出占成交额超过 5% 视为与买入矛盾
+STABILITY_DAYS = 3
+STABILITY_SCORE_DELTA = 15
+BEARISH_ACTIONS = frozenset({"reduce", "sell", "avoid"})
+# 数据完整度各块权重（合计 100）
+DATA_QUALITY_WEIGHTS = {"行情": 20, "日线": 15, "技术面": 10, "资金流": 15, "筹码": 10, "大盘": 15, "资讯": 10, "业绩": 5}
 
 SYSTEM_PROMPT = """你是一位专注 A 股短线（涨停板、连板接力、主线龙头）的交易分析师，负责对单只股票生成【决策仪表盘】。
 
@@ -99,7 +109,8 @@ class StockDiagnosisService:
         raw = self.llm.chat_json(user_message=context["text"], system_message=SYSTEM_PROMPT)
         if not raw:
             return {"code": code, "name": context["name"], "error": "AI 未返回有效结果，请检查 AI 设置或稍后重试"}
-        result = self._apply_guardrails(raw, context)
+        previous = self.latest(code, max_age_minutes=STABILITY_DAYS * 24 * 60)
+        result = self._apply_guardrails(raw, context, previous)
         self._save(result)
         return result
 
@@ -119,8 +130,15 @@ class StockDiagnosisService:
         from src.analyzers.theme_tracker import ThemeTracker
         from src.strategy.tech_score import analyze_technical
 
+        from src.collectors.fund_flow import describe as describe_flow
+        from src.collectors.fund_flow import latest_fund_flow
+        from src.collectors.fundamentals import EarningsCache, describe_chips, describe_earnings, earnings_risk, fetch_chip_summary
+
         cands = code_candidates(code)
         with get_db_session(self.db_path) as session:
+            bar_count = session.query(StockDaily.id).filter(StockDaily.code.in_(cands)).count()
+            flow = latest_fund_flow(session, code)
+            flow_text, flow_ratio = describe_flow(flow), (flow.net_ratio if flow else None)
             bars = (
                 session.query(StockDaily).filter(StockDaily.code.in_(cands))
                 .order_by(StockDaily.trade_date.desc()).limit(10).all()
@@ -174,12 +192,33 @@ class StockDiagnosisService:
         theme = next((t for t in themes if role and (t.dimension, t.name) == (role["dimension"], role["theme"])), None)
         regime = MarketRegimeAnalyzer(self.config).analyze()
         position = self._position(code)
+        chip = fetch_chip_summary(code, self.db_path)
+        try:
+            earnings = EarningsCache.get(code)
+        except Exception as e:
+            logger.debug(f"业绩数据获取失败: {e}")
+            earnings = None
+
+        present = {
+            "行情": bool(quote), "日线": bar_count >= MIN_DAILY_BARS, "技术面": bool(tech.brief()),
+            "资金流": bool(flow_text), "筹码": chip is not None, "大盘": regime.regime != "未知",
+            "资讯": bool(news_lines or sentiment_lines), "业绩": earnings is not None,
+        }
+        data_quality = {
+            "score": sum(DATA_QUALITY_WEIGHTS[k] for k, ok in present.items() if ok),
+            "missing": [k for k, ok in present.items() if not ok],
+            "core_ok": present["行情"] and present["日线"],
+            "bar_count": bar_count,
+        }
 
         sections = [
             f"股票：{name}({code}) {board_of(code)}",
             "【行情】" + self._quote_text(quote),
             "【近期走势】" + ("；".join(recent) if recent else "暂无"),
             f"【技术面】{tech.brief() or '数据不足'}" + (f"；利好信号：{'、'.join(tech.reasons)}" if tech.reasons else ""),
+            f"【资金流】{flow_text or '暂无'}",
+            f"【筹码】{describe_chips(chip) or '暂无'}",
+            f"【业绩】{describe_earnings(earnings) or '近期无业绩预告/快报'}",
             "【近期涨停】" + ("；".join(limit_up_lines) if limit_up_lines else "近期无涨停"),
             "【主线地位】" + (f"{role['role']}，所属{role['dimension']}{theme.brief()}" if role and theme else "不在近期涨停主线中"),
             f"【大盘环境】{regime.summary()}",
@@ -190,10 +229,13 @@ class StockDiagnosisService:
                 f"模拟盘持有 {position['quantity']} 股，成本 {position['avg_cost']:.2f}，止损 {position['stop_loss']:.2f}，目标 {position['target_price']:.2f}"
                 if position else "未持仓"
             ),
+            f"【数据完整度】{data_quality['score']}%" + (f"（缺少：{'、'.join(data_quality['missing'])}）" if data_quality["missing"] else ""),
         ]
         return {
             "code": code, "name": name, "quote": quote, "tech": tech, "role": role, "regime": regime,
-            "position": position, "text": "\n".join(sections),
+            "position": position, "text": "\n".join(sections), "data_quality": data_quality,
+            "flow_text": flow_text, "flow_ratio": flow_ratio, "chip": chip,
+            "earnings_text": describe_earnings(earnings), "earnings_risk": earnings_risk(earnings),
         }
 
     @staticmethod
@@ -222,7 +264,7 @@ class StockDiagnosisService:
 
     # ---------- 护栏 ----------
 
-    def _apply_guardrails(self, raw: dict, context: dict) -> dict[str, Any]:
+    def _apply_guardrails(self, raw: dict, context: dict, previous: dict | None = None) -> dict[str, Any]:
         try:
             score = max(0.0, min(100.0, float(raw.get("score", 50))))
         except (TypeError, ValueError):
@@ -239,6 +281,32 @@ class StockDiagnosisService:
         elif action in BULLISH_ACTIONS and regime.regime == "防守":
             guardrails.append(f"大盘防守，新开仓仓位按 ×{regime.position_factor:.1f} 控制")
 
+        confidence = str(raw.get("confidence", ""))
+        quality = context["data_quality"]
+        if action in BULLISH_ACTIONS and not quality["core_ok"]:
+            guardrails.append(f"行情或日线数据不足（日线 {quality['bar_count']} 根），无法确认买点，降级为观望")
+            action = "watch"
+        if quality["score"] < MIN_DATA_QUALITY:
+            confidence = "低"
+            if action in BULLISH_ACTIONS:
+                guardrails.append(f"数据完整度 {quality['score']}%（缺少{'、'.join(quality['missing'])}），不足以支撑买入，降级为观望")
+                action = "watch"
+        flow_ratio = context.get("flow_ratio")
+        if action in BULLISH_ACTIONS and flow_ratio is not None and flow_ratio <= FLOW_OUTFLOW_RATIO:
+            guardrails.append(f"资金净流出占成交额 {abs(flow_ratio):.1f}%，与买入建议矛盾，降级为观望")
+            action = "watch"
+        if previous and not previous.get("error"):
+            prev_action, prev_score = previous.get("action"), float(previous.get("score") or 0)
+            flipped_up = action in BULLISH_ACTIONS and prev_action in BEARISH_ACTIONS
+            flipped_down = action in BEARISH_ACTIONS and prev_action in BULLISH_ACTIONS
+            if (flipped_up or flipped_down) and abs(score - prev_score) < STABILITY_SCORE_DELTA:
+                note = f"与 {previous.get('created_at')} 的诊断（{previous.get('action_label')}，{prev_score:.0f}分）方向相反，但评分变化不足 {STABILITY_SCORE_DELTA} 分"
+                if flipped_up:
+                    guardrails.append(note + "，暂按观望处理，避免反复")
+                    action = "watch"
+                else:
+                    guardrails.append(note + "，风险优先，保留减仓/回避建议")
+
         plan_raw = raw.get("battle_plan") or {}
         plan = sanitize_price_plan(
             context["code"], context["name"], (context["quote"] or {}).get("close"),
@@ -253,7 +321,7 @@ class StockDiagnosisService:
             "score": round(score),
             "action": action,
             "action_label": ACTION_LABELS[action],
-            "confidence": str(raw.get("confidence", "")),
+            "confidence": confidence,
             "one_sentence": str(raw.get("one_sentence", "")),
             "trend_prediction": str(raw.get("trend_prediction", "")),
             "position_advice": raw.get("position_advice") if isinstance(raw.get("position_advice"), dict) else {},
@@ -262,12 +330,17 @@ class StockDiagnosisService:
                 "suggested_position": str(plan_raw.get("suggested_position", "")),
             },
             "catalysts": _as_list(raw.get("catalysts")),
-            "risks": _as_list(raw.get("risks")) + [f"技术面：{r}" for r in context["tech"].risks],
+            "risks": _as_list(raw.get("risks")) + [f"技术面：{r}" for r in context["tech"].risks]
+            + ([f"业绩：{context['earnings_risk']}"] if context.get("earnings_risk") else []),
             "checklist": checklist,
             "analysis": str(raw.get("analysis", "")),
             "guardrails": guardrails,
             "theme_role": context["role"] or {},
             "market_regime": regime.summary(),
+            "data_quality": {k: quality[k] for k in ("score", "missing")},
+            "fund_flow": context.get("flow_text", ""),
+            "chips": context.get("chip") or {},
+            "earnings": context.get("earnings_text", ""),
         }
 
     def _save(self, result: dict[str, Any]) -> None:
@@ -288,6 +361,9 @@ def render_markdown(result: dict[str, Any]) -> str:
         f"**{result['one_sentence']}**" if result["one_sentence"] else "",
         f"诊断时间 {result['created_at']}（行情 {result['trade_date']}）" + ("，复用 30 分钟内的结果" if result.get("cached") else ""),
     ]
+    quality = result.get("data_quality") or {}
+    if quality:
+        lines.append(f"数据完整度 {quality['score']}%" + (f"（缺少：{'、'.join(quality['missing'])}）" if quality.get("missing") else ""))
     if result["guardrails"]:
         lines.append("> 护栏：" + "；".join(result["guardrails"]))
     advice = result["position_advice"]
@@ -301,6 +377,11 @@ def render_markdown(result: dict[str, Any]) -> str:
         role = result["theme_role"]
         lines.append(f"**主线地位**：{role['theme']}（{role['phase']}）{role['role']}")
     lines.append(f"**大盘**：{result['market_regime']}")
+    from src.collectors.fundamentals import describe_chips
+
+    for label, text in (("资金", result.get("fund_flow")), ("筹码", describe_chips(result.get("chips"))), ("业绩", result.get("earnings"))):
+        if text:
+            lines.append(f"**{label}**：{text}")
     if result["catalysts"]:
         lines += ["### 利好催化", *[f"- {c}" for c in result["catalysts"]]]
     if result["risks"]:

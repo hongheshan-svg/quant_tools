@@ -12,6 +12,7 @@ import pandas as pd
 from loguru import logger
 
 from src.collectors.base import BaseCollector
+from src.collectors.fund_flow import collect_fund_flow
 from src.collectors.limit_up_reasons import fetch_ths_limit_up_reasons
 from src.collectors.source_chain import fetch_with_fallback, source_health
 from src.utils.stock_code import daily_limit_pct
@@ -134,6 +135,7 @@ class StockDataCollector(BaseCollector):
         self._collect_limit_up_pool(today, db_path)
         self._collect_dragon_tiger(today, db_path)
         self._collect_northbound_flow(today, db_path)
+        collect_fund_flow(today, db_path)
 
         return []  # 数据已直接写入数据库
 

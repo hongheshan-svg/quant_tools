@@ -223,6 +223,7 @@ class LimitUpPredictor:
         self._attach_technical(limit_up_info)
         theme_context = self._attach_theme_roles(limit_up_info)
         market_strong_stocks = self._get_market_strong_stocks(session)
+        self._attach_fund_flow([*limit_up_info.get("stocks", []), *limit_up_info.get("today_stocks", []), *market_strong_stocks])
         news_context = self._get_recent_news()
         hot_context = self._get_jiuyan_hot()
         multi_hot_context = self._get_multi_source_hot_topics()
@@ -732,6 +733,19 @@ class LimitUpPredictor:
             lines.append(f"- 降温/退潮板块（回避跟风）：{'、'.join(cooling)}")
         return "\n".join(lines)
 
+    def _attach_fund_flow(self, stocks: list[dict], max_stocks: int = 150) -> None:
+        """给候选股附上最近一个交易日的资金流（净流入金额与占成交额比例）。"""
+        from src.collectors.fund_flow import describe, latest_fund_flow
+
+        try:
+            with get_db_session(self.db_path) as session:
+                for s in stocks[:max_stocks]:
+                    text = describe(latest_fund_flow(session, s.get("code", "")))
+                    if text:
+                        s["flow"] = text
+        except Exception as e:
+            logger.debug(f"候选股资金流读取失败: {e}")
+
     def _attach_technical(self, limit_up_info: dict, max_stocks: int = 80) -> None:
         """给主要涨停数据集的个股附上一行技术面摘要（均线/MACD/RSI/乖离率/风险）。"""
         from src.strategy.tech_score import analyze_technical
@@ -758,6 +772,8 @@ class LimitUpPredictor:
                 line += f" 收盘价={s['close']:.2f}"
             if s.get("role"):
                 line += f" 主线角色={s['role']}"
+            if s.get("flow"):
+                line += f" 资金={s['flow']}"
             if s.get("tech"):
                 line += f" 技术面={s['tech']}"
             lines.append(line)
@@ -1420,6 +1436,8 @@ class LimitUpPredictor:
             )
             if features:
                 line += f" [{'/'.join(features)}]"
+            if s.get("flow"):
+                line += f" 资金={s['flow']}"
             lines.append(line)
         return lines
 

@@ -2,16 +2,29 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import pandas as pd
 import pytest
 
 from src.analyzers import market_regime as regime_mod
 from src.analyzers.market_regime import MarketRegime
+from src.collectors import fundamentals as fundamentals_mod
 from src.database import db as db_module
 from src.database.db import get_db_session, init_db
-from src.database.models import DragonTigerBoard, FinanceNews, LimitUpStock, StockDaily, StockDiagnosis
+from src.database.models import DragonTigerBoard, FinanceNews, LimitUpStock, StockDaily, StockDiagnosis, StockFundFlow
 from src.services.stock_diagnosis import StockDiagnosisService, render_markdown
 
-DAYS = [f"2026-09-{d:02d}" for d in (14, 15, 16, 17, 18, 21, 22, 23, 24, 25)]
+DAYS = [d.strftime("%Y-%m-%d") for d in pd.bdate_range(end="2026-09-25", periods=25)]
+CHIP = {"date": "2026-09-25", "profit_ratio": 85.0, "avg_cost": 21.3, "cost_90_low": 18.6, "cost_90_high": 23.9,
+        "concentration_90": 12.5, "source": "东方财富"}
+EARNINGS = {"type": "业绩预告", "period": "20260930", "change_type": "预增", "summary": "预计1-9月净利润增长50%",
+            "change_pct": 50.0, "notice_date": "2026-09-20"}
+
+
+@pytest.fixture(autouse=True)
+def offline_fundamentals(monkeypatch):
+    """筹码和业绩默认用固定数据，测试不联网。"""
+    monkeypatch.setattr(fundamentals_mod, "fetch_chip_summary", lambda code, db_path: dict(CHIP))
+    monkeypatch.setattr(fundamentals_mod.EarningsCache, "get", classmethod(lambda cls, code: dict(EARNINGS)))
 
 
 class _FakeLLM:
@@ -38,8 +51,11 @@ def db_path(tmp_path):
     init_db(path)
     with get_db_session(path) as session:
         for i, d in enumerate(DAYS):
-            session.add(StockDaily(code="sz002594", name="比亚迪", trade_date=d, open=20 + i * 0.3, close=20 + i * 0.4,
+            close = 14 + i * 0.4
+            session.add(StockDaily(code="sz002594", name="比亚迪", trade_date=d, open=close - 0.2, close=close,
                                    change_pct=2.0, volume=1000 + i, amount=5e9, turnover=3.2, circ_mv=6e11))
+        session.add(StockFundFlow(code="002594", name="比亚迪", trade_date="2026-09-25", net_inflow=3e8, net_ratio=6.0,
+                                  amount=5e9, source="同花顺"))
         session.add(LimitUpStock(code="002594", name="比亚迪", trade_date="2026-09-25", continuous_days=2, sector="汽车整车",
                                  first_limit_time="09:35", open_count=0, seal_amount=3e8, reason="固态电池"))
         session.add(FinanceNews(source="cailianshe", title="比亚迪固态电池量产提速", collected_at=datetime.now()))
@@ -76,6 +92,9 @@ def test_context_collects_all_sections(db_path):
     assert "日涨幅偏离7% 净买入5000万" in text
     assert "【主线地位】龙头，所属行业汽车整车" in text
     assert "【持仓】未持仓" in text
+    assert "【资金流】净流入3.00亿（占成交额6.0%，同花顺，2026-09-25）" in text
+    assert "【筹码】获利盘85%，平均成本21.3" in text and "【业绩】业绩预告" in text
+    assert context["data_quality"] == {"score": 85, "missing": ["大盘"], "core_ok": True, "bar_count": 25}  # 测试库行情样本不足，大盘为未知
 
 
 def test_diagnose_applies_guardrails_saves_and_caches(db_path):
@@ -117,3 +136,51 @@ def test_diagnose_errors(db_path):
     failed = _service(db_path, {})[0].diagnose("002594", force=True)
     assert "AI 未返回有效结果" in failed["error"]
     assert render_markdown(failed).startswith("**诊断失败**")
+
+
+def _with(db_path: str, reply: dict) -> dict:
+    return _service(db_path, reply)[0].diagnose("002594", force=True)
+
+
+def test_low_data_quality_blocks_buy(db_path, monkeypatch):
+    monkeypatch.setattr(fundamentals_mod, "fetch_chip_summary", lambda code, db_path: None)
+    monkeypatch.setattr(fundamentals_mod.EarningsCache, "get", classmethod(lambda cls, code: None))
+    with get_db_session(db_path) as session:
+        session.query(StockFundFlow).delete()
+
+    result = _with(db_path, GOOD_REPLY)
+    assert (result["action"], result["confidence"]) == ("watch", "低")
+    assert result["data_quality"]["score"] == 55
+    assert "数据完整度 55%" in result["guardrails"][0]
+    assert "数据完整度 55%（缺少：资金流、筹码、大盘、业绩）" in render_markdown(result)
+
+
+def test_short_history_blocks_buy(db_path):
+    with get_db_session(db_path) as session:
+        session.query(StockDaily).filter(StockDaily.trade_date < DAYS[-10]).delete()
+    result = _with(db_path, GOOD_REPLY)
+    assert result["action"] == "watch" and "日线 10 根" in result["guardrails"][0]
+
+
+def test_heavy_outflow_blocks_buy(db_path):
+    with get_db_session(db_path) as session:
+        session.query(StockFundFlow).update({"net_inflow": -4e8, "net_ratio": -8.0})
+    result = _with(db_path, GOOD_REPLY)
+    assert result["action"] == "watch" and "资金净流出占成交额 8.0%" in result["guardrails"][0]
+
+
+def test_stability_avoids_flipping_from_bearish_to_bullish(db_path):
+    service, _ = _service(db_path, {**GOOD_REPLY, "score": 72, "action": "卖出"})
+    assert service.diagnose("002594", force=True)["action"] == "sell"
+
+    flipped = _with(db_path, {**GOOD_REPLY, "score": 80})  # 分差 8 分
+    assert flipped["action"] == "watch" and "方向相反" in flipped["guardrails"][-1]
+
+    real_change = _with(db_path, {**GOOD_REPLY, "score": 95})  # 上次是观望，不算方向反转
+    assert real_change["action"] == "buy"
+
+
+def test_earnings_risk_is_listed(db_path, monkeypatch):
+    monkeypatch.setattr(fundamentals_mod.EarningsCache, "get", classmethod(lambda cls, code: {**EARNINGS, "change_type": "首亏"}))
+    result = _with(db_path, GOOD_REPLY)
+    assert "业绩：最新业绩预告为「首亏」" in result["risks"]

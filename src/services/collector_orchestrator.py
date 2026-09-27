@@ -10,6 +10,7 @@ from typing import Any
 
 from loguru import logger
 
+from src.collectors.fund_flow import collect_fund_flow
 from src.collectors.source_chain import source_health
 from src.config_loader import load_config
 from src.database.db import get_db_session, init_db
@@ -84,7 +85,7 @@ class CollectorOrchestrator:
 
         if not trading_calendar.market_data_ready():
             logger.info("非交易日或未到 9:25，跳过行情采集（接口此时返回的是上一个交易日的数据）")
-            return {k: "skipped" for k in ("realtime_quotes", "limit_up_pool", "dragon_tiger", "northbound_flow")}
+            return {k: "skipped" for k in ("realtime_quotes", "limit_up_pool", "dragon_tiger", "northbound_flow", "fund_flow")}
         logger.info("并发采集行情数据...")
         try:
             from src.collectors.stock_data import StockDataCollector
@@ -95,6 +96,7 @@ class CollectorOrchestrator:
                 "limit_up_pool": f"error: {e}",
                 "dragon_tiger": f"error: {e}",
                 "northbound_flow": f"error: {e}",
+                "fund_flow": f"error: {e}",
             }
 
         collector = StockDataCollector(self.config)
@@ -104,8 +106,9 @@ class CollectorOrchestrator:
             "limit_up_pool": lambda: collector._collect_limit_up_pool(today, self.db_path),
             "dragon_tiger": lambda: collector._collect_dragon_tiger(today, self.db_path),
             "northbound_flow": lambda: collector._collect_northbound_flow(today, self.db_path),
+            "fund_flow": lambda: collect_fund_flow(today, self.db_path),
         }
-        result = {"realtime_quotes": "ok", "limit_up_pool": "ok", "dragon_tiger": "ok", "northbound_flow": "ok"}
+        result = {"realtime_quotes": "ok", "limit_up_pool": "ok", "dragon_tiger": "ok", "northbound_flow": "ok", "fund_flow": "ok"}
         with ThreadPoolExecutor(max_workers=self.market_workers, thread_name_prefix="market") as executor:
             future_map = {executor.submit(func): name for name, func in tasks.items()}
             for future in as_completed(future_map):

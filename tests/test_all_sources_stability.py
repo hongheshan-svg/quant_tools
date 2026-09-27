@@ -210,6 +210,7 @@ def test_market_collection_skipped_before_market_data_ready(monkeypatch):
     monkeypatch.setattr("src.collectors.stock_data.StockDataCollector.__init__", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not collect")))
     assert orchestrator.collect_market_parallel() == {
         "realtime_quotes": "skipped", "limit_up_pool": "skipped", "dragon_tiger": "skipped", "northbound_flow": "skipped",
+        "fund_flow": "skipped",
     }
     assert orchestrator._check_missing_sources({"market": orchestrator.collect_market_parallel()}) == [
         f"news.{s}" for s in orchestrator.required_news_sources

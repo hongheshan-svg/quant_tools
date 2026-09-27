@@ -144,6 +144,26 @@ class StockInfo(Base):
     )
 
 
+class StockFundFlow(Base):
+    """个股资金流向（每日一条，盘中会被更新）"""
+    __tablename__ = "stock_fund_flow"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, comment="股票代码（6位）")
+    name = Column(String(20), comment="股票名称")
+    trade_date = Column(String(10), nullable=False, comment="交易日")
+    net_inflow = Column(Float, comment="资金净流入（元）：同花顺为流入-流出，东方财富为主力净流入")
+    net_ratio = Column(Float, comment="净流入占成交额比例 %")
+    amount = Column(Float, comment="成交额（元）")
+    source = Column(String(20), comment="数据源：同花顺/东方财富")
+    updated_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index("idx_fund_flow_code_date", "code", "trade_date", unique=True),
+        Index("idx_fund_flow_date", "trade_date"),
+    )
+
+
 class StockDiagnosis(Base):
     """个股 AI 诊断结果（决策仪表盘 JSON）"""
     __tablename__ = "stock_diagnosis"
