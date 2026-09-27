@@ -15,6 +15,7 @@ from src.database.models import (
     ExecutionEvent,
     PositionSnapshot,
     StockDaily,
+    StockScore,
     TradeFill,
     TradeOrder,
     TradeSignal,
@@ -41,17 +42,78 @@ class ExecutionService:
     """统一交易执行服务。"""
 
     STOCK_CODE_LENGTH = 6
+    # 评分引擎信号（无 AI 研判）只有这些评级才下单；hold 仅作关注信号
+    BUY_RECOMMENDATIONS = frozenset({"strong_buy", "buy"})
 
     def __init__(self, config: dict | None = None, broker: BrokerAdapter | None = None):
         self.config = config or load_config()
         self.db_path = self.config.get("database", {}).get("sqlite_path", "data/quant.db")
         trading_cfg = self.config.get("trading", {})
+        self.enabled = bool(trading_cfg.get("execution_enabled", True))
+        self.auto_confirm = bool(trading_cfg.get("auto_confirm", False))
         self.default_budget = float(trading_cfg.get("default_order_budget", 100_000))
         self.max_orders_per_run = int(trading_cfg.get("max_orders_per_run", 10))
         initial_cash = float(trading_cfg.get("paper_initial_cash", 1_000_000))
+        # 默认模拟盘的账户只存在内存里，每次使用前从 trade_fill 重放，保证重启后和多进程间一致
+        self._replay_paper_fills = broker is None
         self.broker = broker or PaperBrokerAdapter(initial_cash=initial_cash)
         self.risk = RiskManager(self.config)
         self.broker.connect()
+
+    def execute_signals(self, signal_date: str | None = None) -> dict:
+        """信号 → 订单：生成待确认订单；开启 auto_confirm 时直接确认下单（仅限模拟盘）。"""
+        order_ids = self.prepare_orders(signal_date)
+        confirmed = 0
+        if order_ids and self.auto_confirm:
+            if self.broker.name != "paper":
+                logger.warning(f"auto_confirm 仅支持模拟盘，当前通道 {self.broker.name}，订单保持待确认")
+            else:
+                for order_id in order_ids:
+                    if self.confirm_and_send(order_id, operator="auto").get("ok"):
+                        confirmed += 1
+        logger.info(f"信号执行完成: 新建订单 {len(order_ids)} 笔，自动确认 {confirmed} 笔")
+        return {"prepared": len(order_ids), "confirmed": confirmed}
+
+    def get_trading_snapshot(self, order_limit: int = 100) -> dict:
+        """账户、持仓（按最新收盘价估值）和最近订单，供界面展示。"""
+        self._sync_paper_account()
+        account = self.broker.get_account()
+        positions = []
+        with get_db_session(self.db_path) as session:
+            for pos in self.broker.get_positions():
+                price = self._get_latest_close(session, pos.code) or pos.market_price or pos.avg_cost
+                name = pos.name or (
+                    session.query(TradeOrder.name)
+                    .filter(TradeOrder.code == pos.code, TradeOrder.name != "")
+                    .order_by(TradeOrder.created_at.desc())
+                    .limit(1)
+                    .scalar()
+                    or ""
+                )
+                positions.append(
+                    {
+                        "code": pos.code,
+                        "name": name,
+                        "quantity": pos.quantity,
+                        "available_quantity": pos.available_quantity,
+                        "avg_cost": pos.avg_cost,
+                        "market_price": price,
+                        "market_value": price * pos.quantity,
+                        "unrealized_pnl": (price - pos.avg_cost) * pos.quantity,
+                    }
+                )
+        market_value = sum(p["market_value"] for p in positions)
+        return {
+            "account": {
+                "broker": self.broker.name,
+                "cash": account.cash,
+                "market_value": market_value,
+                "total_assets": account.cash + market_value,
+                "unrealized_pnl": sum(p["unrealized_pnl"] for p in positions),
+            },
+            "positions": positions,
+            "orders": self.list_orders(limit=order_limit),
+        }
 
     def prepare_orders(self, signal_date: str | None = None) -> list[str]:
         """生成待确认订单。"""
@@ -59,6 +121,7 @@ class ExecutionService:
         if not target_date:
             return []
 
+        self._sync_paper_account()
         created_ids: list[str] = []
         account = self.broker.get_account()
         logger.info(f"prepare_orders: signal_date={target_date}, account_total={account.total_assets:.2f}")
@@ -77,7 +140,7 @@ class ExecutionService:
             for sig in signals:
                 if len(created_ids) >= self.max_orders_per_run:
                     break
-                if not self._is_buy_signal(sig):
+                if not self._is_buy_signal(session, sig):
                     continue
 
                 code = (sig.code or "").strip()
@@ -194,6 +257,7 @@ class ExecutionService:
             return [self._order_to_dict(r) for r in rows]
 
     def confirm_and_send(self, order_id: str, operator: str = "manual") -> dict:
+        self._sync_paper_account()
         with get_db_session(self.db_path) as session:
             order = session.query(TradeOrder).filter(TradeOrder.id == order_id).first()
             if not order:
@@ -369,16 +433,41 @@ class ExecutionService:
                 )
             return result
 
-    def _is_buy_signal(self, sig: TradeSignal) -> bool:
+    def _is_buy_signal(self, session, sig: TradeSignal) -> bool:
         st = (sig.signal_type or "").lower()
         if st not in {"buy", "premarket"}:
             return False
         verdict = (sig.ai_verdict or "").strip()
-        verdict_lower = verdict.lower()
-        return not (
-            verdict
-            and any(k in verdict_lower for k in ("卖", "避", "观望", "sell", "avoid", "hold", "watch"))
+        if verdict:
+            verdict_lower = verdict.lower()
+            return not any(k in verdict_lower for k in ("卖", "避", "观望", "sell", "avoid", "hold", "watch"))
+        if st == "premarket":
+            return True
+        # 评分引擎的信号没有 AI 研判，hold 评级也记为 buy，需按当日评分的评级过滤
+        recommendation = (
+            session.query(StockScore.recommendation)
+            .filter(StockScore.code == sig.code, StockScore.score_date == sig.signal_date)
+            .limit(1)
+            .scalar()
         )
+        return recommendation in self.BUY_RECOMMENDATIONS
+
+    def _sync_paper_account(self) -> None:
+        """按 trade_fill 历史重放模拟盘现金和持仓（仅默认模拟盘）。"""
+        if not self._replay_paper_fills:
+            return
+        try:
+            with get_db_session(self.db_path) as session:
+                rows = (
+                    session.query(TradeFill.code, TradeFill.side, TradeFill.price, TradeFill.quantity)
+                    .join(TradeOrder, TradeOrder.id == TradeFill.order_id)
+                    .filter(TradeOrder.broker == self.broker.name)
+                    .order_by(TradeFill.filled_at, TradeFill.id)
+                    .all()
+                )
+            self.broker.restore_fills([tuple(r) for r in rows])
+        except Exception as e:
+            logger.warning(f"模拟盘账户恢复失败，使用当前内存状态: {e}")
 
     def _resolve_latest_signal_date(self) -> str | None:
         with get_db_session(self.db_path) as session:

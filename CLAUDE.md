@@ -58,10 +58,11 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
 
 - **`main.py` → `src/scheduler.py`**（BlockingScheduler）有两类任务：
   - 间隔任务：热搜每 30 分钟，财联社每 5 分钟，行情每 15 分钟，国际新闻每 30 分钟。
-  - 工作日定时任务：15:30 每日分析（舆情 → 涨停 → 国际因子 → `CompositeScorer.score_today()`），16:00 生成信号，16:20 自学习。
+  - 工作日定时任务：15:30 每日分析（舆情 → 涨停 → 国际因子 → `CompositeScorer.score_today()`），16:00 生成信号并调用 `ExecutionService.execute_signals()` 生成订单，16:20 自学习。
   - 所有间隔和时间都读自 `scheduler.*` 配置项。
 - **桌面端**（`run_dashboard.py` → `src/desktop/main_window.py`）**不使用** `scheduler.py`：
-  - Qt 定时器和按钮驱动 `PipelineService`（`collect()` → `self_learn()` → `LimitUpPredictor.predict()`）。
+  - Qt 定时器和按钮驱动 `PipelineService`（`collect()` → `self_learn()` → `premarket_predict()`，预测后生成订单）。
+  - 【模拟交易】页通过 `PipelineService` 的交易方法确认、撤销订单。这些方法共用一把锁，因为它们在不同工作线程里被调用。
   - `CollectorOrchestrator` 负责并发采集。
   - `DataQueryService` 提供界面上的全部查询。
   - 耗时任务放在 `QThreadPool` 工作线程里执行。
@@ -110,8 +111,10 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
 
 ### 交易（`src/trading/`）
 
-- `ExecutionService` 通过 `BrokerAdapter` 把 `TradeSignal` 记录转成 `TradeOrder` 记录。目前只有 `PaperBrokerAdapter`（模拟盘）一个实现。
-- 新订单初始状态为 `PENDING_CONFIRM`，用 `order_mapper.build_idempotency_key` 去重。
+- `ExecutionService` 通过 `BrokerAdapter` 把 `TradeSignal` 记录转成 `TradeOrder` 记录。目前只有 `PaperBrokerAdapter`（模拟盘）一个实现。入口是 `execute_signals()`，由上面两套运行时在生成信号后调用。
+- 新订单初始状态为 `PENDING_CONFIRM`，用 `order_mapper.build_idempotency_key` 去重。`trading.auto_confirm` 为 true 时直接确认下单，且只对模拟盘生效。
+- 评分引擎的信号没有 `ai_verdict`，而且 `hold` 评级也记为 `signal_type="buy"`。下单时按当日 `StockScore.recommendation` 过滤，只放行 `strong_buy`/`buy`。不要改 `generate_signals()` 的 `signal_type`，否则会影响自学习对 buy 信号的计分。
+- 模拟盘的现金和持仓只存在内存里。默认模拟盘在每次使用前（`_sync_paper_account()`）都会按 `trade_fill` 从初始资金重放一遍，所以测试或新代码要改账户状态，必须通过成交落库，直接改 broker 内存会被覆盖。
 - `RiskManager` 负责仓位限制、ST/*ST 黑名单和 `config/stock_pool.yaml` 股票池过滤。股票池规则只在 `validate_order_intent()`（下单前校验）里执行；`filter_signals()` 目前没有调用方。
 - 当 `min_listing_days > 0` 时，每个 `RiskManager` 实例第一次校验股票池会调用 `StockInfoCollector.refresh_if_stale()`：如果 `stock_info` 表超过一天没更新，就联网从沪深北交易所列表采集。涉及股票池的测试要 monkeypatch 掉这一步。
 

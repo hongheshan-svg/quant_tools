@@ -10,6 +10,7 @@ import webbrowser
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import datetime, timedelta
+from functools import partial
 from typing import Any
 
 from loguru import logger
@@ -38,6 +39,27 @@ from src.config_loader import load_config, reload_config
 from src.desktop.ai_settings_dialog import AISettingsDialog
 from src.services.data_query_service import DataQueryService
 from src.services.pipeline_service import PipelineService
+from src.trading.constants import (
+    ORDER_ACTIVE_STATUSES,
+    ORDER_STATUS_CANCELED,
+    ORDER_STATUS_FAILED,
+    ORDER_STATUS_FILLED,
+    ORDER_STATUS_PARTIAL,
+    ORDER_STATUS_PENDING_CONFIRM,
+    ORDER_STATUS_REJECTED,
+    ORDER_STATUS_SUBMITTED,
+)
+
+ORDER_STATUS_CN = {
+    ORDER_STATUS_PENDING_CONFIRM: ("待确认", "#f1fa8c"),
+    ORDER_STATUS_SUBMITTED: ("已报", "#8be9fd"),
+    ORDER_STATUS_PARTIAL: ("部分成交", "#8be9fd"),
+    ORDER_STATUS_FILLED: ("已成交", "#50fa7b"),
+    ORDER_STATUS_CANCELED: ("已撤单", "#8994b3"),
+    ORDER_STATUS_REJECTED: ("已拒绝", "#ff5555"),
+    ORDER_STATUS_FAILED: ("失败", "#ff5555"),
+}
+ORDER_SIDE_CN = {"buy": "买入", "sell": "卖出"}
 
 PLOT_MIN_DIMENSION = 10
 WEEKEND_WEEKDAY_INDEX = 5
@@ -752,6 +774,9 @@ class MainWindow(QMainWindow):
 
         # ---- Tab 2: 研报搜索（全网多源搜索） ----
 
+        # ---- Tab 3: 模拟交易 ----
+        self.main_tabs.addTab(self._build_trading_tab(), "模拟交易")
+
         layout.addWidget(self.main_tabs, stretch=1)
 
         # 日志区
@@ -763,9 +788,49 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(root)
 
+    def _build_trading_tab(self) -> QWidget:
+        """模拟交易：账户概览、订单（确认/撤单）、持仓。"""
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 4, 0, 0)
+
+        bar = QHBoxLayout()
+        self.trading_account_label = QLabel("模拟盘账户: -")
+        self.trading_account_label.setStyleSheet("font-weight: 600; color: #8be9fd; padding: 2px 6px;")
+        self.btn_prepare_orders = QPushButton("生成订单")
+        self.btn_prepare_orders.setToolTip("把最新交易信号转为待确认订单（经过风控校验）")
+        self.btn_confirm_order = QPushButton("确认下单")
+        self.btn_confirm_order.setToolTip("确认选中的待确认订单，提交到模拟盘")
+        self.btn_cancel_order = QPushButton("撤销订单")
+        self.btn_cancel_order.setToolTip("撤销选中的未完成订单")
+        self.btn_refresh_trading = QPushButton("刷新")
+        bar.addWidget(self.trading_account_label)
+        bar.addStretch()
+        for b in (self.btn_prepare_orders, self.btn_confirm_order, self.btn_cancel_order, self.btn_refresh_trading):
+            bar.addWidget(b)
+        tab_layout.addLayout(bar)
+
+        self.table_orders = self._build_table(
+            ["创建时间", "信号日期", "代码", "名称", "方向", "委托价", "数量", "金额", "状态", "说明"]
+        )
+        self.table_orders.setColumnWidth(0, 150)
+        self.table_positions = self._build_table(
+            ["代码", "名称", "持仓", "可卖", "成本价", "最新价", "市值", "浮动盈亏"]
+        )
+        tab_layout.addWidget(self._wrap("订单（选中后可确认下单或撤单）", self.table_orders), stretch=3)
+        tab_layout.addWidget(self._wrap("持仓", self.table_positions), stretch=2)
+
+        self._trading_orders: list[dict] = []
+        self._trading_refresh_inflight = False
+        return tab
+
     def _bind_actions(self):
         self.btn_premarket.clicked.connect(lambda: self._run_task("AI涨停预测", self.pipeline.premarket_predict))
         self.btn_ai_settings.clicked.connect(self._open_ai_settings)
+        self.btn_prepare_orders.clicked.connect(lambda: self._run_task("生成订单", self.pipeline.prepare_orders))
+        self.btn_confirm_order.clicked.connect(self._confirm_selected_order)
+        self.btn_cancel_order.clicked.connect(self._cancel_selected_order)
+        self.btn_refresh_trading.clicked.connect(self._refresh_trading)
 
     def _setup_loguru_sink(self):
         """
@@ -1228,7 +1293,8 @@ class MainWindow(QMainWindow):
 
     def _set_busy(self, busy: bool, status: str):
         self._busy = busy
-        self.btn_premarket.setEnabled(not busy)
+        for b in (self.btn_premarket, self.btn_prepare_orders, self.btn_confirm_order, self.btn_cancel_order):
+            b.setEnabled(not busy)
         self.status_label.setText(f"状态: {status}")
 
     def _run_task(self, name: str, fn: Callable):
@@ -1248,6 +1314,12 @@ class MainWindow(QMainWindow):
         self._pending_refresh = False  # 清除旧的待刷新标记
         # 任务完成后强制刷新界面，确保显示最新数据
         self.refresh_dashboard(force=True)
+        # 交易接口返回 ok=False 表示业务失败（如资金不足），需要提示用户
+        if isinstance(result, dict) and result.get("ok") is False:
+            QMessageBox.warning(self, name, f"{name}失败: {result.get('error') or '未知原因'}")
+        orders = result.get("orders") if isinstance(result, dict) else None
+        if isinstance(orders, dict) and orders.get("prepared"):
+            self._log(f"已生成 {orders['prepared']} 笔订单，请到【模拟交易】页确认下单。")
 
     def _on_task_error(self, name: str, detail: str):
         self._log(f"任务失败: {name}\n{detail}")
@@ -1279,6 +1351,103 @@ class MainWindow(QMainWindow):
 
     def refresh_dashboard(self, force: bool = False):
         self.refresh_dashboard_async(force=force)
+        self._refresh_trading()
+
+    # ---------- 模拟交易 ----------
+    def _refresh_trading(self):
+        if self._trading_refresh_inflight:
+            return
+        self._trading_refresh_inflight = True
+        worker = WorkerTask(self.pipeline.trading_snapshot)
+        worker.signals.finished.connect(self._on_trading_snapshot)
+        worker.signals.error.connect(self._on_trading_snapshot_error)
+        self.thread_pool.start(worker)
+
+    def _on_trading_snapshot_error(self, detail: str):
+        self._trading_refresh_inflight = False
+        self._log(f"模拟交易刷新异常: {detail}")
+
+    def _on_trading_snapshot(self, snapshot: dict):
+        self._trading_refresh_inflight = False
+        account = snapshot.get("account", {})
+        self.trading_account_label.setText(
+            f"模拟盘账户  总资产 {account.get('total_assets', 0):,.2f}  |  "
+            f"可用资金 {account.get('cash', 0):,.2f}  |  "
+            f"持仓市值 {account.get('market_value', 0):,.2f}  |  "
+            f"浮动盈亏 {account.get('unrealized_pnl', 0):+,.2f}"
+        )
+
+        self._trading_orders = snapshot.get("orders", [])
+        self.table_orders.setRowCount(len(self._trading_orders))
+        for i, o in enumerate(self._trading_orders):
+            status_text, status_color = ORDER_STATUS_CN.get(o.get("status"), (o.get("status") or "", "#dbe7ff"))
+            values = [
+                o.get("created_at"),
+                o.get("signal_date"),
+                o.get("code"),
+                o.get("name"),
+                ORDER_SIDE_CN.get(o.get("side"), o.get("side")),
+                f"{float(o.get('price') or 0):.2f}",
+                o.get("quantity"),
+                f"{float(o.get('amount') or 0):,.2f}",
+                status_text,
+                o.get("error_msg") or o.get("risk_note") or "",
+            ]
+            for col, value in enumerate(values):
+                self.table_orders.setItem(i, col, _item(value))
+            self.table_orders.item(i, 8).setForeground(QColor(status_color))
+
+        positions = snapshot.get("positions", [])
+        self.table_positions.setRowCount(len(positions))
+        for i, p in enumerate(positions):
+            pnl = float(p.get("unrealized_pnl") or 0)
+            values = [
+                p.get("code"),
+                p.get("name"),
+                p.get("quantity"),
+                p.get("available_quantity"),
+                f"{float(p.get('avg_cost') or 0):.3f}",
+                f"{float(p.get('market_price') or 0):.2f}",
+                f"{float(p.get('market_value') or 0):,.2f}",
+                f"{pnl:+,.2f}",
+            ]
+            for col, value in enumerate(values):
+                self.table_positions.setItem(i, col, _item(value))
+            if pnl:
+                self.table_positions.item(i, 7).setForeground(QColor("#ff5555" if pnl > 0 else "#50fa7b"))
+
+    def _selected_order(self) -> dict | None:
+        row = self.table_orders.currentRow()
+        if row < 0 or row >= len(self._trading_orders):
+            QMessageBox.information(self, "模拟交易", "请先在订单表中选中一笔订单。")
+            return None
+        return self._trading_orders[row]
+
+    def _confirm_selected_order(self):
+        order = self._selected_order()
+        if not order:
+            return
+        if order.get("status") != ORDER_STATUS_PENDING_CONFIRM:
+            status_text = ORDER_STATUS_CN.get(order.get("status"), (order.get("status"), ""))[0]
+            QMessageBox.information(self, "模拟交易", f"只能确认「待确认」的订单，该订单状态为「{status_text}」。")
+            return
+        side = ORDER_SIDE_CN.get(order.get("side"), order.get("side"))
+        text = (
+            f"以 {float(order.get('price') or 0):.2f} 元{side} {order.get('name')}({order.get('code')}) "
+            f"{order.get('quantity')} 股，金额约 {float(order.get('amount') or 0):,.2f} 元。\n\n确认提交到模拟盘？"
+        )
+        if QMessageBox.question(self, "确认下单", text) != QMessageBox.StandardButton.Yes:
+            return
+        self._run_task("确认下单", partial(self.pipeline.confirm_order, order["id"]))
+
+    def _cancel_selected_order(self):
+        order = self._selected_order()
+        if not order:
+            return
+        if order.get("status") not in ORDER_ACTIVE_STATUSES:
+            QMessageBox.information(self, "模拟交易", "该订单已结束，无法撤销。")
+            return
+        self._run_task("撤销订单", partial(self.pipeline.cancel_order, order["id"]))
 
     def _on_snapshot_ready(self, snapshot: dict):
         try:
@@ -1882,6 +2051,13 @@ class MainWindow(QMainWindow):
             "all_sources_ok": "全源稳定",
             "missing_sources": "缺失源",
             "collect_attempts": "重试轮次",
+            "prediction_count": "预测数",
+            "orders": "订单",
+            "prepared": "新建订单",
+            "confirmed": "自动确认",
+            "ok": "成功",
+            "order_id": "订单号",
+            "error": "错误",
         }
 
         def transform(obj: Any):

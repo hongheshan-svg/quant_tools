@@ -2,6 +2,8 @@
 任务调度器 - APScheduler 定时采集和分析
 """
 
+from datetime import date
+
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
@@ -134,6 +136,17 @@ def _run_signal_generation(config: dict):
         logger.info("===== 交易信号生成完成 =====")
     except Exception as e:
         logger.error(f"信号生成任务异常: {e}")
+        return
+
+    # 信号 → 待确认订单（开启 trading.auto_confirm 时直接在模拟盘成交）
+    try:
+        from src.trading.execution_service import ExecutionService
+
+        execution = ExecutionService(config)
+        if execution.enabled:
+            execution.execute_signals(signal_date=date.today().strftime("%Y-%m-%d"))
+    except Exception as e:
+        logger.error(f"交易执行任务异常: {e}")
 
 
 def _run_self_learning(config: dict):

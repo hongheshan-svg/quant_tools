@@ -207,6 +207,14 @@ class PaperBrokerAdapter(BrokerAdapter):
                 fills=list(od.get("fills", [])),
             )
 
+    def restore_fills(self, fills: list[tuple[str, str, float, int]]) -> None:
+        """从初始资金开始按时间顺序重放历史成交 (code, side, price, quantity)，恢复现金和持仓。"""
+        with self._lock:
+            self._cash = self._initial_cash
+            self._positions = {}
+            for code, side, price, quantity in fills:
+                self._apply_fill(code, side, float(price or 0), int(quantity or 0))
+
     def _apply_fill(self, code: str, side: str, price: float, quantity: int) -> None:
         amount = price * quantity
         pos = self._positions.get(code)

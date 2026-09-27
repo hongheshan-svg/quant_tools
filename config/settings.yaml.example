@@ -83,6 +83,19 @@ trading:
   # 集合竞价时间
   auction_start: "09:15"
   auction_end: "09:25"
+  # 交易执行（模拟盘）
+  # 生成交易信号后（定时任务 16:00、桌面端 AI涨停预测后）自动把买入信号转为待确认订单
+  execution_enabled: true
+  # 自动确认下单；false 时需在桌面端【模拟交易】页手动确认（仅对模拟盘生效）
+  auto_confirm: false
+  # 单笔订单预算（元），按信号强度缩放后取整到 100 股
+  default_order_budget: 100000
+  # 每次最多生成的订单数
+  max_orders_per_run: 10
+  # 模拟盘初始资金（元）
+  paper_initial_cash: 1000000
+  # 仅在交易时段内允许下单（信号在收盘后生成，开启后需在次日盘中确认）
+  strict_session_check: false
 
 # --- 策略权重配置 ---
 strategy:
