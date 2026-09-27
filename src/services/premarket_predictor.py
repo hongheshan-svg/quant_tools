@@ -209,6 +209,7 @@ class LimitUpPredictor:
 
         # 1) 收集所有可用数据
         limit_up_info = self._get_limit_up_data(session)
+        self._attach_technical(limit_up_info)
         market_strong_stocks = self._get_market_strong_stocks(session)
         news_context = self._get_recent_news()
         hot_context = self._get_jiuyan_hot()
@@ -635,6 +636,15 @@ class LimitUpPredictor:
             "close": lu.close or 0,
         }
 
+    def _attach_technical(self, limit_up_info: dict, max_stocks: int = 80) -> None:
+        """给主要涨停数据集的个股附上一行技术面摘要（均线/MACD/RSI/乖离率/风险）。"""
+        from src.strategy.tech_score import analyze_technical
+
+        for key in ("stocks", "today_stocks"):
+            for s in limit_up_info.get(key, [])[:max_stocks]:
+                with suppress(Exception):
+                    s["tech"] = analyze_technical(s["code"], self.db_path).brief()
+
     @staticmethod
     def _format_stock_lines(stocks: list[dict]) -> list[str]:
         lines = []
@@ -648,6 +658,8 @@ class LimitUpPredictor:
                 f"流通市值={s['circ_mv_yi']:.1f}亿 "
                 f"{'[一字板]' if s['is_yizi'] else ''}"
             )
+            if s.get("tech"):
+                line += f" 技术面={s['tech']}"
             lines.append(line)
         return lines
 
