@@ -1,15 +1,22 @@
 """
 东方财富 API 客户端 - 使用 Playwright 绕过 TLS 指纹检测
 替代 AKShare 的 *_em() 系列函数
+
+Playwright 同步 API 的对象只能在创建它的线程里使用，而采集任务分布在多个工作线程上，
+所以浏览器由一个专用线程持有，所有请求都提交到该线程执行（调用方可在任意线程等待结果）。
 """
 
 import threading
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 
 import pandas as pd
 from loguru import logger
 from playwright.sync_api import sync_playwright
 
 HTTP_OK_STATUS = 200
+DEFAULT_REFERER = "https://quote.eastmoney.com/"
+BROWSER_STARTUP_SECONDS = 30  # 首次请求要启动浏览器并预热主页
 
 
 class EastMoneyClient:
@@ -33,10 +40,11 @@ class EastMoneyClient:
         self._browser = None
         self._context = None
         self._page = None
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="em-playwright")
         self._initialized = True
 
     def _ensure_browser(self):
-        """确保浏览器已启动"""
+        """确保浏览器已启动（只在浏览器专用线程调用）"""
         if self._browser is None:
             self._playwright = sync_playwright().start()
             self._browser = self._playwright.chromium.launch(headless=True)
@@ -49,14 +57,26 @@ class EastMoneyClient:
             except Exception as e:
                 logger.warning(f"东方财富主页预热失败: {e}")
 
-    def _request(self, url: str, params: dict = None, timeout: int = 15000) -> dict | None:
-        """发送 GET 请求（带浏览器 TLS 指纹）"""
+    def request_json(self, url: str, params: dict | None = None, timeout: int = 15000, referer: str | None = None) -> dict | None:
+        """通用 JSON 请求（带浏览器 TLS 指纹），供各采集器调用东方财富的其他接口；失败返回 None。"""
+        return self._request(url, params=params, timeout=timeout, referer=referer)
+
+    def _request(self, url: str, params: dict = None, timeout: int = 15000, referer: str | None = None) -> dict | None:
+        """发送 GET 请求（带浏览器 TLS 指纹）；可在任意线程调用，实际在浏览器专用线程执行。"""
+        future = self._executor.submit(self._request_in_browser_thread, url, params, timeout, referer)
+        try:
+            return future.result(timeout=timeout / 1000 + BROWSER_STARTUP_SECONDS)
+        except Exception as e:
+            logger.warning(f"东方财富 API 请求失败: {e}")
+            return None
+
+    def _request_in_browser_thread(self, url: str, params: dict | None, timeout: int, referer: str | None) -> dict | None:
         try:
             self._ensure_browser()
             resp = self._context.request.get(
                 url,
                 params=params or {},
-                headers={'Referer': 'https://quote.eastmoney.com/'},
+                headers={'Referer': referer or DEFAULT_REFERER},
                 timeout=timeout
             )
             if resp.status != HTTP_OK_STATUS:
@@ -68,7 +88,13 @@ class EastMoneyClient:
             return None
 
     def close(self):
-        """关闭浏览器"""
+        """关闭浏览器（在浏览器专用线程执行）"""
+        if self._browser is None and self._playwright is None:
+            return
+        with suppress(Exception):
+            self._executor.submit(self._close_in_browser_thread).result(timeout=15)
+
+    def _close_in_browser_thread(self):
         if self._page:
             self._page.close()
         if self._context:
@@ -83,7 +109,8 @@ class EastMoneyClient:
         self._playwright = None
 
     def __del__(self):
-        self.close()
+        with suppress(Exception):
+            self.close()
 
     # ========== AKShare 兼容接口 ==========
 
