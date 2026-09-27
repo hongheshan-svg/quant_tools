@@ -32,6 +32,41 @@ PREFIXED_STOCK_CODE_LENGTH = 8
 PEARSON_EPSILON = 1e-12
 
 
+def signal_evaluation_date(signal_type: str | None, signal_date: str) -> str:
+    """信号的验证日：盘前预测的 signal_date 已是目标交易日；其余信号在收盘后
+    用当天数据生成，必须用下一个交易日验证，否则会拿已知行情给自己打分。"""
+    if (signal_type or "").lower() == "premarket":
+        return signal_date
+    return trading_calendar.next_trade_day(signal_date).strftime("%Y-%m-%d")
+
+
+def parse_signal_reason(reason: str) -> tuple[str, str]:
+    """从 reason 中解析 source/predict_type。"""
+    source = "综合评分"
+    predict_type = ""
+    text = reason or ""
+    if text.startswith("##TYPE:"):
+        try:
+            _, rest = text.split("##TYPE:", 1)
+            predict_type, rest = rest.split("##TIME:", 1)
+            if "##SRC:" in rest:
+                _, rest = rest.split("##SRC:", 1)
+                source, _ = rest.split("##", 1)
+            source = source.strip() or "涨停板"
+            predict_type = predict_type.strip()
+            return source, predict_type
+        except Exception:
+            pass
+
+    if "热点" in text:
+        source = "热点驱动"
+    elif "全市场" in text:
+        source = "全市场"
+    elif "涨停" in text:
+        source = "涨停板"
+    return source, predict_type
+
+
 class SelfLearningService:
     """系统自学习入口。"""
 
@@ -88,14 +123,6 @@ class SelfLearningService:
         )
         return result
 
-    @staticmethod
-    def _evaluation_date(sig: TradeSignal) -> str:
-        """信号的验证日：盘前预测的 signal_date 已是目标交易日；其余信号在收盘后
-        用当天数据生成，必须用下一个交易日验证，否则会拿已知行情给自己打分。"""
-        if (sig.signal_type or "").lower() == "premarket":
-            return sig.signal_date
-        return trading_calendar.next_trade_day(sig.signal_date).strftime("%Y-%m-%d")
-
     def _evaluate_signal_outcomes(self, as_of_date: str, lookback_days: int) -> list[dict[str, Any]]:
         """评估最近信号效果并写入 SignalOutcome（验证日行情尚未采集的信号跳过，下次再评估）。"""
         start_date = (datetime.strptime(as_of_date, "%Y-%m-%d") - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
@@ -113,14 +140,14 @@ class SelfLearningService:
             )
 
             for sig in signals:
-                eval_date = self._evaluation_date(sig)
+                eval_date = signal_evaluation_date(sig.signal_type, sig.signal_date)
                 if eval_date > as_of_date:
                     continue
                 daily = self._find_stock_daily(session, sig.code, eval_date)
                 if not daily or daily.change_pct is None:
                     continue
 
-                source, predict_type = self._parse_reason(sig.reason or "")
+                source, predict_type = parse_signal_reason(sig.reason or "")
                 confidence = float(sig.signal_strength or 0) * 10.0
                 change_pct = float(daily.change_pct or 0.0)
                 hit_limit_up = self._is_limit_up(session, sig.code, eval_date)
@@ -374,33 +401,6 @@ class SelfLearningService:
                         **payload,
                     )
                 )
-
-    @staticmethod
-    def _parse_reason(reason: str) -> tuple[str, str]:
-        """从 reason 中解析 source/predict_type。"""
-        source = "综合评分"
-        predict_type = ""
-        text = reason or ""
-        if text.startswith("##TYPE:"):
-            try:
-                _, rest = text.split("##TYPE:", 1)
-                predict_type, rest = rest.split("##TIME:", 1)
-                if "##SRC:" in rest:
-                    _, rest = rest.split("##SRC:", 1)
-                    source, _ = rest.split("##", 1)
-                source = source.strip() or "涨停板"
-                predict_type = predict_type.strip()
-                return source, predict_type
-            except Exception:
-                pass
-
-        if "热点" in text:
-            source = "热点驱动"
-        elif "全市场" in text:
-            source = "全市场"
-        elif "涨停" in text:
-            source = "涨停板"
-        return source, predict_type
 
     @staticmethod
     def _calc_outcome_score(

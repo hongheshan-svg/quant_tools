@@ -781,6 +781,11 @@ class MainWindow(QMainWindow):
         # ---- Tab 3: 模拟交易 ----
         self.main_tabs.addTab(self._build_trading_tab(), "模拟交易")
 
+        # ---- Tab 4: 信号绩效 ----
+        self._performance_tab = self._build_performance_tab()
+        self.main_tabs.addTab(self._performance_tab, "信号绩效")
+        self.main_tabs.currentChanged.connect(self._on_main_tab_changed)
+
         layout.addWidget(self.main_tabs, stretch=1)
 
         # 日志区
@@ -828,6 +833,39 @@ class MainWindow(QMainWindow):
         self._trading_refresh_inflight = False
         return tab
 
+    def _build_performance_tab(self) -> QWidget:
+        """信号绩效：按验证日入场，统计 1/3/5 日收益、胜率、涨停命中率和止损止盈模拟。"""
+        tab = QWidget()
+        tab_layout = QVBoxLayout(tab)
+        tab_layout.setContentsMargins(0, 4, 0, 0)
+
+        bar = QHBoxLayout()
+        self.performance_label = QLabel("近 60 天信号绩效（切换到本页时自动计算）")
+        self.performance_label.setStyleSheet("font-weight: 600; color: #8be9fd; padding: 2px 6px;")
+        self.performance_label.setToolTip(
+            "入场：开盘前生成的信号按验证日开盘价，盘中生成的按收盘价；N日收益按收盘价计算。\n"
+            "止损止盈：优先用信号自带的价格计划，否则按风控配置；T+1，入场次日起判断，"
+            "同一天同时触及止损和止盈按止损处理。"
+        )
+        self.btn_refresh_performance = QPushButton("重新计算")
+        bar.addWidget(self.performance_label)
+        bar.addStretch()
+        bar.addWidget(self.btn_refresh_performance)
+        tab_layout.addLayout(bar)
+
+        self.table_performance = self._build_table(
+            ["维度", "分组", "信号数", "已评估", "涨停命中率", "1日胜率", "1日均收益",
+             "3日胜率", "3日均收益", "5日胜率", "5日均收益", "模拟收益", "止损率", "止盈率"]
+        )
+        self.table_performance_details = self._build_table(
+            ["信号日", "验证日", "代码", "名称", "类型", "来源", "研判", "入场价",
+             "1日", "3日", "5日", "涨停", "离场", "模拟收益"]
+        )
+        tab_layout.addWidget(self._wrap("分组统计", self.table_performance), stretch=2)
+        tab_layout.addWidget(self._wrap("信号明细", self.table_performance_details), stretch=3)
+        self._performance_inflight = False
+        return tab
+
     def _bind_actions(self):
         self.btn_premarket.clicked.connect(lambda: self._run_task("AI涨停预测", self.pipeline.premarket_predict))
         self.btn_ai_settings.clicked.connect(self._open_ai_settings)
@@ -835,6 +873,7 @@ class MainWindow(QMainWindow):
         self.btn_confirm_order.clicked.connect(self._confirm_selected_order)
         self.btn_cancel_order.clicked.connect(self._cancel_selected_order)
         self.btn_refresh_trading.clicked.connect(self._refresh_trading)
+        self.btn_refresh_performance.clicked.connect(self._refresh_performance)
 
     def _setup_loguru_sink(self):
         """
@@ -1397,6 +1436,82 @@ class MainWindow(QMainWindow):
                 self.table_positions.setItem(i, col, _item(value))
             if pnl:
                 self.table_positions.item(i, 7).setForeground(QColor("#ff5555" if pnl > 0 else "#50fa7b"))
+
+    # ---------- 信号绩效 ----------
+    def _on_main_tab_changed(self, index: int):
+        if self.main_tabs.widget(index) is self._performance_tab:
+            self._refresh_performance()
+
+    def _refresh_performance(self):
+        if self._performance_inflight:
+            return
+        self._performance_inflight = True
+        self.performance_label.setText("信号绩效计算中…")
+        worker = WorkerTask(self.pipeline.signal_performance)
+        worker.signals.finished.connect(self._on_performance_ready)
+        worker.signals.error.connect(self._on_performance_error)
+        self.thread_pool.start(worker)
+
+    def _on_performance_error(self, detail: str):
+        self._performance_inflight = False
+        self.performance_label.setText("信号绩效计算失败，详见日志")
+        self._log(f"信号绩效计算异常: {detail}")
+
+    @staticmethod
+    def _pct_item(value: Any, signed: bool = True) -> QTableWidgetItem:
+        """百分比单元格：signed=True 时带正负号并按红涨绿跌着色。"""
+        if value is None:
+            item = _item("--")
+            item.setForeground(QColor("#8994b3"))
+            return item
+        item = _item(f"{value:+.2f}%" if signed else f"{value:.1f}%")
+        if signed and value:
+            item.setForeground(QColor("#ff5555" if value > 0 else "#50fa7b"))
+        return item
+
+    def _on_performance_ready(self, result: dict):
+        self._performance_inflight = False
+        self.performance_label.setText(
+            f"近 {result.get('lookback_days')} 天信号绩效（截至 {result.get('as_of')}，鼠标悬停查看统计口径）"
+        )
+
+        summary = result.get("summary", [])
+        self.table_performance.setRowCount(len(summary))
+        for i, r in enumerate(summary):
+            self.table_performance.setItem(i, 0, _item(r["dimension"]))
+            self.table_performance.setItem(i, 1, _item(r["group"]))
+            self.table_performance.setItem(i, 2, _item(r["total"]))
+            self.table_performance.setItem(i, 3, _item(r["evaluated"]))
+            cells = [
+                (r["limit_up_rate"], False),
+                (r["win_rate_1d"], False), (r["avg_return_1d"], True),
+                (r["win_rate_3d"], False), (r["avg_return_3d"], True),
+                (r["win_rate_5d"], False), (r["avg_return_5d"], True),
+                (r["simulated_avg"], True),
+                (r["stop_loss_rate"], False), (r["take_profit_rate"], False),
+            ]
+            for col, (value, signed) in enumerate(cells, start=4):
+                self.table_performance.setItem(i, col, self._pct_item(value, signed))
+
+        exit_cn = {"stop_loss": "止损", "ambiguous_stop_loss": "止损(同日触及)", "take_profit": "止盈", "window_end": "到期"}
+        status_cn = {"pending": "待验证", "no_data": "无行情"}
+        type_cn = {"premarket": "AI预测", "buy": "评分信号"}
+        details = result.get("details", [])[:300]
+        self.table_performance_details.setRowCount(len(details))
+        for i, d in enumerate(details):
+            returns = d.get("returns", {})
+            entry = d.get("entry_price")
+            entry_text = f"{entry:.2f}（{'开盘' if d.get('entry_at') == 'open' else '收盘'}）" if entry else status_cn.get(d["status"], "--")
+            values = [d["signal_date"], d["eval_date"], d["code"], d["name"], type_cn.get(d["signal_type"], d["signal_type"]),
+                      d["source"], d["verdict"], entry_text]
+            for col, value in enumerate(values):
+                self.table_performance_details.setItem(i, col, _item(value))
+            for col, h in enumerate((1, 3, 5), start=8):
+                self.table_performance_details.setItem(i, col, self._pct_item(returns.get(h)))
+            limit_up = {True: "是", False: "否"}.get(d.get("hit_limit_up"), "--")
+            self.table_performance_details.setItem(i, 11, _item(limit_up))
+            self.table_performance_details.setItem(i, 12, _item(exit_cn.get(d.get("exit_reason"), "--")))
+            self.table_performance_details.setItem(i, 13, self._pct_item(d.get("simulated_return")))
 
     def _selected_order(self) -> dict | None:
         row = self.table_orders.currentRow()

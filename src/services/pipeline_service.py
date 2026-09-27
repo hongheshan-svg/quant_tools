@@ -50,6 +50,12 @@ class PipelineService:
             result["orders"] = self.prepare_orders(signal_date=date.today().strftime("%Y-%m-%d"))
         return result
 
+    def signal_performance(self, lookback_days: int = 60) -> dict[str, Any]:
+        """近 lookback_days 天交易信号的绩效回测（只读统计）。"""
+        from src.services.signal_performance import SignalPerformanceService
+
+        return SignalPerformanceService(self.config).evaluate(lookback_days)
+
     # ---- 交易执行（模拟盘） ----
 
     def prepare_orders(self, signal_date: str | None = None) -> dict[str, Any]:
