@@ -41,7 +41,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec("theme", "主线地位", "code（可选）", "当前题材/行业主线；给 code 时说明该股是否为主线龙头或跟风"),
     ToolSpec("market", "大盘环境", "无", "指数、涨跌家数、成交额、量化大盘环境、主线和降温板块、重要快讯"),
     ToolSpec("screening", "策略选股", "code（可选）", "最近一次全市场策略选股结果；给 code 时说明该股是否入选及理由"),
-    ToolSpec("position", "模拟盘持仓", "code（可选）", "模拟盘持仓、成本、止损价和目标价"),
+    ToolSpec("position", "持仓", "code（可选）", "模拟盘和实盘记账的持仓、成本、止损价和目标价"),
     ToolSpec("diagnosis", "历史诊断", "code", "该股最近一次 AI 诊断的结论和评分"),
     ToolSpec("watchlist", "自选股", "无", "自选股列表、最新涨跌和每只最近一次 AI 诊断结论"),
 )
@@ -234,16 +234,20 @@ class ChatTools:
         )
 
     def _tool_position(self, args: dict) -> str:
+        from src.services.real_portfolio import RealPortfolioService
         from src.trading.execution_service import ExecutionService
 
-        positions = ExecutionService(self.config).get_trading_snapshot(order_limit=1)["positions"]
         code, _ = self._resolve(args, required=False)
-        if code:
-            positions = [p for p in positions if bare_code(p["code"]) == code]
-        return "模拟盘持仓：" + ("；".join(
-            f"{p['name']}({p['code']}) {p['quantity']}股 成本{p['avg_cost']:.2f} 现价{p['market_price']:.2f} "
-            f"止损{p['stop_loss']:.2f} 目标{p['target_price']:.2f} 浮盈{p['unrealized_pnl']:+.0f}" for p in positions
-        ) or "无")
+        texts = []
+        for label, positions in (("模拟盘持仓", ExecutionService(self.config).get_trading_snapshot(order_limit=1)["positions"]),
+                                 ("实盘持仓", RealPortfolioService(self.config).positions())):
+            if code:
+                positions = [p for p in positions if bare_code(p["code"]) == code]
+            texts.append(f"{label}：" + ("；".join(
+                f"{p['name']}({p['code']}) {p['quantity']}股 成本{p['avg_cost']:.2f} 现价{p['market_price']:.2f} "
+                f"止损{p['stop_loss']:.2f} 目标{p['target_price']:.2f} 浮盈{p['unrealized_pnl']:+.0f}" for p in positions
+            ) or "无"))
+        return "\n".join(texts)
 
     def _tool_diagnosis(self, args: dict) -> str:
         from src.services.stock_diagnosis import StockDiagnosisService

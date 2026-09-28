@@ -6,6 +6,8 @@
 - 行业集中度：按股票最近一次涨停时的所属行业归类（没有涨停记录的归「未知」），同一行业超过 sector_max_pct（默认 50%）时提示
 - 止损距离：现价距止损价不足 near_stop_pct（默认 3%）时提示，已跌破的单独提示
 - 回撤：按成交记录和每日收盘价重放账户净值，给出最大回撤和当前回撤
+account="real" 时改为实盘记账（RealPortfolioService）的持仓和流水；实盘没有设置可用资金时不比较总仓位，
+回撤按「现在没有现金」反推期初资金计算。
 """
 
 from __future__ import annotations
@@ -66,8 +68,10 @@ def drawdowns(nav: list[tuple[str, float]]) -> dict[str, Any]:
 
 
 class PortfolioRiskService:
-    def __init__(self, config: dict | None = None, execution=None):
+    def __init__(self, config: dict | None = None, execution=None, account: str = "paper", real=None):
         self.config = config or load_config()
+        self.account = account
+        self._real = real
         self.db_path = self.config.get("database", {}).get("sqlite_path", "data/quant.db")
         cfg = self.config.get("portfolio_risk") or {}
         self.single_max_pct = float(cfg.get("single_max_pct", 30))
@@ -83,15 +87,24 @@ class PortfolioRiskService:
             self._execution = ExecutionService(self.config)
         return self._execution
 
+    @property
+    def real(self):
+        if self._real is None:
+            from src.services.real_portfolio import RealPortfolioService
+
+            self._real = RealPortfolioService(self.config)
+        return self._real
+
     def report(self) -> dict[str, Any]:
-        snapshot = self.execution.get_trading_snapshot(order_limit=1)
+        snapshot = self.real.snapshot() if self.account == "real" else self.execution.get_trading_snapshot(order_limit=1)
         account, positions = snapshot["account"], snapshot["positions"]
         total = account["total_assets"] or 0.0
-        warnings: list[str] = []
+        warnings: list[str] = list(snapshot.get("warnings") or [])
+        cash_known = account.get("cash_known", True)
 
         exposure = account["market_value"] / total * 100 if total else 0.0
         regime, suggested = self._regime_limit()
-        if suggested is not None and exposure > suggested + 1e-6:
+        if cash_known and suggested is not None and exposure > suggested + 1e-6:
             warnings.append(f"总仓位 {exposure:.0f}% 高于大盘「{regime}」环境建议的 {suggested:.0f}%")
 
         sectors = self._sectors([p["code"] for p in positions])
@@ -127,7 +140,8 @@ class PortfolioRiskService:
                 warnings.append(f"行业「{s['sector']}」合计占 {s['weight']:.0f}%，超过上限 {self.sector_max_pct:.0f}%")
 
         return {
-            "as_of": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "as_of": datetime.now().strftime("%Y-%m-%d %H:%M"), "account": self.account, "cash_known": cash_known,
+            "realized_pnl": account.get("realized_pnl"),
             "total_assets": round(total, 2), "cash": round(account["cash"], 2), "exposure": round(exposure, 1),
             "regime": regime, "suggested_exposure": suggested,
             "positions": rows, "sectors": sector_rows, "drawdown": self._drawdown(), "warnings": warnings,
@@ -159,7 +173,12 @@ class PortfolioRiskService:
                     result[bare_code(code)] = row[0]
         return result
 
-    def _drawdown(self) -> dict[str, Any]:
+    def _fills_and_initial_cash(self) -> tuple[list[tuple], float]:
+        if self.account == "real":
+            fills = self.real.fills()
+            # 期初资金 = 现在的可用资金 + 全部买入 - 全部卖出（没有设置可用资金时按现在没有现金计算）
+            flow = sum(price * qty * (1 if side == "buy" else -1) for _, side, price, qty, _ in fills)
+            return fills, (self.real.cash() or 0.0) + flow
         broker = getattr(self.execution, "broker", None)
         initial_cash = float(getattr(broker, "_initial_cash", 0) or (self.config.get("trading") or {}).get("paper_initial_cash", 1_000_000))
         with get_db_session(self.db_path) as session:
@@ -170,6 +189,11 @@ class PortfolioRiskService:
                 .filter(TradeOrder.broker == getattr(broker, "name", "paper"))
                 .all()
             ]
+        return fills, initial_cash
+
+    def _drawdown(self) -> dict[str, Any]:
+        fills, initial_cash = self._fills_and_initial_cash()
+        with get_db_session(self.db_path) as session:
             if not fills:
                 return {"max_drawdown": 0.0, "max_drawdown_date": "", "current_drawdown": 0.0, "days": 0}
             start = min(f[4] for f in fills if f[4]).strftime("%Y-%m-%d") if any(f[4] for f in fills) else ""

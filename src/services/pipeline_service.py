@@ -278,12 +278,41 @@ class PipelineService:
         with self._execution_lock:
             return self.execution.cancel_order(order_id, operator="desktop")
 
-    def portfolio_risk(self) -> dict[str, Any]:
-        """模拟盘组合风险：总仓位与大盘环境、个股和行业集中度、止损距离、净值回撤。"""
+    def portfolio_risk(self, account: str = "paper") -> dict[str, Any]:
+        """组合风险（paper 模拟盘 / real 实盘记账）：总仓位与大盘环境、个股和行业集中度、止损距离、净值回撤。"""
         from src.services.portfolio_risk import PortfolioRiskService
 
+        if account == "real":
+            return PortfolioRiskService(self.config, account="real").report()
         with self._execution_lock:
             return PortfolioRiskService(self.config, execution=self.execution).report()
+
+    # ---- 实盘记账 ----
+
+    def _real(self):
+        from src.services.real_portfolio import RealPortfolioService
+
+        return RealPortfolioService(self.config)
+
+    def real_portfolio(self) -> dict[str, Any]:
+        """实盘持仓快照、成交流水和组合风险。"""
+        real = self._real()
+        return {"snapshot": real.snapshot(), "trades": real.trades(300), "risk": self.portfolio_risk("real")}
+
+    def real_add_trade(self, **kwargs) -> dict[str, Any]:
+        return self._real().add_trade(**kwargs)
+
+    def real_delete_trade(self, trade_id: int) -> bool:
+        return self._real().delete_trade(trade_id)
+
+    def real_import(self, path: str) -> dict[str, Any]:
+        return self._real().import_file(path)
+
+    def real_set_cash(self, cash: float) -> None:
+        self._real().set_cash(cash)
+
+    def real_set_plan(self, code: str, stop_loss: float | None, target_price: float | None) -> None:
+        self._real().set_plan(code, stop_loss, target_price)
 
     def trading_snapshot(self) -> dict[str, Any]:
         with self._execution_lock:

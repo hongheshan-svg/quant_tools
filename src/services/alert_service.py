@@ -1,7 +1,7 @@
 """
 盘中提醒（参考 daily_stock_analysis 的实时告警中心 EventMonitor）
 
-关注范围：今日交易信号与 AI 预测、模拟盘持仓、自选股（watchlist 表）和 alerts.watchlist 中的股票。
+关注范围：今日交易信号与 AI 预测、模拟盘和实盘记账的持仓、自选股（watchlist 表）和 alerts.watchlist 中的股票。
 每次行情采集后在交易时段内检查（用数据库中当日最新行情）：
 - limit_up    封涨停（每只每天提醒一次）
 - limit_open  炸板：上次检查时在涨停价，现在打开
@@ -142,13 +142,21 @@ class AlertService:
         return watch
 
     def _positions(self) -> list[dict[str, Any]]:
+        """模拟盘持仓 + 实盘记账持仓（account=real）。"""
+        positions: list[dict[str, Any]] = []
         try:
             from src.trading.execution_service import ExecutionService
 
-            return ExecutionService(self.config).get_trading_snapshot(order_limit=1)["positions"]
+            positions += ExecutionService(self.config).get_trading_snapshot(order_limit=1)["positions"]
         except Exception as e:
             logger.debug(f"读取模拟盘持仓失败: {e}")
-            return []
+        try:
+            from src.services.real_portfolio import RealPortfolioService
+
+            positions += RealPortfolioService(self.config).positions()
+        except Exception as e:
+            logger.debug(f"读取实盘持仓失败: {e}")
+        return positions
 
     def evaluate(self) -> list[AlertEvent]:
         global _state_date
@@ -175,17 +183,19 @@ class AlertService:
             if not q:
                 continue
             name = pos.get("name") or q["name"]
+            holder = "实盘持仓" if pos.get("account") == "real" else "持仓"
             if q["price"] <= pos["stop_loss"]:
                 events.append(AlertEvent(code, name, "stop_loss", "critical",
-                                         f"持仓 {name}({code}) 跌破止损价 {pos['stop_loss']:.2f}，现价 {q['price']}，请确认卖出订单", q["price"], pos["stop_loss"]))
+                                         f"{holder} {name}({code}) 跌破止损价 {pos['stop_loss']:.2f}，现价 {q['price']}，"
+                                         + ("请按计划止损" if pos.get("account") == "real" else "请确认卖出订单"), q["price"], pos["stop_loss"]))
             elif pos["stop_loss"] and q["price"] <= pos["stop_loss"] * (1 + self.near_stop_pct / 100):
                 gap = (q["price"] / pos["stop_loss"] - 1) * 100
                 events.append(AlertEvent(code, name, "near_stop", "warning",
-                                         f"持仓 {name}({code}) 接近止损价 {pos['stop_loss']:.2f}（还差 {gap:.1f}%），现价 {q['price']}",
+                                         f"{holder} {name}({code}) 接近止损价 {pos['stop_loss']:.2f}（还差 {gap:.1f}%），现价 {q['price']}",
                                          q["price"], pos["stop_loss"]))
             elif q["price"] >= pos["target_price"]:
                 events.append(AlertEvent(code, name, "take_profit", "info",
-                                         f"持仓 {name}({code}) 达到目标价 {pos['target_price']:.2f}，现价 {q['price']}", q["price"], pos["target_price"]))
+                                         f"{holder} {name}({code}) 达到目标价 {pos['target_price']:.2f}，现价 {q['price']}", q["price"], pos["target_price"]))
         events.extend(self._rule_events(quotes, watch))
         return events
 

@@ -235,6 +235,54 @@ class AlertRecord(Base):
     )
 
 
+class RealTrade(Base):
+    """实盘成交流水（手动记录或从券商交割单导入，只用于记账和风险提示，不连券商、不下单）"""
+    __tablename__ = "real_trade"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    trade_date = Column(String(10), nullable=False, comment="成交日期")
+    trade_time = Column(String(8), comment="成交时间 HH:MM:SS（可空）")
+    code = Column(String(10), nullable=False, comment="股票代码（6位）")
+    name = Column(String(20), comment="股票名称")
+    side = Column(String(4), nullable=False, comment="buy / sell")
+    price = Column(Float, nullable=False, comment="成交价")
+    quantity = Column(Integer, nullable=False, comment="成交数量（股）")
+    fee = Column(Float, default=0.0, comment="佣金、印花税、过户费合计")
+    note = Column(String(200), comment="备注")
+    source = Column(String(10), default="manual", comment="manual 手动 / import 导入")
+    import_key = Column(String(120), comment="导入去重键")
+    created_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index("idx_real_trade_date", "trade_date", "code"),
+        Index("idx_real_trade_import_key", "import_key", unique=True),
+    )
+
+
+class RealCash(Base):
+    """实盘可用资金锚点：最近一次设置的可用资金，之后的成交自动增减"""
+    __tablename__ = "real_cash"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cash = Column(Float, nullable=False, comment="设置时的可用资金")
+    as_of = Column(DateTime, default=datetime.now, comment="设置时间")
+
+
+class RealPositionPlan(Base):
+    """实盘持仓的止损价、目标价（未设置时按 risk.stop_loss_pct / take_profit_pct 从成本计算）"""
+    __tablename__ = "real_position_plan"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, comment="股票代码（6位）")
+    stop_loss = Column(Float, comment="止损价")
+    target_price = Column(Float, comment="目标价")
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        Index("idx_real_position_plan_code", "code", unique=True),
+    )
+
+
 class Watchlist(Base):
     """自选股（收盘后逐只 AI 诊断并推送决策仪表盘，盘中提醒也会关注）"""
     __tablename__ = "watchlist"

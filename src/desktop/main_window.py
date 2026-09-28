@@ -20,7 +20,10 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QCompleter,
     QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
+    QFormLayout,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -32,6 +35,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -368,6 +372,44 @@ class CandlestickWidget(QWidget):
         painter.drawText(plot.left(), plot.bottom() + 18, first_date)
         right_text = painter.fontMetrics().horizontalAdvance(last_date)
         painter.drawText(plot.right() - right_text, plot.bottom() + 18, last_date)
+
+
+class RealTradeDialog(QDialog):
+    """记一笔实盘成交。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("记一笔实盘成交")
+        form = QFormLayout(self)
+        self.date_edit = QLineEdit(datetime.now().strftime("%Y-%m-%d"))
+        self.time_edit = QLineEdit()
+        self.time_edit.setPlaceholderText("可空，如 10:31")
+        self.stock_edit = QLineEdit()
+        self.stock_edit.setPlaceholderText("代码 / 名称 / 拼音首字母")
+        self.side_box = QComboBox()
+        self.side_box.addItem("买入", "buy")
+        self.side_box.addItem("卖出", "sell")
+        self.price_box = QDoubleSpinBox()
+        self.price_box.setDecimals(3)
+        self.price_box.setRange(0, 100000)
+        self.qty_box = QSpinBox()
+        self.qty_box.setRange(0, 100_000_000)
+        self.qty_box.setSingleStep(100)
+        self.fee_box = QDoubleSpinBox()
+        self.fee_box.setRange(0, 1_000_000)
+        self.note_edit = QLineEdit()
+        for label, widget in (("日期", self.date_edit), ("时间", self.time_edit), ("股票", self.stock_edit), ("方向", self.side_box),
+                              ("成交价", self.price_box), ("数量（股）", self.qty_box), ("费用合计", self.fee_box), ("备注", self.note_edit)):
+            form.addRow(label, widget)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+
+    def values(self) -> dict:
+        return {"trade_date": self.date_edit.text().strip(), "trade_time": self.time_edit.text().strip(),
+                "code": self.stock_edit.text().strip(), "side": self.side_box.currentData(), "price": self.price_box.value(),
+                "quantity": self.qty_box.value(), "fee": self.fee_box.value(), "note": self.note_edit.text().strip()}
 
 
 class StockDetailDialog(QDialog):
@@ -954,27 +996,31 @@ class MainWindow(QMainWindow):
         # ---- Tab 5: 模拟交易 ----
         self.main_tabs.addTab(self._build_trading_tab(), "模拟交易")
 
-        # ---- Tab 6: 信号绩效 ----
+        # ---- Tab 6: 实盘记账 ----
+        self._real_tab = self._build_real_tab()
+        self.main_tabs.addTab(self._real_tab, "实盘记账")
+
+        # ---- Tab 7: 信号绩效 ----
         self._performance_tab = self._build_performance_tab()
         self.main_tabs.addTab(self._performance_tab, "信号绩效")
 
-        # ---- Tab 7: 大盘复盘 ----
+        # ---- Tab 8: 大盘复盘 ----
         self._review_tab = self._build_review_tab()
         self.main_tabs.addTab(self._review_tab, "大盘复盘")
 
-        # ---- Tab 8: 策略选股 ----
+        # ---- Tab 9: 策略选股 ----
         self._screening_tab = self._build_screening_tab()
         self.main_tabs.addTab(self._screening_tab, "策略选股")
 
-        # ---- Tab 9: 主线分析 ----
+        # ---- Tab 10: 主线分析 ----
         self._theme_tab = self._build_theme_tab()
         self.main_tabs.addTab(self._theme_tab, "主线分析")
 
-        # ---- Tab 10: 盘中提醒 ----
+        # ---- Tab 11: 盘中提醒 ----
         self._alert_tab = self._build_alert_tab()
         self.main_tabs.addTab(self._alert_tab, "盘中提醒")
 
-        # ---- Tab 11: 数据源状态 ----
+        # ---- Tab 12: 数据源状态 ----
         self._source_tab = self._build_source_status_tab()
         self.main_tabs.addTab(self._source_tab, "数据源状态")
         self.main_tabs.currentChanged.connect(self._on_main_tab_changed)
@@ -1225,6 +1271,142 @@ class MainWindow(QMainWindow):
             self._log(f"自选股决策仪表盘：完成 {result['done']}/{result['total']}，"
                       + ("已推送" if result["pushed"] else "未推送（没有启用推送渠道或推送失败）"))
         self._refresh_watchlist()
+
+    def _build_real_tab(self) -> QWidget:
+        """实盘记账：手动记录或导入交割单，计算持仓、盈亏和组合风险（不连券商、不下单）。"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 4, 0, 0)
+        bar = QHBoxLayout()
+        self.real_label = QLabel("实盘记账：只记账、不连券商、不下单；持仓会进入组合风险、盘中止损提醒、个股诊断和 AI 问股")
+        self.real_label.setStyleSheet("font-weight: 600; color: #8be9fd; padding: 2px 6px;")
+        self.real_label.setWordWrap(True)
+        buttons = []
+        for text, tip, slot in (
+            ("记一笔", "手动记录一笔买入或卖出", self._add_real_trade),
+            ("导入交割单", "导入券商导出的交割单/成交记录（CSV / Excel），重复导入不会记两次", self._import_real_trades),
+            ("设置可用资金", "输入券商账户当前的可用资金，之后的成交会自动增减", self._set_real_cash),
+            ("设置止损止盈", "为选中的持仓设置止损价和目标价（不设置时按风控比例从成本计算）", self._set_real_plan),
+            ("删除流水", "删除选中的成交流水", self._delete_real_trade),
+        ):
+            btn = QPushButton(text)
+            btn.setToolTip(tip)
+            btn.clicked.connect(slot)
+            buttons.append(btn)
+        bar.addWidget(self.real_label, stretch=1)
+        for b in buttons:
+            bar.addWidget(b)
+        layout.addLayout(bar)
+        self.real_risk_label = QLabel("")
+        self.real_risk_label.setWordWrap(True)
+        self.real_risk_label.setStyleSheet("color: #ffb86c; font-weight: 600; padding: 2px 6px;")
+        layout.addWidget(self.real_risk_label)
+        self.table_real_positions = self._build_table(
+            ["代码", "名称", "持仓", "成本价", "最新价", "市值", "浮动盈亏", "盈亏%", "止损价", "目标价", "占总资产", "状态"])
+        self.table_real_trades = self._build_table(["日期", "时间", "代码", "名称", "方向", "成交价", "数量", "费用", "来源", "备注"])
+        layout.addWidget(self._wrap("持仓", self.table_real_positions), stretch=2)
+        layout.addWidget(self._wrap("成交流水", self.table_real_trades), stretch=3)
+        self._real_positions: list[dict] = []
+        self._real_trades: list[dict] = []
+        return tab
+
+    def _refresh_real(self):
+        worker = WorkerTask(self.pipeline.real_portfolio)
+        worker.signals.finished.connect(self._on_real_ready)
+        worker.signals.error.connect(lambda detail: self._log(f"实盘记账刷新异常: {detail}"))
+        self.thread_pool.start(worker)
+
+    def _on_real_ready(self, data: dict):
+        snapshot, risk = data["snapshot"], data["risk"]
+        account = snapshot["account"]
+        cash = f"{account['cash']:,.2f}" if account.get("cash_known") else "未设置"
+        self.real_label.setText(
+            f"实盘  总资产 {account['total_assets']:,.2f}  |  可用资金 {cash}  |  持仓市值 {account['market_value']:,.2f}  |  "
+            f"浮动盈亏 {account['unrealized_pnl']:+,.2f}  |  已实现盈亏 {account.get('realized_pnl') or 0:+,.2f}"
+        )
+        dd = risk.get("drawdown") or {}
+        summary = f"最大回撤 {dd.get('max_drawdown', 0):.2f}%，当前回撤 {dd.get('current_drawdown', 0):.2f}%"
+        if risk.get("cash_known") and risk.get("suggested_exposure") is not None:
+            summary = f"总仓位 {risk['exposure']:.0f}%（大盘「{risk['regime']}」建议不超过 {risk['suggested_exposure']:.0f}%），" + summary
+        warnings = risk.get("warnings") or []
+        self.real_risk_label.setText(summary + ("\n⚠ " + "；".join(warnings) if warnings else ""))
+
+        risk_rows = {r["code"]: r for r in risk.get("positions") or []}
+        self._real_positions = snapshot["positions"]
+        self.table_real_positions.setRowCount(len(self._real_positions))
+        for i, p in enumerate(self._real_positions):
+            r = risk_rows.get(p["code"], {})
+            cost = p["avg_cost"] * p["quantity"]
+            values = [p["code"], p["name"], p["quantity"], f"{p['avg_cost']:.3f}", f"{p['market_price']:.2f}", f"{p['market_value']:,.2f}",
+                      f"{p['unrealized_pnl']:+,.2f}", f"{p['unrealized_pnl'] / cost * 100:+.2f}%" if cost else "--",
+                      f"{p['stop_loss']:.2f}", f"{p['target_price']:.2f}", f"{r.get('weight', 0):.1f}%", r.get("status") or "正常"]
+            for col, value in enumerate(values):
+                self.table_real_positions.setItem(i, col, _item(value))
+            if p["unrealized_pnl"]:
+                self.table_real_positions.item(i, 6).setForeground(QColor("#ff5555" if p["unrealized_pnl"] > 0 else "#50fa7b"))
+            if r.get("status"):
+                self.table_real_positions.item(i, 11).setForeground(QColor("#ff5555" if "跌破" in r["status"] else "#ffb86c"))
+
+        self._real_trades = data["trades"]
+        self.table_real_trades.setRowCount(len(self._real_trades))
+        for i, t in enumerate(self._real_trades):
+            values = [t["trade_date"], t["trade_time"], t["code"], t["name"], "买入" if t["side"] == "buy" else "卖出", f"{t['price']:.3f}",
+                      t["quantity"], f"{t['fee']:.2f}", "导入" if t["source"] == "import" else "手动", t["note"]]
+            for col, value in enumerate(values):
+                self.table_real_trades.setItem(i, col, _item(value))
+
+    def _add_real_trade(self):
+        dialog = RealTradeDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        result = self.pipeline.real_add_trade(**dialog.values())
+        if not result["ok"]:
+            QMessageBox.information(self, "实盘记账", result["error"])
+        self._refresh_real()
+
+    def _import_real_trades(self):
+        path, _ = QFileDialog.getOpenFileName(self, "导入交割单", "", "表格 (*.csv *.xlsx *.xls *.txt)")
+        if not path:
+            return
+        try:
+            result = self.pipeline.real_import(path)
+        except Exception as e:
+            QMessageBox.warning(self, "导入交割单", f"读取文件失败：{e}")
+            return
+        QMessageBox.information(self, "导入交割单", result["error"] or
+                                f"新增 {result['added']} 笔，重复 {result['duplicate']} 笔，跳过非买卖行 {result['skipped']} 行")
+        self._refresh_real()
+
+    def _set_real_cash(self):
+        cash, ok = QInputDialog.getDouble(self, "设置可用资金", "券商账户当前的可用资金（元）：", 0, 0, 1e12, 2)
+        if ok:
+            self.pipeline.real_set_cash(cash)
+            self._refresh_real()
+
+    def _set_real_plan(self):
+        row = self.table_real_positions.currentRow()
+        if not (0 <= row < len(self._real_positions)):
+            QMessageBox.information(self, "实盘记账", "请先在持仓表中选中一只股票。")
+            return
+        p = self._real_positions[row]
+        stop, ok = QInputDialog.getDouble(self, "止损价", f"{p['name']} 止损价（0 表示按风控比例）：", p["stop_loss"], 0, 1e6, 2)
+        if not ok:
+            return
+        target, ok = QInputDialog.getDouble(self, "目标价", f"{p['name']} 目标价（0 表示按风控比例）：", p["target_price"], 0, 1e6, 2)
+        if ok:
+            self.pipeline.real_set_plan(p["code"], stop or None, target or None)
+            self._refresh_real()
+
+    def _delete_real_trade(self):
+        row = self.table_real_trades.currentRow()
+        if not (0 <= row < len(self._real_trades)):
+            QMessageBox.information(self, "实盘记账", "请先在成交流水中选中一笔。")
+            return
+        t = self._real_trades[row]
+        confirm = QMessageBox.question(self, "删除流水", f"删除 {t['trade_date']} {t['name']} {t['quantity']} 股的这笔成交？")
+        if confirm == QMessageBox.StandardButton.Yes:
+            self.pipeline.real_delete_trade(t["id"])
+            self._refresh_real()
 
     def _build_trading_tab(self) -> QWidget:
         """模拟交易：账户概览、订单（确认/撤单）、持仓。"""
@@ -2321,6 +2503,8 @@ class MainWindow(QMainWindow):
             self._refresh_review()
         elif widget is self._watchlist_tab:
             self._refresh_watchlist()
+        elif widget is self._real_tab:
+            self._refresh_real()
         elif widget is self._screening_tab:
             self._refresh_screening()
         elif widget is self._theme_tab:

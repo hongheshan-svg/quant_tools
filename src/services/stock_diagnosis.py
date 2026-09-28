@@ -258,6 +258,7 @@ class StockDiagnosisService:
         theme = next((t for t in themes if role and (t.dimension, t.name) == (role["dimension"], role["theme"])), None)
         regime = MarketRegimeAnalyzer(self.config).analyze()
         position = self._position(code)
+        real_position = self._real_position(code)
         chip = fetch_chip_summary(code, self.db_path)
         try:
             earnings = EarningsCache.get(code)
@@ -303,15 +304,15 @@ class StockDiagnosisService:
             "【近 30 天公告】" + ("；".join(notice_lines) if notice_lines else "无"),
             "【AI舆情】" + ("；".join(sentiment_lines) if sentiment_lines else "无"),
             "【龙虎榜】" + ("；".join(dragon_lines) if dragon_lines else "近期未上榜"),
-            "【持仓】" + (
-                f"模拟盘持有 {position['quantity']} 股，成本 {position['avg_cost']:.2f}，止损 {position['stop_loss']:.2f}，目标 {position['target_price']:.2f}"
-                if position else "未持仓"
-            ),
+            "【持仓】" + ("；".join(
+                f"{label}持有 {p['quantity']} 股，成本 {p['avg_cost']:.2f}，止损 {p['stop_loss']:.2f}，目标 {p['target_price']:.2f}"
+                for label, p in (("模拟盘", position), ("实盘", real_position)) if p
+            ) or "未持仓"),
             f"【数据完整度】{data_quality['score']}%" + (f"（缺少：{'、'.join(data_quality['missing'])}）" if data_quality["missing"] else ""),
         ]
         return {
             "code": code, "name": name, "quote": quote, "tech": tech, "role": role, "regime": regime,
-            "position": position, "text": "\n".join(sections), "data_quality": data_quality,
+            "position": position, "real_position": real_position, "text": "\n".join(sections), "data_quality": data_quality,
             "flow_text": flow_text, "flow_ratio": flow_ratio, "chip": chip,
             "earnings_text": describe_earnings(earnings), "earnings_risk": earnings_risk(earnings),
             "risk_notices": risk_notices,
@@ -334,6 +335,15 @@ class StockDiagnosisService:
         if valuation:
             parts.append(valuation)
         return "，".join(parts)
+
+    def _real_position(self, code: str) -> dict[str, Any] | None:
+        try:
+            from src.services.real_portfolio import RealPortfolioService
+
+            return next((p for p in RealPortfolioService(self.config).positions() if p["code"] == code), None)
+        except Exception as e:
+            logger.debug(f"读取实盘持仓失败: {e}")
+            return None
 
     def _position(self, code: str) -> dict[str, Any] | None:
         try:
