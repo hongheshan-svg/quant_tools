@@ -24,6 +24,12 @@ llm:
     model: "gpt-4o"
     max_tokens: 4096
     temperature: 0.3
+  # 调用方式：litellm（默认，支持 Claude、Gemini、Ollama 本地模型和所有 OpenAI 兼容平台）/ openai（OpenAI SDK 直连）
+  backend: litellm
+  # 自定义单价（美元/百万 token，[输入, 输出]），用于用量页估算费用；不填时用 LiteLLM 自带的价格表
+  # pricing:
+  #   deepseek-chat: [0.27, 1.1]
+  pricing: {}
   # ---- 以下为各平台 base_url 参考 ----
   # DeepSeek:      https://api.deepseek.com
   # 通义千问:      https://dashscope.aliyuncs.com/compatible-mode/v1
@@ -33,6 +39,9 @@ llm:
   # 豆包Doubao:    https://ark.cn-beijing.volces.com/api/v3
   # 硅基流动:      https://api.siliconflow.cn/v1
   # OpenAI:        https://api.openai.com/v1
+  # Claude:        provider: anthropic，base_url 留空，model 如 claude-opus-5-5
+  # Gemini:        provider: gemini，base_url 留空
+  # Ollama 本地:   provider: ollama，base_url: http://localhost:11434，api_key 可留空
   # LLM 性能优化参数
   timeout_seconds: 45
   max_retries: 2

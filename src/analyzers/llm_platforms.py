@@ -1,5 +1,7 @@
 """
 大模型平台预设（桌面端 AI 设置和 Web 设置页共用）。
+anthropic、gemini、ollama 走 LiteLLM 的原生通道（base_url 可留空，ollama 填本机服务地址），
+其余平台按 OpenAI 兼容协议调用各自的 base_url。
 """
 
 from __future__ import annotations
@@ -52,6 +54,24 @@ AI_PLATFORMS: dict[str, dict] = {
         "base_url": "https://api.openai.com/v1",
         "models": ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"],
         "default_model": "gpt-4o",
+    },
+    "anthropic": {
+        "name": "Anthropic (Claude)",
+        "base_url": "",
+        "models": ["claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
+        "default_model": "claude-opus-5-5",
+    },
+    "gemini": {
+        "name": "Google Gemini",
+        "base_url": "",
+        "models": ["gemini-2.5-pro", "gemini-2.5-flash"],
+        "default_model": "gemini-2.5-flash",
+    },
+    "ollama": {
+        "name": "Ollama（本地模型，无需 API Key）",
+        "base_url": "http://localhost:11434",
+        "models": ["qwen2.5:14b", "qwen2.5:7b", "llama3.1:8b"],
+        "default_model": "qwen2.5:14b",
     },
     "custom": {
         "name": "自定义 (OpenAI 兼容)",

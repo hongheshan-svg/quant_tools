@@ -84,6 +84,16 @@ def get_task(task_id: str, tasks: TaskManager = Depends(get_tasks)) -> dict[str,
     return task
 
 
+# ---------- 大模型用量 ----------
+
+@router.get("/usage")
+def llm_usage(days: int = 30, config: dict = Depends(get_config)) -> dict[str, Any]:
+    from src.analyzers.llm_usage import usage_summary
+
+    llm = config.get("llm") or {}
+    return usage_summary(llm.get("usage_path") or llm.get("cache_path", "data/llm_cache.sqlite3"), max(1, min(days, 365)))
+
+
 # ---------- 数据源 ----------
 
 @router.get("/system/sources")

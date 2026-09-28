@@ -39,7 +39,8 @@ def env(tmp_path, monkeypatch):
             session.add(StockInfo(code=code, name=name))
             session.add(StockDaily(code=code, name=name, trade_date="2026-09-25", close=10.0, change_pct=1.0))
     config = {"database": {"sqlite_path": path}, "web": {}, "risk": {},
-              "llm": {"primary": {"provider": "deepseek", "api_key": "sk-secret-1234", "model": "deepseek-chat"}},
+              "llm": {"primary": {"provider": "deepseek", "api_key": "sk-secret-1234", "model": "deepseek-chat"},
+                      "cache_path": str(tmp_path / "llm.sqlite3")},
               "notifier": {"email": {"enabled": False, "password": "mail-pass"}}}
     static = tmp_path / "dist"
     (static / "assets").mkdir(parents=True)
@@ -217,6 +218,16 @@ def test_settings_endpoints(env, monkeypatch):
     assert settings_store.read_settings()["notifier"]["email"]["password"] == "mail-pass"
     issues = client.post("/api/v1/settings/notifier/diagnose", json=body).json()
     assert next(c for c in issues["channels"] if c["channel"] == "email")["configured"] is True
+
+
+def test_usage_endpoint(env):
+    client, _, config = env
+    from src.analyzers.llm_usage import record_usage
+
+    record_usage(config["llm"]["cache_path"], provider="deepseek", model="deepseek-chat", feature="个股诊断",
+                 prompt_tokens=100, completion_tokens=20)
+    usage = client.get("/api/v1/usage", params={"days": 7}).json()
+    assert usage["total"]["tokens"] == 120 and usage["by_feature"][0]["key"] == "个股诊断"
 
 
 def test_frontend_hosting(env):

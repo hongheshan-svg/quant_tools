@@ -1,5 +1,6 @@
 akshare>=1.14.0
 openai>=1.0.0
+litellm>=1.80,<1.99
 json-repair>=0.30.0
 pypinyin>=0.50.0
 fastapi>=0.110.0

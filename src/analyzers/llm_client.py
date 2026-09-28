@@ -1,4 +1,11 @@
-"""LLM 统一客户端，支持重试/超时/缓存/批量并发。"""
+"""LLM 统一客户端，支持重试/超时/缓存/批量并发。
+
+调用走 LiteLLM（参考 daily_stock_analysis），一套接口接入各家模型：
+- anthropic（Claude）、gemini、ollama（本地）走 LiteLLM 的原生通道
+- 其余平台（DeepSeek、通义千问、智谱、Kimi、文心、豆包、硅基流动、OpenAI、自定义）按 OpenAI 兼容协议调用 base_url
+llm.backend 设为 openai 时改用 OpenAI SDK 直连（只支持 OpenAI 兼容平台）；LiteLLM 没装时也会自动退回。
+每次调用（含缓存命中）都记录用量，见 src/analyzers/llm_usage.py。
+"""
 
 import hashlib
 import json
@@ -6,12 +13,43 @@ import sqlite3
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from json_repair import repair_json
 from loguru import logger
-from openai import OpenAI
+
+from src.analyzers.llm_usage import caller_feature, estimate_cost, import_litellm, record_usage
+
+NATIVE_PROVIDERS = ("anthropic", "gemini", "ollama")   # 走 LiteLLM 原生通道的平台
+KEYLESS_PROVIDERS = ("ollama",)                        # 不需要 API Key
+NO_JSON_MODE = ("anthropic", "ollama")                 # 不传 response_format，靠提示词和 chat_json 的修复
+
+
+@dataclass
+class LLMRoute:
+    """一个可调用的模型：provider/model 是配置里的名字，target 是 LiteLLM 的模型名。"""
+    provider: str
+    model: str
+    target: str
+    api_key: str
+    api_base: str | None
+
+
+def build_route(cfg: dict) -> "LLMRoute | None":
+    """配置不可用（缺 Key 或还是示例占位符）时返回 None。"""
+    provider = str(cfg.get("provider") or "openai").lower()
+    model = str(cfg.get("model") or "").strip()
+    api_key = str(cfg.get("api_key") or "")
+    if not model:
+        return None
+    if provider not in KEYLESS_PROVIDERS and (not api_key or api_key.startswith("your-")):
+        return None
+    base_url = str(cfg.get("base_url") or "").strip() or None
+    if provider in NATIVE_PROVIDERS:
+        return LLMRoute(provider, model, f"{provider}/{model}", api_key, base_url)
+    return LLMRoute(provider, model, f"openai/{model}", api_key, base_url or "https://api.deepseek.com")
 
 
 class LLMClient:
@@ -37,8 +75,12 @@ class LLMClient:
         if self.cache_enabled:
             self._init_cache()
 
+        self.backend = str(self.cfg.get("backend", "litellm"))
+        self.pricing = self.cfg.get("pricing") or {}
+        self.usage_path = self.cfg.get("usage_path", cache_path)
         self.primary_client = self._build_client(self.primary_cfg)
-        self.backup_client = self._build_client(self.backup_cfg) if self.backup_cfg.get("api_key") else None
+        self.backup_client = self._build_client(self.backup_cfg)
+        self._openai_clients: dict[tuple, Any] = {}
 
     def reload(self, new_config: dict):
         """热重载：用新配置重建客户端，无需重启程序。"""
@@ -49,26 +91,18 @@ class LLMClient:
         self.max_retries = int(self.cfg.get("max_retries", 1))
         self.retry_backoff_seconds = float(self.cfg.get("retry_backoff_seconds", 1.5))
         self.batch_workers = int(self.cfg.get("batch_workers", 3))
+        self.backend = str(self.cfg.get("backend", "litellm"))
+        self.pricing = self.cfg.get("pricing") or {}
         self.primary_client = self._build_client(self.primary_cfg)
-        self.backup_client = (
-            self._build_client(self.backup_cfg)
-            if self.backup_cfg.get("api_key") and not self.backup_cfg["api_key"].startswith("your-")
-            else None
-        )
+        self.backup_client = self._build_client(self.backup_cfg)
         provider = self.primary_cfg.get("provider", "unknown")
         model = self.primary_cfg.get("model", "unknown")
         logger.info(f"LLM 客户端已热重载: provider={provider}, model={model}")
 
     @staticmethod
-    def _build_client(cfg: dict) -> OpenAI | None:
-        """构建 OpenAI 兼容客户端"""
-        api_key = cfg.get("api_key", "")
-        if not api_key or api_key.startswith("your-"):
-            return None
-        return OpenAI(
-            api_key=api_key,
-            base_url=cfg.get("base_url", "https://api.deepseek.com"),
-        )
+    def _build_client(cfg: dict) -> LLMRoute | None:
+        """配置可用时返回调用路由（缺 Key 或是示例占位符时为 None）。"""
+        return build_route(cfg or {})
 
     def _cache_key(
         self,
@@ -205,6 +239,8 @@ class LLMClient:
         cached = self._cache_get(cache_key)
         if cached is not None:
             logger.debug("LLM cache hit")
+            record_usage(self.usage_path, provider=self.primary_cfg.get("provider", ""), model=primary_model,
+                         feature=caller_feature(), cached=True)
             return cached
 
         # 尝试主力模型
@@ -231,7 +267,7 @@ class LLMClient:
 
     def _call(
         self,
-        client: OpenAI | None,
+        client: LLMRoute | None,
         cfg: dict,
         user_message: str,
         system_message: str,
@@ -253,31 +289,33 @@ class LLMClient:
         messages.append({"role": "user", "content": user_message})
 
         kwargs = {
-            "model": model,
             "messages": messages,
             "temperature": temp,
             "max_tokens": tokens,
+            "timeout": self.timeout_seconds,
         }
-
-        if response_format == "json":
+        if response_format == "json" and client.provider not in NO_JSON_MODE:
             kwargs["response_format"] = {"type": "json_object"}
 
-        kwargs["timeout"] = self.timeout_seconds
-
-        provider = cfg.get('provider', 'unknown')
+        provider = client.provider
+        feature = caller_feature()
         for attempt in range(1, self.max_retries + 2):
+            started = time.monotonic()
             try:
-                resp = client.chat.completions.create(**kwargs)
-                content = resp.choices[0].message.content
-                tokens_info = resp.usage.total_tokens if resp.usage else "N/A"
-                logger.info(
-                    f"LLM [{provider}] 调用成功, model={model}, tokens={tokens_info}"
-                )
+                content, usage = self._complete(client, kwargs)
+                prompt_tokens, completion_tokens = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
+                record_usage(self.usage_path, provider=provider, model=model, feature=feature,
+                             prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                             cost_usd=estimate_cost(provider, model, prompt_tokens, completion_tokens, self.pricing),
+                             latency_ms=int((time.monotonic() - started) * 1000))
+                logger.info(f"LLM [{provider}] 调用成功, model={model}, tokens={prompt_tokens + completion_tokens}")
                 return content
             except Exception as e:
                 err_str = str(e)[:120]
                 if attempt >= self.max_retries + 1:
                     logger.error(f"LLM [{provider}] {self.max_retries+1}次均失败: {err_str}")
+                    record_usage(self.usage_path, provider=provider, model=model, feature=feature, success=False,
+                                 latency_ms=int((time.monotonic() - started) * 1000))
                     return None
                 # 退避上限3秒，避免长时间等待
                 delay = min(self.retry_backoff_seconds * (2 ** (attempt - 1)), 3.0)
@@ -286,6 +324,36 @@ class LLMClient:
                 )
                 time.sleep(delay)
         return None
+
+    def _complete(self, route: LLMRoute, kwargs: dict) -> tuple[str, dict]:
+        """发起一次请求，返回 (文本, {"prompt_tokens", "completion_tokens"})。"""
+        if self.backend != "openai" and self._litellm_available():
+            resp = import_litellm().completion(model=route.target, api_key=route.api_key or None, api_base=route.api_base, **kwargs)
+        else:
+            if route.provider in NATIVE_PROVIDERS:
+                raise RuntimeError(f"{route.provider} 需要 LiteLLM（pip install litellm），当前 llm.backend=openai 或未安装")
+            resp = self._openai_client(route).chat.completions.create(model=route.model, **kwargs)
+        usage = getattr(resp, "usage", None)
+        return resp.choices[0].message.content, {
+            "prompt_tokens": getattr(usage, "prompt_tokens", 0) if usage else 0,
+            "completion_tokens": getattr(usage, "completion_tokens", 0) if usage else 0,
+        }
+
+    @staticmethod
+    def _litellm_available() -> bool:
+        try:
+            import_litellm()
+        except ImportError:
+            return False
+        return True
+
+    def _openai_client(self, route: LLMRoute):
+        key = (route.api_key, route.api_base)
+        if key not in self._openai_clients:
+            from openai import OpenAI
+
+            self._openai_clients[key] = OpenAI(api_key=route.api_key, base_url=route.api_base)
+        return self._openai_clients[key]
 
     def chat_json(
         self,
