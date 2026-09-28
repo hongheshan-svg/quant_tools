@@ -1,0 +1,56 @@
+{
+  "name": "quant-tools-desktop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A股量化交易系统桌面端（Electron）",
+  "main": "main.js",
+  "scripts": {
+    "dev": "electron .",
+    "test": "node --test tests/",
+    "dist": "electron-builder",
+    "dist:dir": "electron-builder --dir"
+  },
+  "devDependencies": {
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.quanttools.desktop",
+    "productName": "AStockQuant",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "renderer/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../../dist/backend/quant_server",
+        "to": "backend/quant_server"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "artifactName": "AStockQuant-${version}-windows-setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "A股量化"
+    },
+    "mac": {
+      "target": "dmg",
+      "identity": null,
+      "artifactName": "AStockQuant-${version}-macos-${arch}.${ext}"
+    },
+    "linux": {
+      "target": "AppImage",
+      "artifactName": "AStockQuant-${version}-linux-${arch}.${ext}"
+    }
+  }
+}

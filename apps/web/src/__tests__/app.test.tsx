@@ -55,3 +55,31 @@ describe('LoginPage', () => {
     expect(login).toHaveBeenCalledWith('secret1')
   })
 })
+
+describe('SettingsPage desktop tab', () => {
+  const llm = { llm: { primary: {}, fallback: {} }, platforms: {} }
+
+  it('is hidden in the browser', () => {
+    stubFetch({ '/settings/llm': llm })
+    render(<MemoryRouter initialEntries={['/settings']}><AppRoutes authEnabled={false} /></MemoryRouter>)
+    expect(screen.getByRole('tab', { name: 'AI 模型' })).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: '桌面端' })).not.toBeInTheDocument()
+  })
+
+  it('shows data dir and opens folders inside Electron', async () => {
+    stubFetch({ '/settings/llm': llm })
+    const desktop = {
+      version: '1.0.0',
+      info: vi.fn().mockResolvedValue({ version: '1.0.0', dataDir: '/Users/u/AStockQuant', packaged: true }),
+      openDataDir: vi.fn().mockResolvedValue(''),
+      openLogDir: vi.fn().mockResolvedValue(''),
+      retry: vi.fn(),
+    }
+    vi.stubGlobal('quantDesktop', desktop)
+    render(<MemoryRouter initialEntries={['/settings']}><AppRoutes authEnabled={false} /></MemoryRouter>)
+    fireEvent.click(screen.getByRole('tab', { name: '桌面端' }))
+    expect(await screen.findByText('/Users/u/AStockQuant')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '打开日志目录' }))
+    expect(desktop.openLogDir).toHaveBeenCalled()
+  })
+})

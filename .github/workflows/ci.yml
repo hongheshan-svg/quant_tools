@@ -53,3 +53,17 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      # 测试替换了 electron 模块，不需要安装 Electron
+      - name: Test
+        working-directory: apps/desktop
+        run: node --test tests/

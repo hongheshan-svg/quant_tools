@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+    <title>A股量化</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f5f7fb;
+        --panel: #ffffff;
+        --line: #d9e0ea;
+        --text: #172033;
+        --muted: #5e6a7e;
+        --accent: #1d74d8;
+        --danger: #c62c3c;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0b1020;
+          --panel: #121a2e;
+          --line: #243049;
+          --text: #e2e8f0;
+          --muted: #94a3b8;
+          --accent: #38bdf8;
+          --danger: #f87171;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.6 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      }
+      .panel {
+        width: min(560px, 100%);
+        padding: 28px 32px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--panel);
+      }
+      h1 { margin: 0 0 6px; font-size: 20px; }
+      p { margin: 0; color: var(--muted); }
+      .status { display: flex; align-items: center; gap: 10px; margin-top: 20px; color: var(--muted); }
+      .spinner {
+        width: 16px;
+        height: 16px;
+        border: 2px solid var(--line);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .error { display: none; margin-top: 20px; }
+      .error pre {
+        margin: 8px 0;
+        padding: 10px 12px;
+        border: 1px solid var(--danger);
+        border-radius: 8px;
+        color: var(--danger);
+        white-space: pre-wrap;
+        word-break: break-all;
+        font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace;
+      }
+      .actions { display: flex; gap: 8px; margin-top: 16px; }
+      button {
+        padding: 6px 14px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: transparent;
+        color: var(--text);
+        font: inherit;
+        cursor: pointer;
+      }
+      button#retry { border-color: var(--accent); background: var(--accent); color: #fff; }
+      body.failed .status { display: none; }
+      body.failed .error { display: block; }
+    </style>
+  </head>
+  <body>
+    <div class="panel">
+      <h1>A股量化</h1>
+      <p>舆情驱动的 A 股量化交易系统</p>
+      <div class="status"><span class="spinner"></span><span>正在启动后台服务…首次启动需要初始化数据库，可能要十几秒</span></div>
+      <div class="error">
+        <strong>启动失败</strong>
+        <pre id="message"></pre>
+        <p id="log"></p>
+        <div class="actions">
+          <button type="button" id="retry">重试</button>
+          <button type="button" id="logs">打开日志目录</button>
+        </div>
+      </div>
+    </div>
+    <script>
+      const params = new URLSearchParams(location.search)
+      const error = params.get('error')
+      if (error) {
+        document.body.classList.add('failed')
+        document.getElementById('message').textContent = error
+        const log = params.get('log')
+        if (log) document.getElementById('log').textContent = `日志：${log}`
+      }
+      const desktop = window.quantDesktop
+      document.getElementById('retry').addEventListener('click', () => (desktop ? desktop.retry() : location.reload()))
+      document.getElementById('logs').addEventListener('click', () => desktop?.openLogDir())
+    </script>
+  </body>
+</html>

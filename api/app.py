@@ -24,7 +24,7 @@ from api.auth import COOKIE_NAME, AuthStore, check_request
 from api.tasks import TaskManager
 from src.config_loader import load_config
 
-DEFAULT_STATIC_DIR = Path("apps/web/dist")
+DEFAULT_STATIC_DIR = Path(__file__).resolve().parent.parent / "apps" / "web" / "dist"
 DEFAULT_CORS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
 

@@ -1,24 +1,47 @@
-// 设置：AI 模型（主/备）、推送渠道与路由、登录安全
+// 设置：AI 模型（主/备）、推送渠道与路由、登录安全；在桌面端里多一个「桌面端」页
 import { useEffect, useState } from 'react'
 import { api } from '@/api/endpoints'
 import type { AuthStatus, LLMRole, LLMSettings, NotifierDiagnosis, NotifierSettings } from '@/api/types'
 import { Button, Card, ErrorBox, Field, Input, PageHeader, Select, Spinner, Tabs } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
 import { toast } from '@/stores/toast'
+import { getDesktop, type DesktopInfo, type QuantDesktop } from '@/utils/desktop'
 
-type TabKey = 'llm' | 'notifier' | 'security'
+type TabKey = 'llm' | 'notifier' | 'security' | 'desktop'
 
 export function SettingsPage() {
   const [tab, setTab] = useState<TabKey>('llm')
+  const desktop = getDesktop()
+  const tabs: { key: TabKey; label: string }[] = [{ key: 'llm', label: 'AI 模型' }, { key: 'notifier', label: '推送' }, { key: 'security', label: '登录安全' }]
+  if (desktop) tabs.push({ key: 'desktop', label: '桌面端' })
   return (
     <div>
       <PageHeader title="设置" description="保存后立即生效；设置会写回 config/settings.yaml（文件中的注释会丢失）" />
       <Card bodyClassName="p-3">
-        <Tabs value={tab} onChange={setTab} tabs={[{ key: 'llm', label: 'AI 模型' }, { key: 'notifier', label: '推送' }, { key: 'security', label: '登录安全' }]} />
+        <Tabs value={tab} onChange={setTab} tabs={tabs} />
         {tab === 'llm' && <LLMSettingsForm />}
         {tab === 'notifier' && <NotifierForm />}
         {tab === 'security' && <SecurityForm />}
+        {tab === 'desktop' && desktop && <DesktopPanel desktop={desktop} />}
       </Card>
+    </div>
+  )
+}
+
+function DesktopPanel({ desktop }: { desktop: QuantDesktop }) {
+  const [info, setInfo] = useState<DesktopInfo | null>(null)
+  useEffect(() => {
+    desktop.info().then(setInfo).catch(() => setInfo(null))
+  }, [desktop])
+  return (
+    <div className="max-w-xl space-y-3 text-sm">
+      <p>桌面端版本：<span className="num">{info?.version || desktop.version || '--'}</span>{info && !info.packaged && <span className="ml-2 text-xs text-muted">（开发模式）</span>}</p>
+      <p className="break-all">数据目录：<span className="num text-muted">{info?.dataDir ?? '--'}</span></p>
+      <p className="text-xs text-muted">配置（config/settings.yaml）、数据库（data/）和日志（logs/）都在数据目录里；卸载桌面端不会删除它们。</p>
+      <div className="flex gap-2">
+        <Button onClick={() => void desktop.openDataDir()}>打开数据目录</Button>
+        <Button onClick={() => void desktop.openLogDir()}>打开日志目录</Button>
+      </div>
     </div>
   )
 }
