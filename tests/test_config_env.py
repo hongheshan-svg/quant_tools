@@ -63,3 +63,12 @@ def test_save_section_strips_env_values(tmp_path, monkeypatch):
     written = yaml.safe_load(settings.read_text(encoding="utf-8"))
     assert written["notifier"]["dingtalk"] == {"enabled": True, "webhook": "https://old"}
     assert written["notifier"]["email"] == {"smtp_server": "smtp.qq.com"}
+
+
+def test_env_overrides_only_apply_to_settings_yaml(tmp_path, monkeypatch):
+    pool = tmp_path / "stock_pool.yaml"
+    _write(pool, {"blacklist": []})
+    monkeypatch.setenv("QUANT__WEB__PORT", "9000")
+    config_loader._config_cache.pop(str(pool), None)
+    assert config_loader.load_config(str(pool)) == {"blacklist": []}
+    config_loader._config_cache.pop(str(pool), None)

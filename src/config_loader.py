@@ -114,12 +114,12 @@ def load_config(config_path: str = "config/settings.yaml") -> dict:
             logger.warning(f"配置文件不存在: {config_path}，已回退到示例配置 {example_path}")
             with open(example_path, encoding="utf-8") as f:
                 config = yaml.safe_load(f) or {}
-            config = _apply_env(config)
+            config = _apply_env(config, config_path)
             _config_cache[config_path] = config
             return config
 
         logger.warning(f"配置文件不存在: {config_path}")
-        return _apply_env({})
+        return _apply_env({}, config_path)
 
     with open(path, encoding="utf-8") as f:
         config = yaml.safe_load(f) or {}
@@ -134,13 +134,16 @@ def load_config(config_path: str = "config/settings.yaml") -> dict:
         except Exception as e:
             logger.warning(f"示例配置合并失败（忽略）: {e}")
 
-    config = _apply_env(config)
+    config = _apply_env(config, config_path)
     _config_cache[config_path] = config
     logger.info(f"配置已加载: {config_path}")
     return config
 
 
-def _apply_env(config: dict) -> dict:
+def _apply_env(config: dict, config_path: str) -> dict:
+    """只覆盖主配置 settings.yaml（stock_pool.yaml 等其他文件也用 load_config 读取）"""
+    if Path(config_path).name != "settings.yaml":
+        return config
     overrides = env_overrides(base=config)
     if not overrides:
         return config

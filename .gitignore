@@ -38,3 +38,6 @@ desktop.ini
 test_*.py
 !tests/test_*.py
 .playwright-mcp/
+
+# Docker / 环境变量配置（含密钥）
+.env

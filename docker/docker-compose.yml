@@ -1,0 +1,37 @@
+# A股量化交易系统
+#
+#   docker compose -f docker/docker-compose.yml up -d        # Web 界面 + 定时任务，浏览器打开 http://localhost:8000
+#   docker compose -f docker/docker-compose.yml run --rm quant python main.py --once   # 手动执行一遍收盘后任务
+#
+# 配置：挂载的 ../config/settings.yaml（没有时用默认配置），或在 ../.env 里用 QUANT__ 开头的环境变量覆盖，
+# 例如 QUANT__LLM__PRIMARY__API_KEY=sk-xxx。容器外访问必须开启 Web 登录，首次登录时设置密码。
+
+name: quant-tools
+
+services:
+  quant:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: quant-tools:latest
+    container_name: quant-tools
+    restart: unless-stopped
+    ports:
+      - "${QUANT_PORT:-8000}:8000"
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      TZ: Asia/Shanghai
+      QUANT__WEB__AUTH_ENABLED: "true"
+    volumes:
+      - ../config:/app/config
+      - ../data:/app/data
+      - ../logs:/app/logs
+    # 自选股诊断、策略回测并发较高时建议 2G
+    mem_limit: 2g
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
