@@ -273,10 +273,10 @@ def _run_self_learning(config: dict):
         logger.error(f"自学习任务异常: {e}")
 
 
-def start_scheduler(config: dict):
-    """启动任务调度器"""
+def build_scheduler(config: dict, scheduler=None):
+    """把全部定时任务加到调度器上（默认 BlockingScheduler；API 服务传入 BackgroundScheduler）。"""
     sched_cfg = config.get("scheduler", {})
-    scheduler = BlockingScheduler()
+    scheduler = scheduler if scheduler is not None else BlockingScheduler()
 
     # 热搜采集（每30分钟）
     interval = sched_cfg.get("hot_search_interval", 30)
@@ -377,7 +377,12 @@ def start_scheduler(config: dict):
     logger.info(f"调度器已配置 {len(scheduler.get_jobs())} 个任务:")
     for job in scheduler.get_jobs():
         logger.info(f"  - {job.name} ({job.trigger})")
+    return scheduler
 
+
+def start_scheduler(config: dict):
+    """启动任务调度器（阻塞）"""
+    scheduler = build_scheduler(config)
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):

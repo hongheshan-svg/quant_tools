@@ -21,63 +21,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
 )
 
-# ── 支持的 AI 平台预设 ────────────────────────────────────────────
-AI_PLATFORMS: dict[str, dict] = {
-    "deepseek": {
-        "name": "DeepSeek (深度求索)",
-        "base_url": "https://api.deepseek.com",
-        "models": ["deepseek-chat", "deepseek-reasoner"],
-        "default_model": "deepseek-chat",
-    },
-    "qwen": {
-        "name": "通义千问 (Qwen)",
-        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        "models": ["qwen-plus", "qwen-turbo", "qwen-max", "qwen-long"],
-        "default_model": "qwen-plus",
-    },
-    "zhipu": {
-        "name": "智谱GLM (ChatGLM)",
-        "base_url": "https://open.bigmodel.cn/api/paas/v4",
-        "models": ["glm-4-flash", "glm-4", "glm-4-plus", "glm-4-long"],
-        "default_model": "glm-4-flash",
-    },
-    "moonshot": {
-        "name": "月之暗面 (Kimi)",
-        "base_url": "https://api.moonshot.cn/v1",
-        "models": ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"],
-        "default_model": "moonshot-v1-8k",
-    },
-    "baidu": {
-        "name": "百度文心 (ERNIE)",
-        "base_url": "https://qianfan.baidubce.com/v2",
-        "models": ["ernie-4.0-8k", "ernie-3.5-8k", "ernie-speed-8k"],
-        "default_model": "ernie-4.0-8k",
-    },
-    "doubao": {
-        "name": "豆包 (Doubao)",
-        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
-        "models": ["doubao-1.5-pro-32k", "doubao-1.5-lite-32k", "doubao-pro-32k", "doubao-lite-32k"],
-        "default_model": "doubao-1.5-pro-32k",
-    },
-    "siliconflow": {
-        "name": "硅基流动 (SiliconFlow)",
-        "base_url": "https://api.siliconflow.cn/v1",
-        "models": ["deepseek-ai/DeepSeek-V3", "Qwen/Qwen2.5-72B-Instruct", "THUDM/glm-4-9b-chat"],
-        "default_model": "deepseek-ai/DeepSeek-V3",
-    },
-    "openai": {
-        "name": "OpenAI",
-        "base_url": "https://api.openai.com/v1",
-        "models": ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"],
-        "default_model": "gpt-4o",
-    },
-    "custom": {
-        "name": "自定义 (OpenAI 兼容)",
-        "base_url": "",
-        "models": [],
-        "default_model": "",
-    },
-}
+from src.analyzers.llm_platforms import AI_PLATFORMS  # noqa: E402
 
 # 平台 key 列表（保持界面顺序）
 PLATFORM_KEYS = list(AI_PLATFORMS.keys())
@@ -480,26 +424,7 @@ class AISettingsDialog(QDialog):
 
     @staticmethod
     def _save_to_yaml(new_llm: dict):
-        """将新的 llm 配置合并写回 settings.yaml。"""
-        from pathlib import Path
+        """将新的 llm 配置写回 settings.yaml。"""
+        from src.settings_store import save_section
 
-        import yaml
-
-        path = Path("config/settings.yaml")
-        if path.exists():
-            with open(path, encoding="utf-8") as f:
-                full_cfg = yaml.safe_load(f) or {}
-        else:
-            full_cfg = {}
-
-        full_cfg["llm"] = new_llm
-
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            yaml.dump(
-                full_cfg,
-                f,
-                allow_unicode=True,
-                default_flow_style=False,
-                sort_keys=False,
-            )
+        save_section("llm", new_llm)

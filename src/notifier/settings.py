@@ -6,9 +6,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import yaml
-
-SETTINGS_PATH = Path("config/settings.yaml")
+from src.settings_store import SETTINGS_PATH
 
 
 def parse_quiet_hours(text: str) -> list[str]:
@@ -21,11 +19,6 @@ def parse_quiet_hours(text: str) -> list[str]:
 
 def save_notifier_settings(notifier: dict, path: Path = SETTINGS_PATH) -> None:
     """把 notifier 段合并写回 settings.yaml，其余配置保持不变。"""
-    full = {}
-    if path.exists():
-        with open(path, encoding="utf-8") as f:
-            full = yaml.safe_load(f) or {}
-    full["notifier"] = {**(full.get("notifier") or {}), **notifier}
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        yaml.dump(full, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    from src.settings_store import save_section
+
+    save_section("notifier", notifier, path=path, merge=True)
