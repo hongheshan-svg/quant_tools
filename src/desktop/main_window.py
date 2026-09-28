@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QCompleter,
     QDialog,
+    QFileDialog,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -129,6 +130,7 @@ class WorkerSignals(QObject):
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
     progress = pyqtSignal(int, int)   # 已完成、总数（需要进度的任务把 signals.progress.emit 传给 fn）
+    status = pyqtSignal(str)          # 进度文字（同上，传 signals.status.emit）
 
 
 class WorkerTask(QRunnable):
@@ -363,6 +365,23 @@ class CandlestickWidget(QWidget):
         painter.drawText(plot.left(), plot.bottom() + 18, first_date)
         right_text = painter.fontMetrics().horizontalAdvance(last_date)
         painter.drawText(plot.right() - right_text, plot.bottom() + 18, last_date)
+
+
+def render_chat_markdown(turns: list, pending: str = "", status: str = "") -> str:
+    """问股对话转为 markdown：问题、查询过的数据、回答。"""
+    if not turns and not pending:
+        return ("#### 可以这样问\n- 中远海控现在能买吗？止损放哪？\n- 今天的主线是什么，龙头是谁？\n"
+                "- 我的模拟盘持仓风险大吗？\n- 用龙回头的标准看看招商轮船\n\n> 仅供学习研究，不构成投资建议")
+    lines = []
+    for t in turns:
+        lines.append(f"**🧑 {t.question}**　*{t.asked_at}｜{t.perspective}*")
+        if t.tools:
+            lines.append("> 查询：" + "、".join(dict.fromkeys(x["label"] for x in t.tools)))
+        lines.append(t.answer or f"*{t.error}*")
+        lines.append("---")
+    if pending:
+        lines += [f"**🧑 {pending}**", f"*{status or '思考中…'}*"]
+    return "\n\n".join(lines)
 
 
 def render_news_markdown(data: dict) -> str:
@@ -931,7 +950,8 @@ class MainWindow(QMainWindow):
         tab_news_layout.addWidget(self.table_news, stretch=1)
         self.main_tabs.addTab(tab_news, "实时资讯流")
 
-        # ---- Tab 2: 研报搜索（全网多源搜索） ----
+        # ---- Tab 2: AI 问股 ----
+        self.main_tabs.addTab(self._build_chat_tab(), "AI 问股")
 
         # ---- Tab 3: 模拟交易 ----
         self.main_tabs.addTab(self._build_trading_tab(), "模拟交易")
@@ -971,6 +991,108 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._wrap("运行日志", self.log_text))
 
         self.setCentralWidget(root)
+
+    def _build_chat_tab(self) -> QWidget:
+        """AI 问股：多轮追问，AI 按需查询行情、技术面、资金流、新闻公告、主线和大盘后回答。"""
+        from src.services.stock_chat import PERSPECTIVES
+
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 4, 0, 0)
+        bar = QHBoxLayout()
+        self.chat_status = QLabel("AI 问股：可以多轮追问，AI 会按需查询行情、日线、技术面、资金流、筹码、业绩、新闻公告、涨停记录、主线、大盘和策略选股")
+        self.chat_status.setStyleSheet("font-weight: 600; color: #8be9fd; padding: 2px 6px;")
+        self.chat_perspective = QComboBox()
+        for name, desc in PERSPECTIVES.items():
+            self.chat_perspective.addItem(f"视角：{name}", name)
+            self.chat_perspective.setItemData(self.chat_perspective.count() - 1, desc, Qt.ItemDataRole.ToolTipRole)
+        self.btn_chat_export = QPushButton("导出")
+        self.btn_chat_export.setToolTip("把整段对话保存为 Markdown 文件")
+        self.btn_chat_push = QPushButton("推送")
+        self.btn_chat_push.setToolTip("把最近一次回答推送到企业微信/钉钉/飞书")
+        self.btn_chat_clear = QPushButton("清空")
+        bar.addWidget(self.chat_status)
+        bar.addStretch()
+        for w in (self.chat_perspective, self.btn_chat_export, self.btn_chat_push, self.btn_chat_clear):
+            bar.addWidget(w)
+        layout.addLayout(bar)
+        self.chat_view = QTextBrowser()
+        self.chat_view.setOpenExternalLinks(True)
+        self.chat_view.setMarkdown(render_chat_markdown([]))
+        layout.addWidget(self.chat_view, stretch=1)
+        input_bar = QHBoxLayout()
+        self.chat_input = QLineEdit()
+        self.chat_input.setPlaceholderText("输入问题，如：中远海控现在能买吗？ / 今天的主线是什么？ / 我的持仓风险大吗？（回车发送）")
+        self.btn_chat_send = QPushButton("发送")
+        input_bar.addWidget(self.chat_input, stretch=1)
+        input_bar.addWidget(self.btn_chat_send)
+        layout.addLayout(input_bar)
+
+        self.chat_input.returnPressed.connect(self._send_chat)
+        self.btn_chat_send.clicked.connect(self._send_chat)
+        self.btn_chat_clear.clicked.connect(self._clear_chat)
+        self.btn_chat_export.clicked.connect(self._export_chat)
+        self.btn_chat_push.clicked.connect(self._push_chat)
+        self._chat_session = None
+        self._chat_pending = ""
+        return tab
+
+    def _chat(self):
+        if self._chat_session is None:
+            from src.services.stock_chat import StockChatSession
+
+            self._chat_session = StockChatSession(self.config)
+        return self._chat_session
+
+    def _render_chat(self, status: str = ""):
+        self.chat_view.setMarkdown(render_chat_markdown(self._chat().turns, self._chat_pending, status))
+        self.chat_view.verticalScrollBar().setValue(self.chat_view.verticalScrollBar().maximum())
+
+    def _send_chat(self):
+        question = self.chat_input.text().strip()
+        if not question or self._chat_pending:
+            return
+        self._chat_pending = question
+        self.chat_input.clear()
+        self.btn_chat_send.setEnabled(False)
+        self._render_chat("思考中…")
+        worker = WorkerTask(self._chat().ask, question, self.chat_perspective.currentData())
+        worker.kwargs["progress"] = worker.signals.status.emit
+        worker.signals.status.connect(lambda text: self._render_chat(text + "…"))
+        worker.signals.finished.connect(self._on_chat_answer)
+        worker.signals.error.connect(lambda detail: self._on_chat_answer(None, detail.splitlines()[0]))
+        self.thread_pool.start(worker)
+
+    def _on_chat_answer(self, _turn, error: str = ""):
+        self._chat_pending = ""
+        self.btn_chat_send.setEnabled(True)
+        self._render_chat()
+        if error:
+            self._log(f"AI 问股异常: {error}")
+
+    def _clear_chat(self):
+        if self._chat_pending:
+            return
+        self._chat().clear()
+        self._render_chat()
+
+    def _export_chat(self):
+        if not self._chat().turns:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "导出对话", f"AI问股_{datetime.now():%Y%m%d_%H%M}.md", "Markdown (*.md)")
+        if path:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self._chat().to_markdown())
+            self._log(f"对话已导出: {path}")
+
+    def _push_chat(self):
+        turns = [t for t in self._chat().turns if t.answer]
+        if not turns:
+            return
+        last = turns[-1]
+        worker = WorkerTask(self.pipeline.push_message, f"AI 问股：{last.question[:30]}", last.answer)
+        worker.signals.finished.connect(lambda r: self._log(f"AI 问股推送结果: {r}"))
+        self.thread_pool.start(worker)
 
     def _build_trading_tab(self) -> QWidget:
         """模拟交易：账户概览、订单（确认/撤单）、持仓。"""
@@ -1594,6 +1716,7 @@ class MainWindow(QMainWindow):
         self.config = reload_config()
         # 更新 pipeline 的 config（后续新建 Analyzer/Advisor 会使用新配置）
         self.pipeline.config = self.config
+        self._chat_session = None  # 下次提问时按新模型重建
 
         provider = new_llm.get("primary", {}).get("provider", "")
         model = new_llm.get("primary", {}).get("model", "")

@@ -62,6 +62,15 @@ class PipelineService:
             result["report"] = self.push_daily_report()
         return result
 
+    def push_message(self, title: str, content: str) -> dict[str, Any]:
+        """把一段 markdown 推送到已启用的机器人。"""
+        from src.notifier import broadcast, enabled_channels
+
+        if not enabled_channels(self.config):
+            return {"pushed": False, "reason": "未启用任何推送渠道"}
+        results = broadcast(self.config, title, content)
+        return {"pushed": any(results.values()), "channels": results}
+
     def push_daily_report(self) -> dict[str, Any]:
         """推送每日报告到已启用的机器人（未启用任何渠道时直接返回）。"""
         from src.services.daily_report import DailyReportService
