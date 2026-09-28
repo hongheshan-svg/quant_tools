@@ -380,6 +380,39 @@ def build_scheduler(config: dict, scheduler=None):
     return scheduler
 
 
+# 一次性运行（GitHub Actions、Docker 或系统定时任务在收盘后调用）：按定时任务的先后顺序执行
+ONCE_STEPS: dict[str, tuple[str, tuple]] = {
+    "collect": ("数据采集", (_run_hot_search_collection, _run_cailianshe_collection,
+                             _run_stock_data_collection, _run_global_data_collection)),
+    "analysis": ("每日综合分析", (_run_daily_analysis,)),
+    "signals": ("交易信号", (_run_signal_generation,)),
+    "report": ("大盘复盘与日报", (_run_daily_report,)),
+    "learn": ("自学习", (_run_self_learning,)),
+    "watchlist": ("自选股仪表盘", (_run_watchlist_report,)),
+}
+
+
+def run_once(config: dict, steps: list[str] | None = None) -> list[dict]:
+    """依次执行各步骤一次，返回每步用时。非交易日时行情和分析类步骤照常跳过。"""
+    import time
+
+    selected = steps or list(ONCE_STEPS)
+    unknown = [s for s in selected if s not in ONCE_STEPS]
+    if unknown:
+        raise ValueError(f"未知步骤: {', '.join(unknown)}（可选: {', '.join(ONCE_STEPS)}）")
+    results = []
+    for key in ONCE_STEPS:  # 按固定顺序执行，与传入顺序无关
+        if key not in selected:
+            continue
+        label, jobs = ONCE_STEPS[key]
+        logger.info(f"===== [{key}] {label} =====")
+        started = time.monotonic()
+        for job in jobs:
+            job(config)
+        results.append({"step": key, "label": label, "seconds": round(time.monotonic() - started, 1)})
+    return results
+
+
 def start_scheduler(config: dict):
     """启动任务调度器（阻塞）"""
     scheduler = build_scheduler(config)
