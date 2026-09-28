@@ -1,0 +1,136 @@
+@import "tailwindcss";
+
+/* 颜色用 CSS 变量，浅色主题只需覆盖变量；A 股习惯：红涨绿跌 */
+:root {
+  --bg: #0b1020;
+  --panel: #111933;
+  --panel-2: #172245;
+  --line: #243157;
+  --text: #dbe7ff;
+  --muted: #8994b3;
+  --accent: #8be9fd;
+  --accent-strong: #3aa7ff;
+  --up: #ff5a5f;
+  --down: #2ecc71;
+  --warn: #ffb86c;
+  --danger: #ff5555;
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  --bg: #f4f6fb;
+  --panel: #ffffff;
+  --panel-2: #eef2fa;
+  --line: #d9e0ee;
+  --text: #1c2437;
+  --muted: #66708a;
+  --accent: #0b7fb5;
+  --accent-strong: #1565c0;
+  --up: #e23b3b;
+  --down: #13a05a;
+  --warn: #c7771b;
+  --danger: #d32f2f;
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-line: var(--line);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-up: var(--up);
+  --color-down: var(--down);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --font-sans: "Inter", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 数字等宽，表格对齐 */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 4px;
+}
+
+/* Markdown 报告 */
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  font-weight: 600;
+  margin: 0.9em 0 0.4em;
+  color: var(--accent);
+}
+.markdown h2 {
+  font-size: 1.15rem;
+}
+.markdown h3 {
+  font-size: 1.02rem;
+}
+.markdown p {
+  margin: 0.45em 0;
+  line-height: 1.7;
+}
+.markdown ul {
+  list-style: disc;
+  padding-left: 1.3em;
+  margin: 0.35em 0;
+}
+.markdown li {
+  margin: 0.2em 0;
+  line-height: 1.65;
+}
+.markdown blockquote {
+  border-left: 3px solid var(--warn);
+  padding: 0.2em 0.8em;
+  color: var(--muted);
+  margin: 0.6em 0;
+}
+.markdown hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 0.9em 0;
+}
+.markdown a {
+  color: var(--accent-strong);
+}
+.markdown strong {
+  color: var(--text);
+}
+.markdown table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+}
+.markdown th,
+.markdown td {
+  border: 1px solid var(--line);
+  padding: 4px 8px;
+}

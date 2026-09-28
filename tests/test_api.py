@@ -230,6 +230,20 @@ def test_usage_endpoint(env):
     assert usage["total"]["tokens"] == 120 and usage["by_feature"][0]["key"] == "个股诊断"
 
 
+def test_enable_web_auth(env, monkeypatch):
+    client, app, config = env
+    from src import config_loader
+
+    monkeypatch.setattr(config_loader, "reload_config", lambda: {**config, "web": settings_store.read_settings()["web"]})
+    assert client.put("/api/v1/settings/web-auth", json={"auth_enabled": True, "password": "123"}).status_code == 400
+    assert client.put("/api/v1/settings/web-auth", json={"auth_enabled": True, "password": "secret1"}).json() == {"ok": True}
+    assert settings_store.read_settings()["web"] == {"auth_enabled": True}
+    assert client.get("/api/v1/auth/status").json() == {"auth_enabled": True, "password_set": True, "logged_in": True}  # 当前浏览器直接登录
+    assert client.get("/api/v1/market/themes").status_code == 200
+    client.cookies.clear()
+    assert client.get("/api/v1/market/themes").status_code == 401
+
+
 def test_frontend_hosting(env):
     client, _, _ = env
     assert client.get("/").text == "<html>app</html>"

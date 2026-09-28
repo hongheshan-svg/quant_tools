@@ -69,6 +69,31 @@ def change_password(body: ChangePasswordBody, auth: AuthStore = Depends(get_auth
     return {"ok": True}
 
 
+class WebAuthBody(BaseModel):
+    auth_enabled: bool
+    password: str = ""
+
+
+@router.put("/settings/web-auth")
+def set_web_auth(body: WebAuthBody, request: Request, response: Response, auth: AuthStore = Depends(get_auth)) -> dict[str, Any]:
+    """开关 Web 登录；开启时如果还没有密码，必须同时设置（至少 6 位），并直接登录当前浏览器。"""
+    from api.app import apply_config
+    from src.config_loader import reload_config
+    from src.settings_store import save_section
+
+    if body.auth_enabled and not auth.has_password():
+        if len(body.password) < 6:
+            raise bad_request("开启登录前请设置至少 6 位的密码")
+        auth.set_password(body.password)
+    save_section("web", {"auth_enabled": body.auth_enabled}, merge=True)
+    config = reload_config()
+    apply_config(request.app, config)
+    if body.auth_enabled:
+        days = float((config.get("web") or {}).get("session_days", 7))
+        response.set_cookie(COOKIE_NAME, auth.issue_session(days), max_age=int(days * 86400), httponly=True, samesite="lax")
+    return {"ok": True}
+
+
 # ---------- 后台任务 ----------
 
 @router.get("/tasks")

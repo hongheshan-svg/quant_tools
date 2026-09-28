@@ -1,0 +1,95 @@
+// 各页面用到的接口，一个函数对应一个后端路由
+import { http } from './client'
+import type * as T from './types'
+
+export const api = {
+  // 系统
+  health: () => http.get<{ status: string }>('/health'),
+  authStatus: () => http.get<T.AuthStatus>('/auth/status'),
+  login: (password: string) => http.post<{ ok: boolean }>('/auth/login', { password }),
+  logout: () => http.post<{ ok: boolean }>('/auth/logout'),
+  changePassword: (current_password: string, new_password: string) =>
+    http.post<{ ok: boolean }>('/settings/password', { current_password, new_password }),
+  task: (id: string) => http.get<T.Task>(`/tasks/${id}`),
+  tasks: () => http.get<T.Task[]>('/tasks'),
+  sources: () => http.get<T.SourceStatus[]>('/system/sources'),
+  usage: (days: number) => http.get<T.UsageSummary>('/usage', { days }),
+
+  // 首页与大盘
+  dashboard: () => http.get<T.Dashboard>('/dashboard'),
+  news: () => http.get<T.NewsItem[]>('/news'),
+  regime: () => http.get<T.Regime>('/market/regime'),
+  review: () => http.get<T.MarketReview | null>('/market/review'),
+  generateReview: () => http.post<T.Task<T.MarketReview>>('/market/review'),
+  themes: (dimension: 'concept' | 'industry') => http.get<T.Theme[]>('/market/themes', { dimension }),
+  refreshOverview: () => http.post<T.Task>('/market/overview/refresh'),
+  collect: () => http.post<T.Task>('/pipeline/collect'),
+  predict: () => http.post<T.Task>('/pipeline/predict'),
+  runFull: () => http.post<T.Task>('/pipeline/run-full'),
+  pushDailyReport: () => http.post<T.Task>('/pipeline/daily-report'),
+  signalPerformance: (days = 60) => http.get<T.SignalPerformance>('/performance/signals', { days }),
+  diagnosisOutcomes: (days = 60) => http.get<T.DiagnosisOutcomes>('/performance/diagnosis', { days }),
+  alerts: () => http.get<T.AlertRow[]>('/alerts'),
+  checkAlerts: () => http.post<T.Task>('/alerts/check'),
+
+  // 个股
+  searchStocks: (q: string, limit = 12) => http.get<T.StockRef[]>('/stocks/search', { q, limit }),
+  daily: (code: string) => http.get<T.DailyBar[]>(`/stocks/${code}/daily`),
+  ensureHistory: (code: string, name = '') => http.post<{ added: number }>(`/stocks/${code}/history?name=${encodeURIComponent(name)}`),
+  stockNews: (code: string, refresh = false) => http.get<T.StockNews>(`/stocks/${code}/news`, { refresh }),
+  latestDiagnosis: (code: string) => http.get<T.Diagnosis | null>(`/stocks/${code}/diagnosis`),
+  diagnose: (code: string) => http.post<T.Task<T.Diagnosis>>(`/stocks/${code}/diagnosis`),
+
+  // 策略选股
+  screening: () => http.get<T.ScreeningLatest>('/screening'),
+  runScreening: () => http.post<T.Task<T.ScreenResult>>('/screening/run'),
+  backtest: (days = 60) => http.post<T.Task<T.BacktestReport>>(`/screening/backtest?days=${days}`),
+
+  // 问股
+  perspectives: () => http.get<Record<string, string>>('/chat/perspectives'),
+  chatSessions: () => http.get<T.ChatSessionSummary[]>('/chat/sessions'),
+  createChat: (perspective: string) => http.post<T.ChatSession>('/chat/sessions', { perspective }),
+  chatSession: (id: string) => http.get<T.ChatSession>(`/chat/sessions/${id}`),
+  deleteChat: (id: string) => http.del<{ ok: boolean }>(`/chat/sessions/${id}`),
+  ask: (id: string, question: string, perspective?: string) =>
+    http.post<T.Task<T.ChatTurn>>(`/chat/sessions/${id}/ask`, { question, perspective }),
+  exportChatUrl: (id: string) => `/api/v1/chat/sessions/${id}/export`,
+  pushChat: (id: string) => http.post<{ pushed: boolean; reason?: string }>(`/chat/sessions/${id}/push`),
+
+  // 自选股
+  watchlist: () => http.get<T.WatchlistRow[]>('/watchlist'),
+  addWatch: (text: string) => http.post<{ ok: boolean; code?: string; name?: string; error?: string }>('/watchlist', { text }),
+  removeWatch: (code: string) => http.del<{ ok: boolean }>(`/watchlist/${code}`),
+  importWatch: (text: string) => http.post<T.ImportResult>('/watchlist/import', { text }),
+  importWatchFile: (file: File) => http.upload<T.ImportResult>('/watchlist/import-file', file),
+  watchlistReport: () => http.get<T.WatchlistReport | null>('/watchlist/report'),
+  runWatchlistReport: (push = true) => http.post<T.Task>(`/watchlist/report?push=${push}`),
+
+  // 模拟盘
+  trading: () => http.get<T.TradingSnapshot>('/trading'),
+  tradingRisk: () => http.get<T.RiskReport>('/trading/risk'),
+  prepareOrders: () => http.post<T.Task>('/trading/orders/prepare'),
+  confirmOrder: (id: string) => http.post<{ ok: boolean; error?: string }>(`/trading/orders/${id}/confirm`),
+  cancelOrder: (id: string) => http.post<{ ok: boolean; error?: string }>(`/trading/orders/${id}/cancel`),
+  checkExits: () => http.post<T.Task>('/trading/exits/check'),
+
+  // 实盘记账
+  real: () => http.get<T.RealPortfolio>('/real'),
+  addRealTrade: (trade: Record<string, unknown>) => http.post<{ ok: boolean }>('/real/trades', trade),
+  deleteRealTrade: (id: number) => http.del<{ ok: boolean }>(`/real/trades/${id}`),
+  importRealTrades: (file: File) => http.upload<{ added: number; duplicate: number; skipped: number; error: string }>('/real/trades/import', file),
+  setRealCash: (cash: number) => http.put<{ ok: boolean }>('/real/cash', { cash }),
+  setRealPlan: (code: string, stop_loss: number | null, target_price: number | null) =>
+    http.put<{ ok: boolean }>(`/real/plans/${code}`, { stop_loss, target_price }),
+
+  // 设置
+  setWebAuth: (auth_enabled: boolean, password = '') => http.put<{ ok: boolean }>('/settings/web-auth', { auth_enabled, password }),
+  llmSettings: () => http.get<T.LLMSettings>('/settings/llm'),
+  saveLlm: (llm: Record<string, unknown>) => http.put<{ ok: boolean }>('/settings/llm', { llm }),
+  testLlm: (llm: Record<string, unknown>) => http.post<{ ok: boolean; reply?: string; error?: string }>('/settings/llm/test', { llm }),
+  notifierSettings: () => http.get<T.NotifierSettings>('/settings/notifier'),
+  saveNotifier: (notifier: Record<string, unknown>) => http.put<{ ok: boolean }>('/settings/notifier', { notifier }),
+  diagnoseNotifier: (notifier: Record<string, unknown>) => http.post<T.NotifierDiagnosis>('/settings/notifier/diagnose', { notifier }),
+  testNotifier: (channel: string, notifier: Record<string, unknown>) =>
+    http.post<{ ok: boolean; error: string }>(`/settings/notifier/test/${channel}`, { notifier }),
+}

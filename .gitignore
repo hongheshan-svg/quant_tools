@@ -37,3 +37,4 @@ desktop.ini
 # Test files
 test_*.py
 !tests/test_*.py
+.playwright-mcp/
