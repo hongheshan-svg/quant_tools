@@ -283,6 +283,18 @@ class RealPositionPlan(Base):
     )
 
 
+class ChatSessionRecord(Base):
+    """AI 问股会话（Web 端保存，重启后可继续查看和追问）"""
+    __tablename__ = "chat_session"
+
+    id = Column(String(32), primary_key=True, comment="会话 ID")
+    title = Column(String(100), comment="标题（第一个问题）")
+    perspective = Column(String(20), comment="默认分析视角")
+    turns_json = Column(Text, comment="问答记录 JSON")
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+
 class Watchlist(Base):
     """自选股（收盘后逐只 AI 诊断并推送决策仪表盘，盘中提醒也会关注）"""
     __tablename__ = "watchlist"

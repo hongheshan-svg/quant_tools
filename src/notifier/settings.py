@@ -6,8 +6,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.settings_store import SETTINGS_PATH
-
 
 def parse_quiet_hours(text: str) -> list[str]:
     """「22:00-08:00」→ ["22:00", "08:00"]；为空或格式不对返回 []。"""
@@ -17,7 +15,7 @@ def parse_quiet_hours(text: str) -> list[str]:
     return []
 
 
-def save_notifier_settings(notifier: dict, path: Path = SETTINGS_PATH) -> None:
+def save_notifier_settings(notifier: dict, path: Path | None = None) -> None:
     """把 notifier 段合并写回 settings.yaml，其余配置保持不变。"""
     from src.settings_store import save_section
 

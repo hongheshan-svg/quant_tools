@@ -299,6 +299,17 @@ portfolio_risk:
   sector_max_pct: 50       # 同一行业合计占总资产上限（%，行业取最近一次涨停时的所属行业）
   near_stop_pct: 3         # 距止损价不足该百分比时提示
 
+# --- Web / API 服务（python server.py，Electron 桌面端也用它） ---
+web:
+  host: "127.0.0.1"        # 改成 0.0.0.0 可让手机等局域网设备访问（必须同时开启登录）
+  port: 8000
+  auth_enabled: false      # 开启后需要登录；第一次登录时设置的密码保存在 data/web_auth.json
+  session_days: 7          # 登录有效天数
+  api_token: ""            # 给机器人、脚本用的 Bearer Token，留空不启用
+  scheduler: true          # 服务同时运行定时任务（与 python main.py 二选一，避免重复采集）
+  task_workers: 4          # 同时执行的后台任务数
+  cors_origins: ["http://localhost:5173", "http://127.0.0.1:5173"]   # 前端开发服务器
+
 # --- Web仪表盘配置 ---
 dashboard:
   host: "0.0.0.0"

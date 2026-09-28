@@ -15,15 +15,17 @@ SETTINGS_PATH = Path("config/settings.yaml")
 _lock = threading.Lock()
 
 
-def read_settings(path: Path = SETTINGS_PATH) -> dict[str, Any]:
+def read_settings(path: Path | None = None) -> dict[str, Any]:
+    path = path or SETTINGS_PATH
     if not path.exists():
         return {}
     with open(path, encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
-def save_section(section: str, value: Any, path: Path = SETTINGS_PATH, merge: bool = False) -> None:
-    """写回一个顶层配置段；merge=True 时与已有的同名段（字典）浅合并。"""
+def save_section(section: str, value: Any, path: Path | None = None, merge: bool = False) -> None:
+    """写回一个顶层配置段；merge=True 时与已有的同名段（字典）浅合并。path 默认 SETTINGS_PATH（调用时读取，便于测试替换）。"""
+    path = path or SETTINGS_PATH
     with _lock:
         full = read_settings(path)
         if merge and isinstance(full.get(section), dict) and isinstance(value, dict):

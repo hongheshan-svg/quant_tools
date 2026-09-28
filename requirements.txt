@@ -4,6 +4,7 @@ json-repair>=0.30.0
 pypinyin>=0.50.0
 fastapi>=0.110.0
 uvicorn>=0.27.0
+python-multipart>=0.0.9
 apscheduler>=3.10.0
 sqlalchemy>=2.0.0
 aiosqlite>=0.20.0
