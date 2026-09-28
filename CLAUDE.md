@@ -31,9 +31,6 @@ python scripts/fetch_history.py --mode daily --start-date 2024-01-01   # 回补�
 
 日线下载与解析在 `src/collectors/daily_history.py`，脚本只负责批量调度。`fetch_history.py` 的日线回补默认按每只股票的最新日期续传。显式指定 `--start-date` 时，历史起点晚于该日期 10 天以上的股票会从起点重新下载，因为日常采集会给每只股票写入当天行情，否则所有股票都会被当成已是最新。`--force-full` 忽略续传，`--overwrite` 重新下载并覆盖已有行（用于修复旧版本写错的成交量/成交额）。
 
-```bash
-```
-
 没有任何入口脚本会启动 FastAPI Web 仪表盘（`src/dashboard/app.py`），需要手动运行 `uvicorn src.dashboard.app:app --port 8000`。
 
 ## 测试
