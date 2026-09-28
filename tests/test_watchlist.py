@@ -149,8 +149,8 @@ def test_watchlist_report(config, monkeypatch):
     fake.latest_results["601919"] = _result("601919", "watch", 55, "2026-09-25 11:00")
     fake.histories["601919"] = [_result("601919", "buy", 78, "2026-09-25 16:30"), _result("601919", "watch", 55, "2026-09-25 11:00")]
     pushed, progress = [], []
-    monkeypatch.setattr(notifier_mod, "enabled_channels", lambda cfg: ["wechat"])
-    monkeypatch.setattr(notifier_mod, "broadcast", lambda cfg, title, content: pushed.append((title, content)) or {"wechat": True})
+    monkeypatch.setattr(notifier_mod, "enabled_channels", lambda cfg, kind=None: ["wechat"] if kind == "watchlist" else [])
+    monkeypatch.setattr(notifier_mod, "broadcast", lambda cfg, title, content, kind=None: pushed.append((title, content)) or {"wechat": True})
 
     result = WatchlistReportService({**config, "watchlist": {"workers": 2}}, diagnosis=fake).run(
         progress=lambda d, t: progress.append((d, t)), now=datetime(2026, 9, 25, 16, 30))

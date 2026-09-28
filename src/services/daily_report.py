@@ -48,10 +48,10 @@ class DailyReportService:
 
     def push(self) -> dict[str, Any]:
         """推送日报；没有启用任何渠道时不生成报告。"""
-        if not enabled_channels(self.config):
+        if not enabled_channels(self.config, "daily_report"):
             return {"pushed": False, "reason": "未启用任何推送渠道"}
         title, content = self.build()
-        results = broadcast(self.config, title, content)
+        results = broadcast(self.config, title, content, kind="daily_report")
         logger.info(f"每日报告推送结果: {results}")
         return {"pushed": any(results.values()), "channels": results}
 

@@ -213,6 +213,23 @@ notifier:
     enabled: false
     webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/your-hook"
     secret: ""
+  # 邮件（SMTP）：QQ/163 邮箱需要在邮箱设置里开启 SMTP 并使用授权码作为 password
+  email:
+    enabled: false
+    smtp_host: "smtp.qq.com"
+    smtp_port: 465
+    use_ssl: true            # 465 端口用 SSL；587 端口改为 false（使用 STARTTLS）
+    username: ""
+    password: ""
+    sender: ""               # 为空时使用 username
+    to: []                   # 收件人，如 ["me@example.com"]
+  # 按消息类型指定推送渠道（wechat/dingtalk/feishu/email），不写或为空的类型推送到全部已启用渠道
+  # 桌面端【推送设置】可以直接修改、检查配置和发送测试消息
+  routes:
+    daily_report: []         # 每日报告
+    alert: []                # 盘中提醒
+    watchlist: []            # 自选股决策仪表盘
+    chat: []                 # AI 问股
 
 # --- 全市场策略选股 ---
 # 每日分析后（及 AI涨停预测的盘前/盘后时段）按规则扫描全市场，结果作为 AI 涨停预测的候选来源之一

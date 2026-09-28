@@ -103,8 +103,8 @@ def test_custom_rules(db_path):
 
 def test_run_dedupes_pushes_merged_and_records(db_path, monkeypatch):
     pushed = []
-    monkeypatch.setattr(alert_mod, "enabled_channels", lambda config: ["wechat"])
-    monkeypatch.setattr(alert_mod, "broadcast", lambda config, title, content: pushed.append((title, content)) or {"wechat": True})
+    monkeypatch.setattr(alert_mod, "enabled_channels", lambda config, kind=None: ["wechat"] if kind == "alert" else [])
+    monkeypatch.setattr(alert_mod, "broadcast", lambda config, title, content, kind=None: pushed.append((title, content)) or {"wechat": True})
 
     service = _service(db_path)
     assert service.run(datetime(2026, 9, 28, 10, 0)) == {"alerts": 3, "pushed": 3}
@@ -120,8 +120,8 @@ def test_run_dedupes_pushes_merged_and_records(db_path, monkeypatch):
 
 def test_quiet_hours_record_without_push(db_path, monkeypatch):
     pushed = []
-    monkeypatch.setattr(alert_mod, "enabled_channels", lambda config: ["wechat"])
-    monkeypatch.setattr(alert_mod, "broadcast", lambda config, title, content: pushed.append(content) or {"wechat": True})
+    monkeypatch.setattr(alert_mod, "enabled_channels", lambda config, kind=None: ["wechat"] if kind == "alert" else [])
+    monkeypatch.setattr(alert_mod, "broadcast", lambda config, title, content, kind=None: pushed.append(content) or {"wechat": True})
     service = AlertService({"database": {"sqlite_path": db_path}, "alerts": {}, "notifier": {"quiet_hours": ["09:00", "11:00"]}})
 
     result = service.run(datetime(2026, 9, 28, 10, 0))

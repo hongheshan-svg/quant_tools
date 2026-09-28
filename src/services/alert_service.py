@@ -96,7 +96,7 @@ class AlertService:
             return {"alerts": 0, "skipped": "未启用"}
         if not trading_calendar.in_trade_session(now):
             return {"alerts": 0, "skipped": "非交易时段"}
-        can_push = bool(enabled_channels(self.config))
+        can_push = bool(enabled_channels(self.config, "alert"))
         fresh, to_push = [], []
         for ev in self.evaluate():
             cooldown = timedelta(days=1) if ev.alert_type in DAILY_ONCE_TYPES else None
@@ -110,7 +110,7 @@ class AlertService:
                 to_push.append(ev)
         if to_push:
             lines = [f"- {SEVERITY_ICON.get(ev.severity, '')} {ev.message}" for ev in to_push]
-            results = broadcast(self.config, f"盘中提醒 {now:%H:%M}", "\n".join(lines))
+            results = broadcast(self.config, f"盘中提醒 {now:%H:%M}", "\n".join(lines), kind="alert")
             pushed = any(results.values())
         else:
             pushed = False

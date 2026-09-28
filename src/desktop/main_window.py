@@ -50,6 +50,7 @@ from src import trading_calendar
 from src.config_loader import load_config, reload_config
 from src.desktop.ai_settings_dialog import AISettingsDialog
 from src.desktop.markdown_render import render_chat_markdown, render_news_markdown
+from src.desktop.push_settings_dialog import PushSettingsDialog
 from src.services.data_query_service import DataQueryService
 from src.services.pipeline_service import PipelineService
 from src.trading.constants import (
@@ -850,7 +851,10 @@ class MainWindow(QMainWindow):
             "  border-radius: 6px; padding: 5px 12px; }"
             "QPushButton:hover { background: #8a4fb0; }"
         )
-        for b in [self.btn_premarket, self.btn_push_report, self.btn_ai_settings]:
+        self.btn_push_settings = QPushButton("推送设置")
+        self.btn_push_settings.setToolTip("企业微信/钉钉/飞书/邮件推送、按消息类型的推送路由、免打扰时段；可检查配置并发送测试消息")
+        self.btn_push_settings.clicked.connect(self._open_push_settings)
+        for b in [self.btn_premarket, self.btn_push_report, self.btn_push_settings, self.btn_ai_settings]:
             action_layout.addWidget(b)
         action_layout.addStretch()
         layout.addWidget(action_box)
@@ -2023,6 +2027,18 @@ class MainWindow(QMainWindow):
         dlg = AISettingsDialog(llm_cfg, parent=self)
         dlg.settings_saved.connect(self._apply_new_llm_config)
         dlg.exec()
+
+    def _open_push_settings(self):
+        dialog = PushSettingsDialog(self.config, parent=self)
+        dialog.settings_saved.connect(self._apply_push_settings)
+        dialog.exec()
+
+    def _apply_push_settings(self, _notifier: dict):
+        self.config = reload_config()
+        self.pipeline.config = self.config
+        from src.notifier import enabled_channels
+
+        self._log(f"推送设置已保存，已启用渠道：{'、'.join(enabled_channels(self.config)) or '无'}")
 
     def _apply_new_llm_config(self, new_llm: dict):
         """保存后热重载所有 LLM 客户端。"""

@@ -168,9 +168,9 @@ class WatchlistReportService:
     def _push(self, trade_date: str, markdown: str) -> bool:
         from src.notifier import broadcast, enabled_channels
 
-        if not enabled_channels(self.config):
+        if not enabled_channels(self.config, "watchlist"):
             return False
-        results = broadcast(self.config, f"自选股决策仪表盘 {trade_date}", markdown)
+        results = broadcast(self.config, f"自选股决策仪表盘 {trade_date}", markdown, kind="watchlist")
         return any(results.values())
 
     def latest(self) -> dict[str, Any] | None:
