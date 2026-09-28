@@ -66,6 +66,7 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
     - 16:00 生成信号 → `TradeAdvisor.advise_top_stocks()`（AI 研判，`strategy.ai_advisor_enabled`）→ `ExecutionService.execute_signals()` 生成订单。
     - 16:10 `MarketReviewService.generate()`（LLM 大盘复盘，`market_review.enabled`）→ 推送日报。
     - 16:20 自学习。
+    - 16:30 `WatchlistReportService.run()`：自选股逐只 AI 诊断，推送决策仪表盘（`watchlist.daily_report`）。
   - 行情采集任务结束后依次调用 `ExecutionService.generate_exit_orders()`（持仓止损止盈）和 `AlertService.run()`（盘中提醒）。
   - 所有间隔和时间都读自 `scheduler.*` 配置项。
   - 行情采集和上面三个每日任务在非交易日跳过（`_skip_non_trade_day()`），新闻、热搜、国际新闻照常采集。
@@ -74,6 +75,7 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
   - 【信号绩效】（含 AI 诊断验证）【大盘复盘】【策略选股】【主线分析】【盘中提醒】页在切换到该页时才读取或计算，其中大盘复盘、策略选股和历史回测只读取上次的结果，点击按钮才重新生成；【数据源状态】页读取的是进程内的健康记录。【模拟交易】页每次刷新后在后台计算组合风险。
   - 个股详情对话框（在表格中双击股票，或用顶部搜索框按代码/名称/拼音首字母打开）：本地日线不足 60 根时在后台补齐后重绘 K 线；【AI诊断】页调用 `PipelineService.diagnose_stock()`，打开时只显示上次的诊断结果，点击按钮才调用 AI；【新闻公告】页切换过去才联网获取。
   - 【AI 问股】页持有一个 `StockChatSession`，切换 AI 平台后重建。
+  - 【自选股】【实盘记账】页在切换到该页时读取。【推送设置】对话框（`src/desktop/push_settings_dialog.py`）会重写 `settings.yaml` 的 `notifier` 段，保存后 `reload_config()`。
   - 需要进度的后台任务把 `worker.signals.progress.emit`（数字）或 `status.emit`（文字）作为参数传给被调用的函数。
   - 【模拟交易】页通过 `PipelineService` 的交易方法确认、撤销订单。这些方法共用一把锁，因为它们在不同工作线程里被调用。
   - `CollectorOrchestrator` 负责并发采集。
@@ -102,6 +104,7 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
 - 结构不适合改成回退链的内联回退（指数、板块、北向资金、各资讯采集器），直接调用 `source_health.record()` 记录健康状态。
 - 个股资金流（`src/collectors/fund_flow.py`）：同花顺即时资金流 → 东方财富（分页，每页最多 100 条），随行情采集每 10 分钟最多一次，15:05 后再取一次收盘快照，写入 `stock_fund_flow`。
 - 筹码和业绩（`src/collectors/fundamentals.py`）：筹码分布先用 AKShare，失败时用本地日线按换手率衰减估算（至少 60 根日线）；业绩预告/快报由 `EarningsCache` 按报告期整批缓存。二者只在个股诊断时按需获取。
+- 行情里的市盈率、市净率（`stock_daily.pe/pb`）来自腾讯字段 39/46 和东方财富 f9/f23，新浪没有；接口用 0 或 `-` 表示没有数据，入库为空。
 - 成交量单位各数据源不一致（腾讯、新浪、历史日线为股，东方财富为手），成交额统一为元。需要量比时用成交额比（策略选股就是这样做的）。
 - 按需补齐日线：`ensure_daily_history(code, db_path)`（`src/collectors/daily_history.py`）在本地近 150 天日线少于 60 根时联网下载，只写入缺失的交易日，失败的股票 30 分钟内不重试。个股详情、AI 诊断、问股工具、技术指标提醒都会调用它，相关测试要把它 monkeypatch 掉。
 - 个股新闻与公告：`get_stock_news(code)`（`src/collectors/stock_news.py`，东方财富资讯搜索和公告接口，普通 HTTP），进程内缓存 30 分钟。公告标题命中关键词时标注风险，其中立案、退市风险警示等是严重风险。「没有新闻」不算数据源失败（`is_valid` 放行空列表），也不能用数据集级的 `allow_stale`，否则会拿到别的股票的缓存。
@@ -146,6 +149,9 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
   - **入场与统计：** 次日开盘入场，统计 1/3/5 日收益、次日涨停率、每日等权组合的累计收益和最大回撤。
   - **策略权重：** 样本不少于 30 个的策略按次日平均收益相对全体的差值调整权重。
 - `DiagnosisOutcomeService`（`src/services/diagnosis_outcome.py`）对近 60 天的 AI 诊断做事后验证（只读）：以诊断行情日收盘价为基准统计之后 1/3/5 日涨跌，买入/加仓算看多、减仓/卖出/回避算看空，持有/观望不判方向；同一行情日多次诊断只算最后一次。
+- 自选股：`WatchlistService`（`src/services/watchlist.py`，`watchlist` 表）负责增删和批量导入。批量导入的表格有「代码」列表头时只读取代码列，避免把数量、金额里的 6 位数字当成代码。
+  - **决策仪表盘：** `WatchlistReportService`（`src/services/watchlist_report.py`）并发诊断每只自选股（`watchlist.workers`）。收盘后复用当天收盘后的诊断，盘中复用 30 分钟内的。结果汇总成仪表盘，存入 `watchlist_report` 并推送。
+  - **提醒与问股：** 盘中提醒和问股的 `watchlist` 工具都会读取自选股。
 - AI 问股 `StockChatSession`（`src/services/stock_chat.py`）：
   - **协议：** 每个问题最多 3 轮工具调用。LLM 用 JSON 返回 `{"tool_calls": [...]}` 或 `{"answer": ...}`，不依赖各家模型的 function calling。
   - **工具：** 工具在 `src/services/chat_tools.py`，全部只读，不能下单；股票参数可以是名称或拼音，会先经 `StockSearch` 解析。
@@ -194,6 +200,11 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
     - 资金净流出超过成交额的 5%；
     - 与 3 天内上次诊断方向相反，但评分变化不足 15 分；
     - 近 30 天公告含严重风险（立案、退市风险警示等）。
+  - **多智能体：** 由 `diagnosis.mode` 控制，见 `src/services/diagnosis_agents.py`。
+    - `standard` 和 `full` 模式下，分析员只拿到按「【标题】」拆出的部分上下文，并发调用；决策员沿用原来的提示词，外加 `DECISION_ADDENDUM`。
+    - 分析员观点冲突（看多和看空并存，或评分相差 25 分以上）时，信心最高为「中」。
+    - 代码里的默认值是 `single`，示例配置里是 `standard`，所以测试用的最小配置只调用一次 LLM。
+  - **历史校准：** 由 `diagnosis.calibration` 控制。`diagnosis_outcome.calibration_stats()` 汇总近 90 天诊断的事后准确率，进程内缓存 30 分钟，写进提示词；看多诊断的 3 日准确率低于 45%（至少 10 次）时，买入信心下调一档。
   - **测试：** 诊断前会补齐日线，并获取筹码、业绩、个股新闻和公告，这些都会联网。测试要 monkeypatch `fundamentals.fetch_chip_summary`、`EarningsCache.get`、`stock_news.get_stock_news` 和 `daily_history.ensure_daily_history`（参考 `tests/test_stock_diagnosis.py` 的 fixture）。
   - **缓存：** 结果存入 `stock_diagnosis` 表，30 分钟内复用。
   - **注入假 LLM：** 测试通过构造函数的 `llm=` 参数注入（`MarketReviewService` 也一样）。
@@ -210,7 +221,13 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
 - 模拟盘的现金和持仓只存在内存里。默认模拟盘在每次使用前（`_sync_paper_account()`）都会按 `trade_fill` 从初始资金重放一遍，所以测试或新代码要改账户状态，必须通过成交落库，直接改 broker 内存会被覆盖。
 - `RiskManager` 负责仓位限制、ST/*ST 黑名单和 `config/stock_pool.yaml` 股票池过滤。股票池规则只在 `validate_order_intent()`（下单前校验）里执行；`filter_signals()` 目前没有调用方。黑名单和股票池只对买单生效，卖单（止损止盈离场）不能被拦截。
 - 当 `min_listing_days > 0` 时，每个 `RiskManager` 实例第一次校验股票池会调用 `StockInfoCollector.refresh_if_stale()`：如果 `stock_info` 表超过一天没更新，就联网从沪深北交易所列表采集。涉及股票池的测试要 monkeypatch 掉这一步。
-- 组合风险 `PortfolioRiskService`（`src/services/portfolio_risk.py`）只读计算以下几项：
+- 实盘记账 `RealPortfolioService`（`src/services/real_portfolio.py`）只记账，不连券商、不下单。
+  - **成交流水：** 存在 `real_trade` 表，手动录入或导入交割单（`parse_trade_rows()` 按常见列名识别）。导入用 `import_key` 去重：有成交编号时按编号，否则按日期+时间+代码+方向+价格+数量+序号。
+  - **持仓：** 按移动平均成本计算，费用计入成本。
+  - **可用资金：** 用 `real_cash` 表记录的锚点，加上锚点之后的成交推算。
+  - **止损止盈：** `real_position_plan` 可以逐只覆盖止损价、目标价，没设置时按风控比例从成本计算。
+  - **使用方：** 实盘持仓（`account="real"`）会进入盘中提醒、组合风险、个股诊断和问股。
+- 组合风险 `PortfolioRiskService`（`src/services/portfolio_risk.py`，`account="paper"`/`"real"`）只读计算以下几项：
   - 总仓位与大盘环境建议仓位（`risk.market_regime_position`）的比较；
   - 个股和行业集中度，行业取最近一次涨停时的所属行业；
   - 距止损价的距离；
@@ -218,7 +235,11 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
 
 ### 推送（`src/notifier/`、`src/services/daily_report.py`）
 
-- 统一通过 `notifier.broadcast(config, title, content)` 推送到所有已启用的渠道。`enabled_channels()` 只认 `enabled: true` 且配置了 `webhook_url` 的渠道。
+- 统一通过 `notifier.broadcast(config, title, content, kind=)` 推送。
+  - **消息类型：** `kind` 取值为 `daily_report`、`alert`、`watchlist`、`chat`，按 `notifier.routes` 选择渠道；没配置路由的类型推送到全部已启用渠道。
+  - **渠道条件：** `enabled_channels(config, kind)` 只认启用且配置完整的渠道。Webhook 还是示例占位符（含 `your-`）不算完整；邮件至少要有 SMTP 服务器和收件人。
+  - **新增推送：** 新增推送时要传 `kind`，测试里替换 `broadcast`、`enabled_channels` 时要接受 `kind` 参数。
+- 渠道：企业微信、钉钉、飞书机器人和邮件（`src/notifier/mail.py`，SMTP，同时发送纯文本和 HTML）。`diagnose()` 检查配置，`test_channel()` 发送测试消息（导入测试文件时要改名，否则 pytest 会把它当成测试）。
 - 各渠道 `send()` 用 `split_by_bytes()` 按字节上限拆分消息并逐条发送：企业微信 3800、钉钉 18000、飞书 20000。
 - 飞书签名比较特殊：用「时间戳\n密钥」作为 HMAC 密钥，对空消息签名。
 - `DailyReportService.push()` 在没有任何渠道启用时直接返回，不会生成报告，也不会访问网络。
