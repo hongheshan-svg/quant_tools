@@ -623,7 +623,9 @@ class StockDetailDialog(QDialog):
 
     def _run_diagnosis(self):
         self.btn_diagnose.setEnabled(False)
-        self.diagnosis_status.setText("AI 诊断中，通常需要 10~30 秒…")
+        mode = (self.pipeline.config.get("diagnosis") or {}).get("mode", "single")
+        self.diagnosis_status.setText("AI 诊断中，分析员先各自分析、决策员再综合，通常需要 20~60 秒…" if mode in ("standard", "full")
+                                      else "AI 诊断中，通常需要 10~30 秒…")
         worker = WorkerTask(self.pipeline.diagnose_stock, self.code, True)
         worker.signals.finished.connect(self._on_diagnosis_done)
         worker.signals.error.connect(lambda detail: self._on_diagnosis_done({"code": self.code, "error": detail.splitlines()[0]}))

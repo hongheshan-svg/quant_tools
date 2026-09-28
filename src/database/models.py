@@ -91,6 +91,8 @@ class StockDaily(Base):
     turnover = Column(Float, comment="换手率 %")
     total_mv = Column(Float, comment="总市值（元）")
     circ_mv = Column(Float, comment="流通市值（元）")
+    pe = Column(Float, comment="市盈率（动态，腾讯/东方财富口径，亏损为负）")
+    pb = Column(Float, comment="市净率")
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, comment="最后更新时间")
 

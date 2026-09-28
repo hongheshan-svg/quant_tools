@@ -9,6 +9,10 @@
 - 数据质量：核心行情缺失或数据完整度 < 60% 时不给买入，置信度降为低
 - 决策稳定性：当日资金大幅净流出时不给买入；与 3 天内上次诊断方向相反（空转多）但评分变化不足 15 分时暂按观望
 - 近 30 天公告含立案调查、退市风险警示等严重风险时不给买入
+- 多智能体（diagnosis.mode = standard/full）：技术面、情报（、风险）分析员先各自给观点，决策员综合；
+  分析员有分歧时信心最高为「中」
+- 历史校准（diagnosis.calibration）：近 90 天诊断的事后准确率写进提示词；看多诊断的 3 日准确率低于 45%
+  （至少 10 次）时，买入建议的信心下调一档
 - 价格计划按最新价和涨跌幅限制校验
 结果写入 stock_diagnosis 表，同一只股票 30 分钟内重复诊断直接返回上次结果。
 """
@@ -46,6 +50,8 @@ MIN_DAILY_BARS = 20
 FLOW_OUTFLOW_RATIO = -5.0   # 资金净流出占成交额超过 5% 视为与买入矛盾
 STABILITY_DAYS = 3
 STABILITY_SCORE_DELTA = 15
+MIN_CALIBRATION_SAMPLES = 10       # 历史校准：看多诊断至少验证过 10 次才生效
+LOW_CALIBRATION_ACCURACY = 45.0    # 看多诊断 3 日准确率低于该值时下调买入信心
 BEARISH_ACTIONS = frozenset({"reduce", "sell", "avoid"})
 # 数据完整度各块权重（合计 100）
 DATA_QUALITY_WEIGHTS = {"行情": 20, "日线": 15, "技术面": 10, "资金流": 15, "筹码": 10, "大盘": 15, "资讯": 10, "业绩": 5}
@@ -75,6 +81,16 @@ SYSTEM_PROMPT = """你是一位专注 A 股短线（涨停板、连板接力、�
   "checklist": [{"item": "检查项（如主线地位/封板质量/技术形态/大盘环境/消息面）", "status": "pass/warn/fail", "note": "说明"}],
   "analysis": "综合分析（100字以内）"
 }"""
+
+
+def valuation_text(pe: float | None, pb: float | None) -> str:
+    """市盈率为负表示亏损。"""
+    parts = []
+    if pe:
+        parts.append("亏损（市盈率为负）" if pe < 0 else f"市盈率 {pe:.1f}")
+    if pb:
+        parts.append(f"市净率 {pb:.2f}")
+    return "，".join(parts)
 
 
 def _as_list(value: Any) -> list[str]:
@@ -107,13 +123,26 @@ class StockDiagnosisService:
             if cached:
                 return {**cached, "cached": True}
 
+        from src.services.diagnosis_agents import DECISION_ADDENDUM, disagreement, opinions_text, run_analysts
+
         context = self.build_context(code)
         if not context["quote"]:
             return {"code": code, "error": "行情库中没有该股票的数据"}
-        raw = self.llm.chat_json(user_message=context["text"], system_message=SYSTEM_PROMPT)
+        cfg = self.config.get("diagnosis") or {}
+        calibration = self._calibration() if cfg.get("calibration", True) else {}
+        opinions = run_analysts(self.llm, context["text"], str(cfg.get("mode", "single")))
+        conflict = disagreement(opinions)
+        message = context["text"]
+        history_line = self._calibration_line(calibration, code)
+        if history_line:
+            message += "\n" + history_line
+        if opinions:
+            message += "\n" + opinions_text(opinions, conflict)
+        raw = self.llm.chat_json(user_message=message, system_message=SYSTEM_PROMPT + (DECISION_ADDENDUM if opinions else ""))
         if not raw:
             return {"code": code, "name": context["name"], "error": "AI 未返回有效结果，请检查 AI 设置或稍后重试"}
         previous = self.latest(code, max_age_minutes=STABILITY_DAYS * 24 * 60)
+        context = {**context, "opinions": opinions, "disagreement": conflict, "calibration": calibration}
         result = self._apply_guardrails(raw, context, previous)
         self._save(result)
         return result
@@ -125,6 +154,23 @@ class StockDiagnosisService:
                 query = query.filter(StockDiagnosis.created_at >= datetime.now() - timedelta(minutes=max_age_minutes))
             row = query.order_by(StockDiagnosis.created_at.desc()).first()
             return json.loads(row.result_json) if row else None
+
+    def _calibration(self) -> dict[str, Any]:
+        try:
+            from src.services.diagnosis_outcome import calibration_stats
+
+            return calibration_stats(self.config)
+        except Exception as e:
+            logger.debug(f"读取诊断历史表现失败: {e}")
+            return {}
+
+    @staticmethod
+    def _calibration_line(calibration: dict[str, Any], code: str) -> str:
+        if not calibration:
+            return ""
+        from src.services.diagnosis_outcome import calibration_text
+
+        return calibration_text(calibration, code)
 
     def history(self, code: str, limit: int = 5) -> list[dict[str, Any]]:
         """最近几次诊断结果（新的在前）。"""
@@ -168,6 +214,7 @@ class StockDiagnosisService:
                 quote = {
                     "trade_date": b.trade_date, "close": b.close, "change_pct": b.change_pct, "turnover": b.turnover,
                     "amount_yi": round((b.amount or 0) / 1e8, 2), "circ_mv_yi": round((b.circ_mv or 0) / 1e8, 1),
+                    "pe": next((x.pe for x in bars if x.pe), None), "pb": next((x.pb for x in bars if x.pb), None),
                 }
             name = next((b.name for b in bars if b.name), "")
             recent = [f"{b.trade_date} 收{b.close} {b.change_pct:+.2f}%" for b in reversed(bars) if b.close and b.change_pct is not None]
@@ -268,6 +315,7 @@ class StockDiagnosisService:
             "flow_text": flow_text, "flow_ratio": flow_ratio, "chip": chip,
             "earnings_text": describe_earnings(earnings), "earnings_risk": earnings_risk(earnings),
             "risk_notices": risk_notices,
+            "valuation_text": valuation_text(quote.get("pe"), quote.get("pb")) if quote else "",
         }
 
     @staticmethod
@@ -282,6 +330,9 @@ class StockDiagnosisService:
             parts.append(f"换手 {quote['turnover']}%")
         if quote.get("circ_mv_yi"):
             parts.append(f"流通市值 {quote['circ_mv_yi']} 亿")
+        valuation = valuation_text(quote.get("pe"), quote.get("pb"))
+        if valuation:
+            parts.append(valuation)
         return "，".join(parts)
 
     def _position(self, code: str) -> dict[str, Any] | None:
@@ -331,6 +382,15 @@ class StockDiagnosisService:
         if action in BULLISH_ACTIONS and severe:
             guardrails.append(f"近 30 天公告含「{severe['risk']}」（{severe['date']} {severe['title'][:40]}），不建议买入，降级为观望")
             action = "watch"
+        if context.get("disagreement") and confidence == "高":
+            guardrails.append(f"分析员观点分歧（{context['disagreement']}），信心下调为中")
+            confidence = "中"
+        bullish_history = (context.get("calibration") or {}).get("看多") or {}
+        if (action in BULLISH_ACTIONS and bullish_history.get("n", 0) >= MIN_CALIBRATION_SAMPLES
+                and bullish_history.get("accuracy") is not None and bullish_history["accuracy"] < LOW_CALIBRATION_ACCURACY):
+            lowered = {"高": "中", "中": "低"}.get(confidence, "低")
+            guardrails.append(f"近 90 天看多诊断 3 日准确率仅 {bullish_history['accuracy']}%（{bullish_history['n']} 次），信心下调为{lowered}")
+            confidence = lowered
         if previous and not previous.get("error"):
             prev_action, prev_score = previous.get("action"), float(previous.get("score") or 0)
             flipped_up = action in BULLISH_ACTIONS and prev_action in BEARISH_ACTIONS
@@ -378,6 +438,10 @@ class StockDiagnosisService:
             "fund_flow": context.get("flow_text", ""),
             "chips": context.get("chip") or {},
             "earnings": context.get("earnings_text", ""),
+            "valuation": context.get("valuation_text", ""),
+            "agents": context.get("opinions") or [],
+            "disagreement": context.get("disagreement", ""),
+            "calibration": self._calibration_line(context.get("calibration") or {}, context["code"]),
         }
 
     def _save(self, result: dict[str, Any]) -> None:
@@ -416,9 +480,17 @@ def render_markdown(result: dict[str, Any]) -> str:
     lines.append(f"**大盘**：{result['market_regime']}")
     from src.collectors.fundamentals import describe_chips
 
-    for label, text in (("资金", result.get("fund_flow")), ("筹码", describe_chips(result.get("chips"))), ("业绩", result.get("earnings"))):
+    for label, text in (("资金", result.get("fund_flow")), ("筹码", describe_chips(result.get("chips"))),
+                        ("业绩", result.get("earnings")), ("估值", result.get("valuation"))):
         if text:
             lines.append(f"**{label}**：{text}")
+    agents = [a for a in result.get("agents") or [] if not a.get("error")]
+    if agents:
+        lines += ["### 分析员观点", *[f"- {a['label']}：{a['view']} {a['score']}分（信心{a['confidence']}）"
+                                    + (f"；{'；'.join(a['key_points'])}" if a["key_points"] else "") for a in agents]]
+        lines.append(f"**分歧**：{result['disagreement']}" if result.get("disagreement") else "**分歧**：观点基本一致")
+    if result.get("calibration"):
+        lines.append(result["calibration"].replace("【历史表现】", "**历史表现**："))
     if result["catalysts"]:
         lines += ["### 利好催化", *[f"- {c}" for c in result["catalysts"]]]
     if result["risks"]:

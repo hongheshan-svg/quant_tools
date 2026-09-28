@@ -233,6 +233,14 @@ screening:
   #   oversold_rebound: {enabled: false}
   strategies: {}
 
+# --- 个股 AI 诊断 ---
+diagnosis:
+  # single：一次 LLM 调用；standard：技术面、情报两位分析员先各自分析，再由决策员综合（3 次调用）；
+  # full：再加风险分析员（4 次调用）。分析员有分歧时信心最高为「中」
+  mode: standard
+  # 把近 90 天诊断的事后准确率写进提示词；看多诊断 3 日准确率低于 45%（至少 10 次）时下调买入信心
+  calibration: true
+
 # --- 自选股 ---
 # 在桌面端【自选股】页增删、批量导入（粘贴文本或 CSV/Excel）；盘中提醒也会关注自选股
 watchlist:

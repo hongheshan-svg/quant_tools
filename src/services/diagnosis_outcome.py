@@ -129,3 +129,44 @@ class DiagnosisOutcomeService:
         band_order = {label: i for i, (_, label) in enumerate(SCORE_BANDS)}
         result.sort(key=lambda r: (order[r["dimension"]], band_order.get(r["group"], 0), -r["total"]))
         return result
+
+
+# ---------- 历史校准（供 AI 诊断使用） ----------
+
+CALIBRATION_LOOKBACK_DAYS = 90
+MIN_CALIBRATION_SAMPLES = 10
+LOW_ACCURACY = 45.0
+CALIBRATION_CACHE_MINUTES = 30
+STOCK_HISTORY_LINES = 3
+_calibration_cache: dict[str, tuple[datetime, dict[str, Any]]] = {}
+
+
+def calibration_stats(config: dict, now: datetime | None = None) -> dict[str, Any]:
+    """近 90 天看多/看空诊断的 3 日方向准确率和每只股票的历史诊断结果，进程内缓存 30 分钟。
+    {"看多": {"n": 已验证数, "accuracy": %}, "看空": {...}, "details": [...]}"""
+    now = now or datetime.now()
+    db_path = config.get("database", {}).get("sqlite_path", "data/quant.db")
+    cached = _calibration_cache.get(db_path)
+    if cached and now - cached[0] < timedelta(minutes=CALIBRATION_CACHE_MINUTES):
+        return cached[1]
+    details = DiagnosisOutcomeService(config).evaluate(CALIBRATION_LOOKBACK_DAYS)["details"]
+    stats: dict[str, Any] = {"details": details}
+    for label, direction in (("看多", 1), ("看空", -1)):
+        hits = [d["hit3"] for d in details if d["direction"] == direction and d["hit3"] is not None]
+        stats[label] = {"n": len(hits), "accuracy": round(sum(hits) / len(hits) * 100, 1) if hits else None}
+    _calibration_cache[db_path] = (now, stats)
+    return stats
+
+
+def calibration_text(stats: dict[str, Any], code: str) -> str:
+    """交给 LLM 的「历史表现」一段；没有任何已验证的诊断时为空。"""
+    parts = [f"{label}诊断 {stats[label]['n']} 次，3 日方向准确率 {stats[label]['accuracy']}%"
+             for label in ("看多", "看空") if stats.get(label, {}).get("n")]
+    own = [d for d in stats.get("details", []) if d["code"] == bare_code(code) and d["r3"] is not None][:STOCK_HISTORY_LINES]
+    if own:
+        parts.append("本股最近：" + "；".join(f"{d['trade_date'][5:]} {d['action_label']}→3日{d['r3']:+.1f}%" for d in own))
+    return ("【历史表现】近 90 天 AI 诊断：" + "；".join(parts)) if parts else ""
+
+
+def reset_calibration_cache() -> None:
+    _calibration_cache.clear()

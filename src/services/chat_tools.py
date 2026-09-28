@@ -30,7 +30,7 @@ class ToolSpec:
 
 TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec("resolve_stock", "查找股票", "query: 名称/代码/拼音首字母", "按名称、代码或拼音首字母查找股票代码"),
-    ToolSpec("quote", "最新行情", "code", "最新收盘价、涨跌幅、成交额、换手率、流通市值"),
+    ToolSpec("quote", "最新行情", "code", "最新收盘价、涨跌幅、成交额、换手率、流通市值、市盈率、市净率"),
     ToolSpec("daily_bars", "日线走势", f"code, days（默认 {DEFAULT_BAR_DAYS}，最多 {MAX_BAR_DAYS}）", "最近 N 个交易日的收盘价和涨跌幅"),
     ToolSpec("technical", "技术面", "code", "均线趋势、MACD、RSI、乖离率、量比、技术信号和风险"),
     ToolSpec("fund_flow", "资金流", "code", "最近一个交易日的主力资金净流入"),
@@ -118,6 +118,11 @@ class ChatTools:
                 parts.append(f"换手 {b.turnover:.2f}%")
             if b.circ_mv:
                 parts.append(f"流通市值 {b.circ_mv / 1e8:.0f} 亿")
+            from src.services.stock_diagnosis import valuation_text
+
+            valuation = valuation_text(b.pe, b.pb)
+            if valuation:
+                parts.append(valuation)
         return "，".join(parts)
 
     def _tool_daily_bars(self, args: dict) -> str:

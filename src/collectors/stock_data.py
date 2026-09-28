@@ -46,6 +46,8 @@ MIN_EM_CODE_COUNT = 1000
 TENCENT_MIN_FIELDS = 45
 TENCENT_TOTAL_MV_INDEX = 45
 TENCENT_CIRC_MV_INDEX = 44
+TENCENT_PE_INDEX = 39
+TENCENT_PB_INDEX = 46
 NORTHBOUND_UNIT_SPLIT_THRESHOLD = 10000
 LIMIT_UP_PCT_TOLERANCE = 0.5  # 涨停价四舍五入导致实际涨幅略低于 10%/20%/30%
 
@@ -600,7 +602,7 @@ class StockDataCollector(BaseCollector):
                     # 解析腾讯行情格式: v_sz002131="51~利欧股份~002131~9.08~...~10.06~..."
                     # 字段索引: 1=名称, 3=最新价, 5=今开,
                     #   32=涨跌幅, 33=最高, 34=最低, 36=成交量(手),
-                    #   37=成交额(万), 38=换手率, 44=流通市值(亿), 45=总市值(亿)
+                    #   37=成交额(万), 38=换手率, 39=市盈率(动态), 44=流通市值(亿), 45=总市值(亿), 46=市净率
                     for line in resp.text.strip().split(";"):
                         line = line.strip()
                         if "~" not in line:
@@ -638,6 +640,8 @@ class StockDataCollector(BaseCollector):
                             "换手率": _safe_float(parts[38]),
                             "总市值": tmv_raw * 1e8 if tmv_raw else None,
                             "流通市值": cmv_raw * 1e8 if cmv_raw else None,
+                            "市盈率": _safe_float(parts[TENCENT_PE_INDEX]) if len(parts) > TENCENT_PE_INDEX else None,
+                            "市净率": _safe_float(parts[TENCENT_PB_INDEX]) if len(parts) > TENCENT_PB_INDEX else None,
                         })
                 except Exception as e:
                     logger.debug(f"腾讯行情批次异常: {e}")
@@ -715,6 +719,8 @@ class StockDataCollector(BaseCollector):
                     turnover=_safe_float(tup[col_map["换手率"]] if "换手率" in col_map else None),
                     total_mv=_safe_float(tup[col_map["总市值"]] if "总市值" in col_map else None),
                     circ_mv=_safe_float(tup[col_map["流通市值"]] if "流通市值" in col_map else None),
+                    pe=_valuation(tup[col_map["市盈率"]] if "市盈率" in col_map else None),
+                    pb=_valuation(tup[col_map["市净率"]] if "市净率" in col_map else None),
                 ))
             # 同一批次可能出现重复 code，先去重，避免唯一键冲突
             dedup_map = {}
@@ -747,7 +753,7 @@ class StockDataCollector(BaseCollector):
                     existing = existing_map.get(rec.code)
                     if existing:
                         for col in ["open", "close", "high", "low", "volume",
-                                    "amount", "change_pct", "turnover", "total_mv", "circ_mv"]:
+                                    "amount", "change_pct", "turnover", "total_mv", "circ_mv", "pe", "pb"]:
                             setattr(existing, col, getattr(rec, col))
                         existing.updated_at = _dt.now()
                         upd_count += 1
@@ -988,6 +994,12 @@ def _safe_float(val) -> float | None:
         return float(val)
     except (ValueError, TypeError):
         return None
+
+
+def _valuation(val) -> float | None:
+    """市盈率/市净率：接口用 0 或 "-" 表示没有数据。"""
+    num = _safe_float(val)
+    return num if num else None
 
 
 def _safe_int(val) -> int | None:
