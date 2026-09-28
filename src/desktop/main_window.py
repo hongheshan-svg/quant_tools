@@ -25,12 +25,14 @@ from PyQt6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSplitter,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -468,7 +470,14 @@ class StockDetailDialog(QDialog):
 
         self.summary_label = QLabel("正在加载...")
         self.summary_label.setStyleSheet("color:#8fd6ff; font-weight:600;")
-        root.addWidget(self.summary_label)
+        header = QHBoxLayout()
+        header.addWidget(self.summary_label, stretch=1)
+        if self.pipeline is not None:
+            self.btn_watch = QPushButton("加入自选")
+            self.btn_watch.clicked.connect(self._toggle_watchlist)
+            header.addWidget(self.btn_watch)
+            self._update_watch_button()
+        root.addLayout(header)
 
         self.tabs = QTabWidget()
         root.addWidget(self.tabs, stretch=1)
@@ -514,6 +523,23 @@ class StockDetailDialog(QDialog):
             self._news_tab = self._build_news_tab()
             self.tabs.addTab(self._news_tab, "新闻公告")
             self.tabs.currentChanged.connect(self._on_detail_tab_changed)
+
+    def _update_watch_button(self):
+        try:
+            self._in_watchlist = self.pipeline.watchlist_contains(self.code)
+        except Exception as e:
+            logger.debug(f"读取自选股失败: {e}")
+            self._in_watchlist = False
+        self.btn_watch.setText("移出自选" if self._in_watchlist else "加入自选")
+
+    def _toggle_watchlist(self):
+        if self._in_watchlist:
+            self.pipeline.watchlist_remove(self.code)
+        else:
+            result = self.pipeline.watchlist_add(self.code)
+            if not result["ok"]:
+                QMessageBox.information(self, "自选股", result["error"])
+        self._update_watch_button()
 
     def _backfill_history(self):
         """本地日线不足 60 根时在后台联网补齐，补齐后重新加载图表。"""
@@ -916,33 +942,37 @@ class MainWindow(QMainWindow):
         tab_news_layout.addWidget(self.table_news, stretch=1)
         self.main_tabs.addTab(tab_news, "实时资讯流")
 
-        # ---- Tab 2: AI 问股 ----
+        # ---- Tab 3: AI 问股 ----
         self.main_tabs.addTab(self._build_chat_tab(), "AI 问股")
 
-        # ---- Tab 3: 模拟交易 ----
+        # ---- Tab 4: 自选股 ----
+        self._watchlist_tab = self._build_watchlist_tab()
+        self.main_tabs.addTab(self._watchlist_tab, "自选股")
+
+        # ---- Tab 5: 模拟交易 ----
         self.main_tabs.addTab(self._build_trading_tab(), "模拟交易")
 
-        # ---- Tab 4: 信号绩效 ----
+        # ---- Tab 6: 信号绩效 ----
         self._performance_tab = self._build_performance_tab()
         self.main_tabs.addTab(self._performance_tab, "信号绩效")
 
-        # ---- Tab 5: 大盘复盘 ----
+        # ---- Tab 7: 大盘复盘 ----
         self._review_tab = self._build_review_tab()
         self.main_tabs.addTab(self._review_tab, "大盘复盘")
 
-        # ---- Tab 6: 策略选股 ----
+        # ---- Tab 8: 策略选股 ----
         self._screening_tab = self._build_screening_tab()
         self.main_tabs.addTab(self._screening_tab, "策略选股")
 
-        # ---- Tab 7: 主线分析 ----
+        # ---- Tab 9: 主线分析 ----
         self._theme_tab = self._build_theme_tab()
         self.main_tabs.addTab(self._theme_tab, "主线分析")
 
-        # ---- Tab 8: 盘中提醒 ----
+        # ---- Tab 10: 盘中提醒 ----
         self._alert_tab = self._build_alert_tab()
         self.main_tabs.addTab(self._alert_tab, "盘中提醒")
 
-        # ---- Tab 9: 数据源状态 ----
+        # ---- Tab 11: 数据源状态 ----
         self._source_tab = self._build_source_status_tab()
         self.main_tabs.addTab(self._source_tab, "数据源状态")
         self.main_tabs.currentChanged.connect(self._on_main_tab_changed)
@@ -1059,6 +1089,140 @@ class MainWindow(QMainWindow):
         worker = WorkerTask(self.pipeline.push_message, f"AI 问股：{last.question[:30]}", last.answer)
         worker.signals.finished.connect(lambda r: self._log(f"AI 问股推送结果: {r}"))
         self.thread_pool.start(worker)
+
+    def _build_watchlist_tab(self) -> QWidget:
+        """自选股：增删、批量导入、逐只 AI 诊断并推送决策仪表盘。"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 4, 0, 0)
+        bar = QHBoxLayout()
+        self.watchlist_label = QLabel("自选股：收盘后自动逐只 AI 诊断并推送决策仪表盘，盘中提醒也会关注")
+        self.watchlist_label.setStyleSheet("font-weight: 600; color: #8be9fd; padding: 2px 6px;")
+        self.watchlist_input = QLineEdit()
+        self.watchlist_input.setPlaceholderText("添加：代码 / 名称 / 拼音首字母，回车")
+        self.watchlist_input.setFixedWidth(220)
+        self.btn_watchlist_paste = QPushButton("粘贴导入")
+        self.btn_watchlist_paste.setToolTip("粘贴一段文字（如券商自选股、聊天记录），自动识别其中的股票代码和名称")
+        self.btn_watchlist_file = QPushButton("文件导入")
+        self.btn_watchlist_file.setToolTip("导入 CSV / Excel / TXT；有「代码」列表头时只读取代码列")
+        self.btn_watchlist_remove = QPushButton("删除选中")
+        self.btn_watchlist_run = QPushButton("分析全部并推送")
+        self.btn_watchlist_run.setToolTip("逐只 AI 诊断（收盘后当天已诊断过的直接复用），生成决策仪表盘并推送到已启用的渠道")
+        bar.addWidget(self.watchlist_label)
+        bar.addStretch()
+        for w in (self.watchlist_input, self.btn_watchlist_paste, self.btn_watchlist_file, self.btn_watchlist_remove, self.btn_watchlist_run):
+            bar.addWidget(w)
+        layout.addLayout(bar)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.table_watchlist = self._build_table(["代码", "名称", "最新价", "涨跌幅", "行情日", "最近诊断", "评分", "诊断时间", "一句话结论"])
+        self.table_watchlist.cellDoubleClicked.connect(self._open_watchlist_detail)
+        self.watchlist_report_view = QTextBrowser()
+        splitter.addWidget(self._wrap("自选股（双击查看个股）", self.table_watchlist))
+        splitter.addWidget(self._wrap("决策仪表盘", self.watchlist_report_view))
+        splitter.setSizes([900, 600])
+        layout.addWidget(splitter, stretch=1)
+
+        self.watchlist_input.returnPressed.connect(self._add_watchlist)
+        self.btn_watchlist_paste.clicked.connect(self._paste_watchlist)
+        self.btn_watchlist_file.clicked.connect(self._import_watchlist_file)
+        self.btn_watchlist_remove.clicked.connect(self._remove_watchlist)
+        self.btn_watchlist_run.clicked.connect(self._run_watchlist_report)
+        self._watchlist_rows: list[dict] = []
+        return tab
+
+    def _refresh_watchlist(self):
+        worker = WorkerTask(lambda: {"rows": self.pipeline.watchlist_overview(), "report": self.pipeline.latest_watchlist_report()})
+        worker.signals.finished.connect(self._on_watchlist_ready)
+        worker.signals.error.connect(lambda detail: self._log(f"自选股刷新异常: {detail}"))
+        self.thread_pool.start(worker)
+
+    def _on_watchlist_ready(self, data: dict):
+        self._watchlist_rows = data.get("rows") or []
+        self.table_watchlist.setRowCount(len(self._watchlist_rows))
+        for i, r in enumerate(self._watchlist_rows):
+            diag = r.get("diagnosis") or {}
+            values = [r["code"], r["name"], "--" if r["close"] is None else f"{r['close']:.2f}", "", r["trade_date"],
+                      diag.get("action_label", "未诊断"), diag.get("score", ""), diag.get("created_at", ""), diag.get("one_sentence", "")]
+            for col, value in enumerate(values):
+                self.table_watchlist.setItem(i, col, _item(value))
+            self.table_watchlist.setItem(i, 3, self._pct_item(r["change_pct"]))
+            color = {"buy": "#ff5555", "add": "#ff5555", "sell": "#50fa7b", "avoid": "#50fa7b", "reduce": "#50fa7b"}.get(diag.get("action"))
+            if color:
+                self.table_watchlist.item(i, 5).setForeground(QColor(color))
+        report = data.get("report")
+        if report:
+            self.watchlist_report_view.setMarkdown(report["markdown"])
+        elif not self._watchlist_rows:
+            self.watchlist_report_view.setMarkdown("还没有自选股。在上方输入代码、名称或拼音首字母添加，或用「粘贴导入」「文件导入」批量添加。")
+        self.watchlist_label.setText(f"自选股 {len(self._watchlist_rows)} 只" + (f"｜最近仪表盘 {report['created_at']}" if report else ""))
+
+    def _add_watchlist(self):
+        text = self.watchlist_input.text().strip()
+        if not text:
+            return
+        result = self.pipeline.watchlist_add(text)
+        if result["ok"]:
+            self.watchlist_input.clear()
+            self._refresh_watchlist()
+        else:
+            QMessageBox.information(self, "自选股", result["error"])
+
+    def _show_import_result(self, result: dict):
+        lines = [f"新增 {len(result['added'])} 只" + (f"：{'、'.join(result['added'][:20])}" if result["added"] else "")]
+        if result["existing"]:
+            lines.append(f"已存在 {len(result['existing'])} 只")
+        if result["unknown"]:
+            lines.append(f"无法识别：{'、'.join(result['unknown'][:20])}")
+        if result["over_limit"]:
+            lines.append(f"超出上限未添加 {len(result['over_limit'])} 只")
+        QMessageBox.information(self, "批量导入", "\n".join(lines))
+        self._refresh_watchlist()
+
+    def _paste_watchlist(self):
+        text, ok = QInputDialog.getMultiLineText(self, "粘贴导入", "粘贴包含股票代码或名称的文字：")
+        if ok and text.strip():
+            self._show_import_result(self.pipeline.watchlist_import(text=text))
+
+    def _import_watchlist_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "导入自选股", "", "表格或文本 (*.csv *.xlsx *.xls *.txt)")
+        if not path:
+            return
+        try:
+            self._show_import_result(self.pipeline.watchlist_import(path=path))
+        except Exception as e:
+            QMessageBox.warning(self, "批量导入", f"读取文件失败：{e}")
+
+    def _remove_watchlist(self):
+        row = self.table_watchlist.currentRow()
+        if 0 <= row < len(self._watchlist_rows):
+            self.pipeline.watchlist_remove(self._watchlist_rows[row]["code"])
+            self._refresh_watchlist()
+
+    def _open_watchlist_detail(self, row: int, _column: int):
+        if 0 <= row < len(self._watchlist_rows):
+            r = self._watchlist_rows[row]
+            self._show_stock_dialog(r["code"], r["name"])
+            self._refresh_watchlist()
+
+    def _run_watchlist_report(self):
+        self.btn_watchlist_run.setEnabled(False)
+        self.watchlist_label.setText("自选股逐只诊断中…")
+        worker = WorkerTask(self.pipeline.watchlist_report)
+        worker.kwargs["progress"] = worker.signals.progress.emit
+        worker.signals.progress.connect(lambda done, total: self.watchlist_label.setText(f"自选股逐只诊断中 {done}/{total}…"))
+        worker.signals.finished.connect(self._on_watchlist_report_done)
+        worker.signals.error.connect(lambda detail: self._on_watchlist_report_done({"error": detail.splitlines()[0]}))
+        self.thread_pool.start(worker)
+
+    def _on_watchlist_report_done(self, result: dict):
+        self.btn_watchlist_run.setEnabled(True)
+        if result.get("error"):
+            QMessageBox.information(self, "自选股", result["error"])
+        else:
+            self._log(f"自选股决策仪表盘：完成 {result['done']}/{result['total']}，"
+                      + ("已推送" if result["pushed"] else "未推送（没有启用推送渠道或推送失败）"))
+        self._refresh_watchlist()
 
     def _build_trading_tab(self) -> QWidget:
         """模拟交易：账户概览、订单（确认/撤单）、持仓。"""
@@ -2153,6 +2317,8 @@ class MainWindow(QMainWindow):
             self._refresh_performance()
         elif widget is self._review_tab:
             self._refresh_review()
+        elif widget is self._watchlist_tab:
+            self._refresh_watchlist()
         elif widget is self._screening_tab:
             self._refresh_screening()
         elif widget is self._theme_tab:

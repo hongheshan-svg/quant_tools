@@ -244,6 +244,20 @@ def _run_daily_report(config: dict):
         logger.error(f"每日报告推送异常: {e}")
 
 
+def _run_watchlist_report(config: dict):
+    """自选股决策仪表盘：逐只 AI 诊断并推送。"""
+    if _skip_non_trade_day(config, "自选股决策仪表盘"):
+        return
+    if not config.get("watchlist", {}).get("daily_report", True):
+        return
+    from src.services.watchlist_report import WatchlistReportService
+
+    try:
+        WatchlistReportService(config).run()
+    except Exception as e:
+        logger.error(f"自选股决策仪表盘任务异常: {e}")
+
+
 def _run_self_learning(config: dict):
     """每日自学习任务。"""
     if _skip_non_trade_day(config, "系统自学习"):
@@ -336,6 +350,17 @@ def start_scheduler(config: dict):
         args=[config],
         id="daily_report",
         name="每日报告推送",
+    )
+
+    # 自选股决策仪表盘（16:30，大盘复盘和日报之后）
+    watchlist_time = sched_cfg.get("watchlist_report_time", "16:30")
+    hour, minute = watchlist_time.split(":")
+    scheduler.add_job(
+        _run_watchlist_report,
+        trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
+        args=[config],
+        id="watchlist_report",
+        name="自选股决策仪表盘",
     )
 
     # 每日自学习（16:20）

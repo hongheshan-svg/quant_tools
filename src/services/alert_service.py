@@ -1,7 +1,7 @@
 """
 盘中提醒（参考 daily_stock_analysis 的实时告警中心 EventMonitor）
 
-关注范围：今日交易信号与 AI 预测、模拟盘持仓、alerts.watchlist 中的股票。
+关注范围：今日交易信号与 AI 预测、模拟盘持仓、自选股（watchlist 表）和 alerts.watchlist 中的股票。
 每次行情采集后在交易时段内检查（用数据库中当日最新行情）：
 - limit_up    封涨停（每只每天提醒一次）
 - limit_open  炸板：上次检查时在涨停价，现在打开
@@ -132,6 +132,13 @@ class AlertService:
             watch.setdefault(bare_code(pos["code"]), pos.get("name", ""))
         for code in [*self.extra_watchlist, *(bare_code(str(r["code"])) for r in self.rules)]:
             watch.setdefault(code, "")
+        try:
+            from src.services.watchlist import WatchlistService
+
+            for item in WatchlistService(self.config).list():
+                watch.setdefault(item["code"], item["name"])
+        except Exception as e:
+            logger.debug(f"读取自选股失败: {e}")
         return watch
 
     def _positions(self) -> list[dict[str, Any]]:

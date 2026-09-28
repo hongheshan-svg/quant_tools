@@ -126,6 +126,15 @@ class StockDiagnosisService:
             row = query.order_by(StockDiagnosis.created_at.desc()).first()
             return json.loads(row.result_json) if row else None
 
+    def history(self, code: str, limit: int = 5) -> list[dict[str, Any]]:
+        """最近几次诊断结果（新的在前）。"""
+        with get_db_session(self.db_path) as session:
+            rows = (
+                session.query(StockDiagnosis.result_json).filter(StockDiagnosis.code == bare_code(code))
+                .order_by(StockDiagnosis.created_at.desc(), StockDiagnosis.id.desc()).limit(limit).all()
+            )
+        return [json.loads(r) for (r,) in rows]
+
     # ---------- 上下文 ----------
 
     def build_context(self, code: str) -> dict[str, Any]:

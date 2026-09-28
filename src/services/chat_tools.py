@@ -43,6 +43,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec("screening", "策略选股", "code（可选）", "最近一次全市场策略选股结果；给 code 时说明该股是否入选及理由"),
     ToolSpec("position", "模拟盘持仓", "code（可选）", "模拟盘持仓、成本、止损价和目标价"),
     ToolSpec("diagnosis", "历史诊断", "code", "该股最近一次 AI 诊断的结论和评分"),
+    ToolSpec("watchlist", "自选股", "无", "自选股列表、最新涨跌和每只最近一次 AI 诊断结论"),
 )
 TOOL_LABELS = {t.name: t.label for t in TOOL_SPECS}
 
@@ -248,3 +249,15 @@ class ChatTools:
             return f"{name}({code}) 还没有 AI 诊断记录"
         return (f"{result['name']}({code}) {result['created_at']} 诊断：{result['action_label']}，评分 {result['score']}；"
                 f"{result.get('one_sentence', '')}" + (f"；护栏：{'；'.join(result['guardrails'])}" if result.get("guardrails") else ""))
+
+    def _tool_watchlist(self, args: dict) -> str:
+        from src.services.watchlist import WatchlistService
+
+        rows = WatchlistService(self.config).overview()
+        if not rows:
+            return "自选股为空"
+        return "自选股：" + "；".join(
+            f"{r['name']}({r['code']}) " + (f"{r['close']}（{r['change_pct'] or 0:+.2f}%）" if r["close"] else "无行情")
+            + (f" 诊断：{r['diagnosis']['action_label']} {r['diagnosis']['score']}分（{r['diagnosis']['created_at']}）" if r["diagnosis"] else " 未诊断")
+            for r in rows
+        )

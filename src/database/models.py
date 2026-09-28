@@ -233,6 +233,36 @@ class AlertRecord(Base):
     )
 
 
+class Watchlist(Base):
+    """自选股（收盘后逐只 AI 诊断并推送决策仪表盘，盘中提醒也会关注）"""
+    __tablename__ = "watchlist"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, comment="股票代码（6位）")
+    name = Column(String(20), comment="股票名称")
+    note = Column(String(200), comment="备注")
+    added_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index("idx_watchlist_code", "code", unique=True),
+    )
+
+
+class WatchlistReport(Base):
+    """自选股决策仪表盘（每个交易日一份，重新生成会覆盖）"""
+    __tablename__ = "watchlist_report"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    trade_date = Column(String(10), nullable=False, comment="生成日期")
+    markdown = Column(Text, comment="仪表盘正文（markdown）")
+    summary_json = Column(Text, comment="各股票结论 JSON")
+    created_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index("idx_watchlist_report_date", "trade_date", unique=True),
+    )
+
+
 class StockDiagnosis(Base):
     """个股 AI 诊断结果（决策仪表盘 JSON）"""
     __tablename__ = "stock_diagnosis"

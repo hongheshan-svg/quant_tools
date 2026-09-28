@@ -74,6 +74,8 @@ scheduler:
   self_learning_time: "16:20"
   # 每日报告推送时间 (HH:MM)，需在 notifier 中启用至少一个渠道
   daily_report_time: "16:10"
+  # 自选股决策仪表盘（逐只 AI 诊断后推送，见 watchlist）
+  watchlist_report_time: "16:30"
 
 # --- 交易时间配置 ---
 trading:
@@ -231,6 +233,13 @@ screening:
   #   oversold_rebound: {enabled: false}
   strategies: {}
 
+# --- 自选股 ---
+# 在桌面端【自选股】页增删、批量导入（粘贴文本或 CSV/Excel）；盘中提醒也会关注自选股
+watchlist:
+  daily_report: true       # 收盘后（scheduler.watchlist_report_time）逐只 AI 诊断，推送决策仪表盘
+  max_stocks: 50           # 自选股上限（每只每天一次 LLM 调用）
+  workers: 3               # 同时诊断的股票数
+
 # --- LLM 大盘复盘 ---
 # 按趋势结构、资金情绪、主线板块复盘，给出次日姿态（不会比量化大盘环境更激进）、仓位、关注与回避方向
 # 定时任务在每日报告推送前生成并写进日报；桌面端「大盘复盘」页可手动生成
@@ -238,13 +247,13 @@ market_review:
   enabled: true
 
 # --- 盘中提醒 ---
-# 交易时段内每次采集行情后检查：今日信号股、模拟盘持仓、watchlist 中的股票
+# 交易时段内每次采集行情后检查：今日信号股、模拟盘持仓、自选股，以及下面 watchlist 中的股票
 # 内置提醒：封涨停、炸板、持仓跌破止损（紧急）、达到目标价、大跌；推送渠道见 notifier
 alerts:
   enabled: true
   cooldown_minutes: 30     # 同一提醒的冷却时间（封涨停每只每天只提醒一次）
   big_drop_pct: -7         # 跌幅达到该值提醒
-  watchlist: []            # 额外关注的股票代码，如 ["600519", "300750"]（加引号）
+  watchlist: []            # 额外关注的股票代码，如 ["600519", "300750"]（加引号；一般在桌面端【自选股】页添加即可）
   # 自定义规则：
   #   - {code: "600519", type: price_cross, direction: above, price: 1800}   # 价格上破/下破（above/below）
   #   - {code: "300750", type: change_pct, direction: down, change_pct: 5}  # 涨跌幅达到（up/down）

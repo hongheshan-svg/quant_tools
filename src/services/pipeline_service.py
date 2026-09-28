@@ -81,6 +81,46 @@ class PipelineService:
             logger.error(f"每日报告推送异常: {e}")
             return {"pushed": False, "error": str(e)}
 
+    # ---- 自选股 ----
+
+    def watchlist_overview(self) -> list[dict[str, Any]]:
+        from src.services.watchlist import WatchlistService
+
+        return WatchlistService(self.config).overview()
+
+    def watchlist_add(self, text: str) -> dict[str, Any]:
+        from src.services.watchlist import WatchlistService
+
+        return WatchlistService(self.config).add(text)
+
+    def watchlist_remove(self, code: str) -> bool:
+        from src.services.watchlist import WatchlistService
+
+        return WatchlistService(self.config).remove(code)
+
+    def watchlist_contains(self, code: str) -> bool:
+        from src.services.watchlist import WatchlistService
+
+        return WatchlistService(self.config).contains(code)
+
+    def watchlist_import(self, text: str = "", path: str = "") -> dict[str, list[str]]:
+        """批量导入：粘贴的文本或 CSV / Excel 文件。"""
+        from src.services.watchlist import WatchlistService
+
+        service = WatchlistService(self.config)
+        return service.import_file(path) if path else service.import_text(text)
+
+    def watchlist_report(self, push: bool = True, progress=None) -> dict[str, Any]:
+        """逐只 AI 诊断自选股，生成并推送决策仪表盘。"""
+        from src.services.watchlist_report import WatchlistReportService
+
+        return WatchlistReportService(self.config).run(push=push, progress=progress)
+
+    def latest_watchlist_report(self) -> dict[str, Any] | None:
+        from src.services.watchlist_report import WatchlistReportService
+
+        return WatchlistReportService(self.config).latest()
+
     # ---- 个股查询 ----
 
     def search_stocks(self, text: str, limit: int = 20) -> list[dict[str, Any]]:
