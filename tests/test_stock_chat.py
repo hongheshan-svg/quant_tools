@@ -136,8 +136,7 @@ def test_long_tool_result_is_truncated(tools, monkeypatch):
 
 
 def test_render_chat_markdown():
-    pytest.importorskip("PyQt6.QtWidgets")
-    from src.desktop.main_window import render_chat_markdown
+    from src.desktop.markdown_render import render_chat_markdown
     from src.services.stock_chat import ChatTurn
 
     assert "可以这样问" in render_chat_markdown([])

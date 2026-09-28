@@ -217,8 +217,7 @@ def test_name_initials():
 
 
 def test_render_news_markdown():
-    pytest.importorskip("PyQt6.QtWidgets")
-    from src.desktop.main_window import render_news_markdown
+    from src.desktop.markdown_render import render_news_markdown
 
     text = render_news_markdown({"news": [], "notices": [
         {"date": "2026-09-20", "title": "关于立案告知书的公告", "url": "http://x", "source": "", "risk": "立案", "severe": True},
