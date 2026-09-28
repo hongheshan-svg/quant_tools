@@ -12,6 +12,8 @@ from dataclasses import dataclass, field
 
 from loguru import logger
 
+from src.analyzers.indicators import ema as _ema
+from src.analyzers.indicators import rsi as _rsi
 from src.database.db import get_db_session
 from src.database.models import StockDaily
 from src.utils.stock_code import code_candidates
@@ -151,15 +153,6 @@ def _analyze_trend(closes: list[float], result: TechnicalAnalysis) -> float:
     return 10.0
 
 
-def _ema(values: list[float], span: int) -> list[float]:
-    k = 2 / (span + 1)
-    out, prev = [], values[0]
-    for v in values:
-        prev = v * k + prev * (1 - k)
-        out.append(prev)
-    return out
-
-
 def _analyze_macd(closes: list[float], result: TechnicalAnalysis) -> float:
     """MACD(12,26,9)，满分 15；数据不足时给中性 7 分。"""
     if len(closes) < MIN_MACD_RECORDS:
@@ -190,21 +183,6 @@ def _analyze_macd(closes: list[float], result: TechnicalAnalysis) -> float:
         return 6.0
     result.macd = "MACD空头"
     return 3.0
-
-
-def _rsi(closes: list[float], period: int) -> float | None:
-    """Wilder 平滑 RSI。"""
-    if len(closes) <= period:
-        return None
-    diffs = [b - a for a, b in zip(closes[:-1], closes[1:])]
-    avg_gain = sum(max(d, 0) for d in diffs[:period]) / period
-    avg_loss = sum(max(-d, 0) for d in diffs[:period]) / period
-    for d in diffs[period:]:
-        avg_gain = (avg_gain * (period - 1) + max(d, 0)) / period
-        avg_loss = (avg_loss * (period - 1) + max(-d, 0)) / period
-    if avg_loss == 0:
-        return 100.0
-    return 100 - 100 / (1 + avg_gain / avg_loss)
 
 
 def _analyze_rsi(closes: list[float], result: TechnicalAnalysis) -> float:

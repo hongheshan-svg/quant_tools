@@ -229,6 +229,13 @@ class PipelineService:
         with self._execution_lock:
             return self.execution.cancel_order(order_id, operator="desktop")
 
+    def portfolio_risk(self) -> dict[str, Any]:
+        """模拟盘组合风险：总仓位与大盘环境、个股和行业集中度、止损距离、净值回撤。"""
+        from src.services.portfolio_risk import PortfolioRiskService
+
+        with self._execution_lock:
+            return PortfolioRiskService(self.config, execution=self.execution).report()
+
     def trading_snapshot(self) -> dict[str, Any]:
         with self._execution_lock:
             return self.execution.get_trading_snapshot()

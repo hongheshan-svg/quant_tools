@@ -1007,6 +1007,24 @@ class MainWindow(QMainWindow):
         tab_layout.addWidget(self._wrap("订单（选中后可确认下单或撤单）", self.table_orders), stretch=3)
         tab_layout.addWidget(self._wrap("持仓", self.table_positions), stretch=2)
 
+        risk_box = QGroupBox("组合风险")
+        risk_layout = QVBoxLayout(risk_box)
+        self.risk_summary_label = QLabel("组合风险：刷新后计算")
+        self.risk_summary_label.setWordWrap(True)
+        self.risk_summary_label.setToolTip(
+            "总仓位与大盘环境建议仓位（risk.market_regime_position）比较；单只超过 portfolio_risk.single_max_pct、"
+            "同一行业超过 sector_max_pct、距止损不足 near_stop_pct 时提示。\n"
+            "行业取股票最近一次涨停时的所属行业；回撤按成交记录和每日收盘价重放账户净值计算。"
+        )
+        self.risk_warning_label = QLabel("")
+        self.risk_warning_label.setWordWrap(True)
+        self.risk_warning_label.setStyleSheet("color: #ff5555; font-weight: 600;")
+        self.table_risk = self._build_table(["代码", "名称", "行业", "占总资产", "浮动盈亏", "止损价", "距止损", "状态"])
+        risk_layout.addWidget(self.risk_summary_label)
+        risk_layout.addWidget(self.risk_warning_label)
+        risk_layout.addWidget(self.table_risk)
+        tab_layout.addWidget(risk_box, stretch=2)
+
         self._trading_orders: list[dict] = []
         self._trading_refresh_inflight = False
         return tab
@@ -1328,8 +1346,9 @@ class MainWindow(QMainWindow):
         tab_layout.setContentsMargins(0, 4, 0, 0)
         label = QLabel("盘中提醒：交易时段内每次采集后检查今日信号股、模拟盘持仓和 alerts 配置中的股票")
         label.setStyleSheet("font-weight: 600; color: #8be9fd; padding: 2px 6px;")
-        label.setToolTip("类型：封涨停、炸板、跌破止损（紧急）、达到目标价、大跌、价格突破、涨跌幅、放量。\n"
-                         "同一提醒在冷却期内不重复；免打扰时段只推送紧急提醒。")
+        label.setToolTip("类型：封涨停、炸板、跌破止损（紧急）、接近止损、达到目标价、大跌、价格突破、涨跌幅、放量、\n"
+                         "均线突破、MACD/KDJ 金叉死叉、RSI 阈值、大盘环境降档或评分明显下滑。\n"
+                         "同一提醒在冷却期内不重复（指标交叉、接近止损、大盘转弱每天一次）；免打扰时段只推送紧急提醒。")
         tab_layout.addWidget(label)
         self.table_alerts = self._build_table(["时间", "代码", "名称", "类型", "级别", "内容", "推送"])
         tab_layout.addWidget(self.table_alerts, stretch=1)
@@ -1950,12 +1969,45 @@ class MainWindow(QMainWindow):
         worker.signals.error.connect(self._on_trading_snapshot_error)
         self.thread_pool.start(worker)
 
+    def _refresh_portfolio_risk(self):
+        worker = WorkerTask(self.pipeline.portfolio_risk)
+        worker.signals.finished.connect(self._on_portfolio_risk)
+        worker.signals.error.connect(lambda detail: self._log(f"组合风险计算异常: {detail}"))
+        self.thread_pool.start(worker)
+
+    def _on_portfolio_risk(self, report: dict):
+        dd = report.get("drawdown") or {}
+        suggested = report.get("suggested_exposure")
+        sectors = "、".join(f"{s['sector']} {s['weight']:.0f}%" for s in (report.get("sectors") or [])[:5])
+        self.risk_summary_label.setText(
+            f"总仓位 {report.get('exposure', 0):.0f}%"
+            + (f"（大盘「{report['regime']}」建议不超过 {suggested:.0f}%）" if suggested is not None else "")
+            + f"  |  最大回撤 {dd.get('max_drawdown', 0):.2f}%" + (f"（{dd['max_drawdown_date']}）" if dd.get("max_drawdown_date") else "")
+            + f"  |  当前回撤 {dd.get('current_drawdown', 0):.2f}%"
+            + (f"  |  行业分布：{sectors}" if sectors else "")
+        )
+        warnings = report.get("warnings") or []
+        self.risk_warning_label.setText("⚠ " + "；".join(warnings) if warnings else "")
+        rows = report.get("positions") or []
+        self.table_risk.setRowCount(len(rows))
+        status_color = {"已跌破止损": "#ff5555", "接近止损": "#ffb86c"}
+        for i, r in enumerate(rows):
+            values = [r["code"], r["name"], r["sector"], f"{r['weight']:.1f}%",
+                      "--" if r["pnl_pct"] is None else f"{r['pnl_pct']:+.2f}%",
+                      f"{r['stop_loss']:.2f}" if r["stop_loss"] else "--",
+                      "--" if r["stop_gap"] is None else f"{r['stop_gap']:+.2f}%", r["status"] or "正常"]
+            for col, value in enumerate(values):
+                self.table_risk.setItem(i, col, _item(value))
+            if r["status"]:
+                self.table_risk.item(i, 7).setForeground(QColor(status_color.get(r["status"], "#dbe7ff")))
+
     def _on_trading_snapshot_error(self, detail: str):
         self._trading_refresh_inflight = False
         self._log(f"模拟交易刷新异常: {detail}")
 
     def _on_trading_snapshot(self, snapshot: dict):
         self._trading_refresh_inflight = False
+        self._refresh_portfolio_risk()
         account = snapshot.get("account", {})
         self.trading_account_label.setText(
             f"模拟盘账户  总资产 {account.get('total_assets', 0):,.2f}  |  "

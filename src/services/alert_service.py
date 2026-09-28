@@ -8,7 +8,12 @@
 - stop_loss   持仓跌破止损价（critical，免打扰时段也推送）
 - take_profit 持仓达到目标价
 - big_drop    跌幅超过 alerts.big_drop_pct
-- 自定义规则 alerts.rules：price_cross（价格上破/下破）、change_pct（涨跌幅达到）、volume_spike（成交量达到近 20 日均量的倍数）
+- near_stop   持仓现价距止损价不到 alerts.near_stop_pct（每只每天一次）
+- 自定义规则 alerts.rules：price_cross（价格上破/下破）、change_pct（涨跌幅达到）、volume_spike（成交量达到近 20 日均量的倍数）、
+  技术指标 ma_cross（价格上穿/下穿 N 日均线）、macd_cross / kdj_cross（金叉/死叉）、rsi（RSI 上穿/下穿阈值），
+  指标用日线计算（当天的行即最新价），本地日线不足时先联网补齐；指标交叉每条规则每天只提醒一次
+- regime_down 大盘环境降档（如均衡→防守，冰点为 critical）；regime_score_drop 大盘评分比前一交易日下降 alerts.regime_score_drop 分以上；
+  两天都不用实时指数缓存，按同一口径比较，每天各提醒一次
 同一提醒在冷却期内不重复；免打扰时段只推送 critical；同一批提醒合并为一条消息推送。
 """
 
@@ -24,6 +29,7 @@ from loguru import logger
 from src import trading_calendar
 from src.config_loader import load_config
 from src.database.db import get_db_session
+from src.analyzers.indicators import crossed, kdj, macd, rsi, sma
 from src.database.models import AlertRecord, StockDaily, TradeSignal
 from src.notifier import broadcast, enabled_channels
 from src.notifier.noise import NoiseFilter
@@ -32,11 +38,19 @@ from src.utils.stock_code import bare_code, code_candidates, daily_limit_pct
 LIMIT_TOLERANCE = 0.2       # 涨幅距涨停幅度 0.2 个百分点以内视为封板
 LIMIT_OPEN_DROP = 0.5       # 从涨停价回落超过 0.5 个百分点视为炸板
 VOLUME_AVG_DAYS = 20
+INDICATOR_BARS = 120
+MIN_INDICATOR_BARS = {"ma_cross": 0, "macd_cross": 35, "kdj_cross": 10, "rsi": 0}   # 均线和 RSI 按周期计算
 SEVERITY_ICON = {"critical": "🔴", "warning": "🟠", "info": "🔵"}
 TYPE_LABELS = {
     "limit_up": "封涨停", "limit_open": "炸板", "stop_loss": "跌破止损", "take_profit": "达到目标价",
     "big_drop": "大跌", "price_cross": "价格突破", "change_pct": "涨跌幅", "volume_spike": "放量",
+    "near_stop": "接近止损", "ma_cross": "均线突破", "macd_cross": "MACD交叉", "kdj_cross": "KDJ交叉", "rsi": "RSI",
+    "regime_down": "大盘转弱", "regime_score_drop": "大盘评分下滑",
 }
+INDICATOR_TYPES = ("ma_cross", "macd_cross", "kdj_cross", "rsi")
+DAILY_ONCE_TYPES = {"limit_up", "near_stop", "regime_down", "regime_score_drop", *INDICATOR_TYPES}
+REGIME_LEVELS = {"冰点": 0, "防守": 1, "均衡": 2, "进攻": 3}
+MARKET_CODE = "market"
 
 _noise = NoiseFilter()
 _state_lock = threading.Lock()
@@ -69,6 +83,9 @@ class AlertService:
         self.big_drop_pct = float(cfg.get("big_drop_pct", -7))
         self.extra_watchlist = [bare_code(str(c)) for c in cfg.get("watchlist") or []]
         self.rules = [r for r in cfg.get("rules") or [] if isinstance(r, dict) and r.get("code")]
+        self.near_stop_pct = float(cfg.get("near_stop_pct", 2))
+        self.market_alerts = bool(cfg.get("market_regime", True))
+        self.regime_score_drop = float(cfg.get("regime_score_drop", 15))
         _noise.cooldown = timedelta(minutes=float(cfg.get("cooldown_minutes", 30)))
         _noise.quiet_hours = (self.config.get("notifier", {}) or {}).get("quiet_hours") or []
 
@@ -82,7 +99,7 @@ class AlertService:
         can_push = bool(enabled_channels(self.config))
         fresh, to_push = [], []
         for ev in self.evaluate():
-            cooldown = timedelta(days=1) if ev.alert_type == "limit_up" else None
+            cooldown = timedelta(days=1) if ev.alert_type in DAILY_ONCE_TYPES else None
             reason = _noise.check(ev.key, ev.severity, now, cooldown)
             if reason == "冷却中":
                 continue
@@ -133,12 +150,12 @@ class AlertService:
             if _state_date != today:
                 _limit_state.clear()
                 _state_date = today
+        events: list[AlertEvent] = self._regime_events()
         positions = self._positions()
         watch = self.watchlist(positions)
         if not watch:
-            return []
+            return events
         quotes = self._latest_quotes(list(watch), today.strftime("%Y-%m-%d"))
-        events: list[AlertEvent] = []
         for code, q in quotes.items():
             name = watch.get(code) or q["name"]
             events.extend(self._limit_events(code, name, q))
@@ -154,6 +171,11 @@ class AlertService:
             if q["price"] <= pos["stop_loss"]:
                 events.append(AlertEvent(code, name, "stop_loss", "critical",
                                          f"持仓 {name}({code}) 跌破止损价 {pos['stop_loss']:.2f}，现价 {q['price']}，请确认卖出订单", q["price"], pos["stop_loss"]))
+            elif pos["stop_loss"] and q["price"] <= pos["stop_loss"] * (1 + self.near_stop_pct / 100):
+                gap = (q["price"] / pos["stop_loss"] - 1) * 100
+                events.append(AlertEvent(code, name, "near_stop", "warning",
+                                         f"持仓 {name}({code}) 接近止损价 {pos['stop_loss']:.2f}（还差 {gap:.1f}%），现价 {q['price']}",
+                                         q["price"], pos["stop_loss"]))
             elif q["price"] >= pos["target_price"]:
                 events.append(AlertEvent(code, name, "take_profit", "info",
                                          f"持仓 {name}({code}) 达到目标价 {pos['target_price']:.2f}，现价 {q['price']}", q["price"], pos["target_price"]))
@@ -212,11 +234,97 @@ class AlertService:
                 hit = ratio is not None and ratio >= multiplier
                 text = f"{name}({code}) 放量，成交量为近 {VOLUME_AVG_DAYS} 日均量的 {ratio or 0:.1f} 倍"
                 observed, threshold = ratio, multiplier
+            elif kind in INDICATOR_TYPES:
+                outcome = self._indicator_check(code, name, rule, q["price"])
+                if outcome is None:
+                    continue
+                hit, text, observed, threshold = outcome
             else:
                 continue
             if hit:
                 events.append(AlertEvent(code, name, kind, severity, text, observed, threshold, rule_id))
         return events
+
+    def _daily_bars(self, code: str, need: int) -> list:
+        """按日期升序的日线（含当天实时行），不足 need 根时先联网补齐一次。"""
+        def load() -> list:
+            with get_db_session(self.db_path) as session:
+                rows = (
+                    session.query(StockDaily.trade_date, StockDaily.high, StockDaily.low, StockDaily.close)
+                    .filter(StockDaily.code.in_(code_candidates(code)), StockDaily.close > 0)
+                    .order_by(StockDaily.trade_date.desc()).limit(INDICATOR_BARS * 2).all()
+                )
+            by_date = {r.trade_date: r for r in rows}
+            return [by_date[d] for d in sorted(trading_calendar.trade_days_only(by_date))][-INDICATOR_BARS:]
+
+        bars = load()
+        if len(bars) < need:
+            from src.collectors.daily_history import ensure_daily_history
+
+            if ensure_daily_history(code, self.db_path):
+                bars = load()
+        return bars
+
+    def _indicator_check(self, code: str, name: str, rule: dict, price: float) -> tuple[bool, str, float, float] | None:
+        """技术指标规则：(是否触发, 提醒文字, 观测值, 阈值)；日线不足时返回 None。"""
+        kind = rule["type"]
+        period = int(rule.get("period", 6 if kind == "rsi" else 20))
+        need = max(MIN_INDICATOR_BARS[kind], period + 2)
+        bars = self._daily_bars(code, need)
+        if len(bars) < need:
+            logger.debug(f"技术指标提醒 {code} {kind}：日线 {len(bars)} 根，不足 {need} 根")
+            return None
+        closes = [b.close for b in bars]
+        if kind == "ma_cross":
+            up = rule.get("direction", "above") == "above"
+            ma_now, ma_prev = sma(closes, period), sma(closes[:-1], period)
+            hit = crossed(closes[-2], ma_prev, closes[-1], ma_now, "up" if up else "down")
+            return hit, f"{name}({code}) 价格{'上穿' if up else '下穿'} MA{period}（{ma_now:.2f}），现价 {price}", price, round(ma_now, 2)
+        if kind == "rsi":
+            up = rule.get("direction", "above") == "above"
+            level = float(rule.get("value", 80 if up else 20))
+            now, prev = rsi(closes, period), rsi(closes[:-1], period)
+            hit = crossed(prev, level, now, level, "up" if up else "down")
+            return hit, f"{name}({code}) RSI{period} {'上穿' if up else '下穿'} {level:g}（{now:.1f}）", round(now, 1), level
+        golden = rule.get("direction", "golden") == "golden"
+        label = "金叉" if golden else "死叉"
+        if kind == "macd_cross":
+            dif, dea = macd(closes)
+            hit = crossed(dif[-2], dea[-2], dif[-1], dea[-1], "up" if golden else "down")
+            return hit, f"{name}({code}) MACD {label}（DIF {dif[-1]:.3f}，DEA {dea[-1]:.3f}）", round(dif[-1], 3), round(dea[-1], 3)
+        highs = [b.high or b.close for b in bars]
+        lows = [b.low or b.close for b in bars]
+        k, d, _ = kdj(highs, lows, closes)
+        hit = crossed(k[-2], d[-2], k[-1], d[-1], "up" if golden else "down")
+        return hit, f"{name}({code}) KDJ {label}（K {k[-1]:.1f}，D {d[-1]:.1f}）", round(k[-1], 1), round(d[-1], 1)
+
+    def _regime_events(self) -> list[AlertEvent]:
+        """大盘环境比前一交易日降档或评分明显下滑。"""
+        if not self.market_alerts:
+            return []
+        try:
+            from src.analyzers.market_regime import MarketRegimeAnalyzer
+
+            today = date.today()
+            analyzer = MarketRegimeAnalyzer(self.config)
+            now_r = analyzer.analyze(overview={})
+            if now_r.regime not in REGIME_LEVELS or now_r.trade_date != today.strftime("%Y-%m-%d"):
+                return []
+            prev_r = analyzer.analyze(trade_date=(today - timedelta(days=1)).strftime("%Y-%m-%d"), overview={})
+        except Exception as e:
+            logger.debug(f"大盘环境提醒检查失败: {e}")
+            return []
+        if prev_r.regime not in REGIME_LEVELS:
+            return []
+        change = f"（{prev_r.score:.0f}→{now_r.score:.0f}分）"
+        if REGIME_LEVELS[now_r.regime] < REGIME_LEVELS[prev_r.regime]:
+            severity = "critical" if now_r.regime == "冰点" else "warning"
+            text = f"大盘环境由「{prev_r.regime}」转为「{now_r.regime}」{change}，新开仓仓位按 ×{now_r.position_factor:.1f} 控制"
+            return [AlertEvent(MARKET_CODE, "大盘", "regime_down", severity, text, now_r.score, prev_r.score, now_r.regime)]
+        if prev_r.score - now_r.score >= self.regime_score_drop:
+            text = f"大盘评分比前一交易日下降 {prev_r.score - now_r.score:.0f} 分{change}，仍为「{now_r.regime}」，注意控制仓位"
+            return [AlertEvent(MARKET_CODE, "大盘", "regime_score_drop", "warning", text, now_r.score, prev_r.score)]
+        return []
 
     def _volume_ratio(self, code: str, volume: float | None) -> float | None:
         if not volume:
