@@ -9,7 +9,10 @@ level 字段含义：
   C = 普通快讯
 """
 
+import hashlib
 import re
+import time
+import urllib.parse
 from contextlib import suppress
 from datetime import datetime
 from typing import Any
@@ -22,14 +25,22 @@ from src.collectors.base import BaseCollector
 HTTP_OK_STATUS = 200
 
 
+def sign_params(params: dict[str, Any]) -> dict[str, Any]:
+    """财联社接口签名：按键排序拼成查询串，先 SHA1 再 MD5（与网页版一致，不带签名返回「签名错误」）"""
+    query = urllib.parse.urlencode(sorted(params.items()))
+    sign = hashlib.md5(hashlib.sha1(query.encode()).hexdigest().encode()).hexdigest()
+    return {**params, "sign": sign}
+
+
 class CailiansheCollector(BaseCollector):
     """财联社快讯采集器"""
 
     SOURCE_NAME = "cailianshe"
 
-    # 财联社电报 API（可用端点）
+    # 财联社电报 API（需要签名）
+    ROLL_LIST_URL = "https://www.cls.cn/v1/roll/get_roll_list"
+    # 旧端点（2026-09 起返回 404，保留作兜底）
     TELEGRAPH_LIST_URL = "https://www.cls.cn/nodeapi/telegraphList"
-    # 备用旧端点
     TELEGRAPH_URL = "https://www.cls.cn/nodeapi/updateTelegraph"
     # 网页版
     WEB_URL = "https://www.cls.cn/telegraph"
@@ -45,10 +56,12 @@ class CailiansheCollector(BaseCollector):
         """采集财联社快讯"""
         results = []
 
-        # 方式1: telegraphList API（主力）
-        results.extend(self._collect_telegraph_list())
+        # 方式1: 签名的 roll list API（主力）
+        results.extend(self._collect_roll_list())
 
         # 方式2: 旧 API
+        if not results:
+            results.extend(self._collect_telegraph_list())
         if not results:
             results.extend(self._collect_telegraph_legacy())
 
@@ -58,8 +71,36 @@ class CailiansheCollector(BaseCollector):
 
         return results
 
+    def _collect_roll_list(self) -> list[dict[str, Any]]:
+        """通过签名的 roll list API 采集最新 50 条电报（rn 超过 50 时接口返回空列表）"""
+        results = []
+        try:
+            params = sign_params({
+                "app": "CailianpressWeb",
+                "category": "",
+                "last_time": int(time.time()),
+                "os": "web",
+                "refresh_type": 1,
+                "rn": 50,
+                "sv": "8.4.6",
+            })
+            resp = self.fetch_url(self.ROLL_LIST_URL, params=params, max_retries=2, headers={"Referer": self.WEB_URL})
+            if resp and resp.status_code == HTTP_OK_STATUS:
+                data = resp.json()
+                if data.get("errno") not in (0, "0", None):
+                    logger.warning(f"财联社 roll list 返回错误: {data.get('errno')} {data.get('msg')}")
+                    return results
+                for item in (data.get("data") or {}).get("roll_data") or []:
+                    parsed = self._parse_item(item)
+                    if parsed:
+                        results.append(parsed)
+                logger.info(f"[cailianshe] roll list 采集 {len(results)} 条")
+        except Exception as e:
+            logger.error(f"财联社 roll list 采集失败: {e}")
+        return results
+
     def _collect_telegraph_list(self) -> list[dict[str, Any]]:
-        """通过 telegraphList API 采集（推荐）"""
+        """通过旧版 telegraphList API 采集"""
         results = []
         try:
             params = {
