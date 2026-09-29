@@ -51,7 +51,11 @@ describe('SettingsPage image push', () => {
     const block = await screen.findByRole('group', { name: /图片推送/ })
     // 只有支持图片的渠道可选（钉钉、飞书不在其中）
     expect(within(block).queryByRole('checkbox', { name: /钉钉/ })).toBeNull()
-    fireEvent.click(within(block).getByRole('checkbox', { name: /企业微信|wechat/ }))
+    // 等表单用接口数据完成初始化，否则勾选会被随后的同步覆盖
+    await waitFor(() => expect(screen.getByLabelText(/Chat ID/)).toHaveValue('-100'))
+    const box = within(block).getByRole('checkbox', { name: /企业微信|wechat/ })
+    fireEvent.click(box)
+    await waitFor(() => expect(box).toBeChecked())
     fireEvent.click(screen.getAllByRole('button', { name: '保存' }).at(-1)!)
     await waitFor(() => expect(calls.some((c) => c.method === 'PUT' && c.url.includes('/settings/notifier'))).toBe(true))
     const put = calls.find((c) => c.method === 'PUT' && c.url.includes('/settings/notifier'))!
