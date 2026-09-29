@@ -92,7 +92,7 @@ cd apps/desktop && npm test                                 # node --test，不�
 
 - **`server.py` → `api/app.py`**：Web 界面和 API。`web.scheduler` 为真（默认）时在 lifespan 里用 `build_scheduler(config, BackgroundScheduler())` 运行和 `main.py` 相同的定时任务，并在后台线程启动聊天机器人；`--no-scheduler` 两者都不运行（用于 `main.py` 已在运行的情况）。Electron 桌面端和 Docker 都运行它。
 - **`main.py` → `src/scheduler.py`**（BlockingScheduler，同时启动聊天机器人）有两类任务：
-  - 间隔任务：热搜每 30 分钟，财联社每 5 分钟，行情每 15 分钟，国际新闻每 30 分钟。
+  - 间隔任务：热搜每 30 分钟，财联社每 5 分钟，行情每 15 分钟，国际新闻每 30 分钟；RSS 资讯源按 `intelligence.interval_minutes`（启用且有启用的源时才注册）。
   - 工作日定时任务：
     - 15:30 每日分析：舆情 → 涨停 → 国际因子 → `CompositeScorer.score_today()` → 距上次历史回测超过 `screening.backtest_interval_days` 天时先回测 → `StrategyScreener.run()`（全市场策略选股）。
     - 16:00 生成信号 → `TradeAdvisor.advise_top_stocks()`（AI 研判，`strategy.ai_advisor_enabled`）→ `ExecutionService.execute_signals()` 生成订单。
@@ -115,7 +115,7 @@ cd apps/desktop && npm test                                 # node --test，不�
   - `DataQueryService` 提供界面上的全部查询。
   - 耗时任务放在 `QThreadPool` 工作线程里执行。
 
-新增任务或数据源时，需要接入每一个应该运行它的运行时。新增的界面功能要同时提供 API（`api/v1/`）和 Web 页面（`apps/web`）。
+新增任务或数据源时，需要接入每一个应该运行它的运行时；新的定时任务还要登记到 `src/scheduler.py` 的 `JOBS`（Web【设置 → 定时任务】据此列出和立即运行）。新增的界面功能要同时提供 API（`api/v1/`）和 Web 页面（`apps/web`）。
 
 ### Web API（`api/`）
 
@@ -123,7 +123,12 @@ cd apps/desktop && npm test                                 # node --test，不�
 - 路由在 `api/v1/`（system、market、stocks、screening、chat、watchlist、trading），统一前缀 `/api/v1`。其他路径托管 `apps/web/dist`（单页应用，找不到的路径返回 `index.html`；`/docs` 等 FastAPI 自带路由优先）。`DEFAULT_STATIC_DIR` 按仓库位置解析，与工作目录无关。
 - **耗时操作走后台任务：** `tasks.submit(kind, fn, *args, dedupe_key=, label=)` 立即返回任务字典，前端轮询 `/api/v1/tasks/{id}`。被调用的函数如果有 `progress` 参数会自动传入，`progress(done, total)` 或 `progress(文字)` 都可以；结果经 `jsonable_encoder` 转换。同一 `dedupe_key` 的任务在执行中时直接返回已有任务。
 - **访问控制**（`api/auth.py`，`check_request()`）：没开 `web.auth_enabled` 时只允许本机（含 TestClient 的 `testclient`）；开了以后要登录 Cookie（`qt_session`，HMAC 签名，密码 PBKDF2 存在 `data/web_auth.json`，首次登录即设置密码）或 `Authorization: Bearer <web.api_token>`。`/api/v1/health` 和 `/api/v1/auth/*` 公开。
-- **设置接口：** 返回时把密钥替换成 `******`（大模型 Key 保留后 4 位），保存时掩码原样回传就保留原值（`_merge_llm`、`_merge_notifier`、`_merge_bot`）；用 `settings_store.save_section()` 写回，再 `apply_config(app, reload_config())` 让 pipeline 和问股会话使用新配置。
+- **设置接口：** 返回时把密钥替换成 `******`（大模型 Key 保留后 4 位），保存时掩码原样回传就保留原值（`_merge_llm`、`_merge_notifier`、`_merge_bot`）；用 `settings_store.save_section()` 写回，再 `apply_config(app, reload_config())` 让 pipeline 和问股会话使用新配置。新增配置备份/恢复：`GET /settings/export?include_secrets=` 导出（默认掩码 secret_keys 和 webhook URL），`POST /settings/import` 导入（`******` 从当前配置同一路径还原，还原不了的删除并给出警告；原子写入，与 `save_section()` 共用锁；导入会丢失文件注释）。
+- **新 API：**
+  - **诊断历史：** `GET /stocks/diagnoses`（code、action、days、limit 1~200、offset）、`GET/DELETE /stocks/diagnoses/{id}`、`GET /stocks/diagnoses/{id}/markdown`、`GET /stocks/diagnoses/{id}/image`。查询在 `DataQueryService.list_diagnoses/get_diagnosis/delete_diagnosis`（`PipelineService` 同名委托）。
+  - **定时任务：** `GET /system/scheduler`（任务列表和状态）、`POST /system/scheduler/{job_id}/run`（立即运行，非交易日行情和分析类任务照常跳过）。任务 id → 中文名和函数映射在 `src/scheduler.py` 的 `JOBS` 和 `describe_jobs()`；`app.state.scheduler` 仅在本进程运行定时任务时存在。
+  - **图片导入：** `POST /watchlist/import-image`（后台任务），识别出的股票经校验后勾选加入。
+  - **资讯源配置：** `GET/PUT /settings/intelligence`、`POST /settings/intelligence/test`、`POST /pipeline/collect-rss`。
 - AI 问股的多会话存在 `chat_session` 表（`src/services/chat_sessions.py` 的 `ChatSessionStore`），每个会话一把锁。
 
 ### Web 前端（`apps/web`）
@@ -195,6 +200,7 @@ cd apps/desktop && npm test                                 # node --test，不�
 - `BaseCollector.fetch_url()` 和 `post_url()` 带指数退避重试。`safe_collect()` 会吞掉所有异常并返回 `[]`，所以采集器出错只会体现在日志里。
 - `CollectorOrchestrator.collect_all()` 要求所有新闻源（cailianshe、xueqiu、jiuyan、hot_topics、weibo、douyin、toutiao）以及行情、国际新闻、美股财报这几组都有数据。缺哪组就只重试哪组，最多 `desktop.collect_max_attempts` 次。
 - **联网新闻搜索**（`src/collectors/news_search.py`）：博查、Tavily、SerpAPI、Brave、SearXNG 五种搜索服务，按 `search.providers` 的顺序回退；每个 provider 可配置多个 Key（或多个 SearXNG 地址），在自己的 Key 之间轮询；某个 Key 返回 401/403/429 时进入 10 分钟冷却（进程级），同一次调用里换下一个 Key。多 provider 之间用 `fetch_with_fallback("news_search", ...)` 回退，出错或无结果都换下一个。结果按（查询词、条数、天数）缓存 `search.cache_minutes` 分钟（进程级），只缓存非空结果。`api_keys` 可以是列表或逗号分隔字符串；环境变量覆盖时是字符串，需要 `_as_list()` 处理。`search.enabled` 为假时完全不请求，所以个股诊断的已有测试不受影响。测试前后调用 `news_search.reset_state()` 清空缓存和冷却。
+- **RSS 资讯源**（`src/collectors/rss.py`）：支持 RSS 2.0、Atom、RSS 1.0（用 xml.etree 和 beautifulsoup4 解析；含 `<!ENTITY` 的内容拒绝）。配置 `intelligence` 段（启用、间隔分钟数最少 5、每源最多条数、保留天数、订阅源 URL 列表）。入库 `finance_news`，`source="rss"`、`category` 为订阅源名称，按 URL（没有时按标题）在 `keep_days` 内去重。接入：定时任务 id="rss"（启用且有启用的源时注册）、`main.py --once` 的 collect 步骤、PyQt6 的 `CollectorOrchestrator`（可选组）。与交易日无关；舆情分析在近 24 小时最多 20 条 RSS 消息前标注 `[RSS·源名称]`。
 
 ### 数据库（`src/database/`）
 
@@ -212,6 +218,7 @@ cd apps/desktop && npm test                                 # node --test，不�
   - 自学习（`save_config()`）写入完整的合并后配置。
   - `settings_store.save_section()`：Web 设置接口，以及 PyQt6 的 AI 设置、推送设置对话框，按段写回。
 - **search 段配置：** `enabled`（启用联网新闻搜索）、`providers`（优先级列表）、`cache_minutes`（缓存时间）、各 provider 的 Key 配置。Web 设置接口 `/settings/search` 返回时 API Key 显示为 `******` 加后 4 位，保存时按后 4 位还原为原值（找不到对应原值的丢弃）；含 `your-` 的占位 Key 视为未配置。
+- **分享图片**（`src/services/report_image.py`）：`build_share_html()` 纯函数生成 HTML，`render_png()` 用 Playwright 同步 API 每次启动 headless chromium 截图（2 倍清晰度）。结果按标题和内容缓存最近 20 张；渲染失败接口返回 503。测试不能真的启动浏览器，要 monkeypatch `render_png`。Docker 镜像加了 `fonts-noto-cjk`。
 
 ### 大盘复盘、AI 研判与策略选股
 
@@ -274,6 +281,7 @@ cd apps/desktop && npm test                                 # node --test，不�
   - 响应缓存在 SQLite 里，缓存键是模型 + 提示词 + 参数的哈希，带 TTL。
   - `reload()` 可热切换模型平台。
   - `chat_json()` 解析失败时依次尝试：提取 markdown 代码块 → 修复截断的 `items` 列表 → 截到最后一个完整对象后交给 `json_repair`。截断的输出不能直接交给 `json_repair`，它会把半截的对象（如半截股票代码）当成有效数据保留下来。
+  - **图片识别**（`chat_vision(prompt, images, ...)`）：按 `llm.vision` → 主模型 → 备用模型的顺序尝试，相同路由只试一次，不走响应缓存。`llm.vision` 留空时用主模型（需支持图片输入）。用于自选股图片导入（`src/services/image_import.py` 的 `extract_stocks()`，支持 PNG/JPEG/WebP/GIF，最大 5MB）；FEATURE_LABELS 记录为「图片识别」。
 - 操作建议统一用 `src/analyzers/decision.py`：`normalize_action()` 把文本归一为 buy、add、hold、watch、reduce、sell、avoid、alert 八种。否定说法（「不建议买入」）识别为 avoid；多个关键词同时出现时，取最先出现的；无法识别时返回空字符串。下单只接受 `is_bullish()` 为真的建议。
 - AI 预测保存前会经过 `_validate_predictions()`：剔除在 `stock_daily` 和 `stock_info` 里都查不到的代码（AI 编造的）、ST/退市股和重复代码，名称以数据库为准。行情库为空时无法校验，直接跳过。
 - 个股诊断 `StockDiagnosisService`（`src/services/stock_diagnosis.py`）：
@@ -293,6 +301,7 @@ cd apps/desktop && npm test                                 # node --test，不�
   - **历史校准：** 由 `diagnosis.calibration` 控制。`diagnosis_outcome.calibration_stats()` 汇总近 90 天诊断的事后准确率，进程内缓存 30 分钟，写进提示词；看多诊断的 3 日准确率低于 45%（至少 10 次）时，买入信心下调一档。
   - **测试：** 诊断前会补齐日线，并获取筹码、业绩、个股新闻和公告，这些都会联网。测试要 monkeypatch `fundamentals.fetch_chip_summary`、`EarningsCache.get`、`stock_news.get_stock_news` 和 `daily_history.ensure_daily_history`（参考 `tests/test_stock_diagnosis.py` 的 fixture）。
   - **缓存：** 结果存入 `stock_diagnosis` 表，30 分钟内复用。
+  - **历史查询：** `DataQueryService.list_diagnoses(code, action, days, limit, offset)` 按股票、操作建议、天数筛选诊断记录；`get_diagnosis(id)` 获取单条；`delete_diagnosis(id)` 删除。诊断历史 Web 页面支持下载 Markdown 或分享图（`/stocks/diagnoses/{id}/markdown`、`/stocks/diagnoses/{id}/image`）。
   - **注入假 LLM：** 测试通过构造函数的 `llm=` 参数注入（`MarketReviewService` 也一样）。
 - `LimitUpPredictor`（`src/services/premarket_predictor.py`）按时段选择提示词，时段为 `premarket`（9:25 前）、`morning`、`noon`、`afternoon`、`aftermarket`（15:00 后）。非交易日一律按 `premarket` 处理。预测写入 `TradeSignal` 时，`signal_date` 存的是目标交易日：交易日盘前和盘中是当天，盘后和非交易日是下一个交易日。
 

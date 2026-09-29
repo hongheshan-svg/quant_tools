@@ -6,7 +6,7 @@
 - 编排：`services/` 串联流水线、自学习和涨停预测。
 - 存储：`database/` 存放 SQLAlchemy 模型与 SQLite 会话管理。
 - 界面：`desktop/` 是 PyQt6 桌面端（旧版）；Web 界面见下方 `api/` 和 `apps/web/`。
-- 其他：`bot/`（钉钉、飞书聊天机器人）、`notifier/`（企业微信、钉钉、飞书、邮件推送与降噪）、`backtest/`（回测）。
+- 其他：`bot/`（钉钉、飞书聊天机器人）、`notifier/`（14 个推送渠道与降噪）、`backtest/`（回测）。
 
 仓库根目录的其他部分：
 - `api/`：FastAPI 接口（`/api/v1`）、登录、后台任务，并托管前端构建产物。
