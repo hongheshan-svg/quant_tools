@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parent.parent
 
 @pytest.fixture(autouse=True)
 def _isolate_env(monkeypatch):
+    # 先 setenv 让 monkeypatch 记录原状态，teardown 时还原（原本不存在则删除），再删掉
+    monkeypatch.setenv("QUANT_NO_NOTIFY", "")
     monkeypatch.delenv("QUANT_NO_NOTIFY", raising=False)
 
 
