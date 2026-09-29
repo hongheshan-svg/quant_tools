@@ -7,6 +7,19 @@ name: 每日分析
 #   配置二选一（可以同时用，单独的 Secret 优先）：
 #     Secret SETTINGS_YAML：完整的 config/settings.yaml 内容
 #     单独的 Secret / Variable，映射见下方 env（QUANT__ 开头的环境变量会覆盖配置）
+#   推送渠道（配置了对应 Secret / Variable 的渠道自动启用，没配的不影响）：
+#     Telegram：Secret TELEGRAM_BOT_TOKEN、TELEGRAM_CHAT_ID
+#     Discord：Secret DISCORD_WEBHOOK；Slack：Secret SLACK_WEBHOOK
+#     PushPlus：Secret PUSHPLUS_TOKEN，Variable PUSHPLUS_TOPIC（群组编码，可空）
+#     Server酱：Secret SERVERCHAN_SENDKEY
+#     ntfy：Secret NTFY_TOPIC、NTFY_TOKEN（可空），Variable NTFY_SERVER（自建服务器，可空）
+#     Gotify：Secret GOTIFY_TOKEN，Variable GOTIFY_SERVER
+#     Pushover：Secret PUSHOVER_USER_KEY、PUSHOVER_API_TOKEN
+#     Bark：Secret BARK_DEVICE_KEY，Variable BARK_SERVER（自建服务器，可空）
+#     自定义 Webhook：Secret CUSTOM_WEBHOOK_URL
+#   联网搜索（任一配置即启用，多个 Key 用逗号分隔）：
+#     Secret BOCHA_API_KEYS、TAVILY_API_KEYS、SERPAPI_API_KEYS、BRAVE_API_KEYS；Variable SEARXNG_BASE_URLS
+# 手动运行（workflow_dispatch）可以填 stocks 只诊断指定股票并推送，或勾选 no_notify 不推送。
 # 数据库通过 actions/cache 保留到下一次运行。GitHub 的服务器在境外，部分国内数据源可能访问失败或变慢。
 
 on:
@@ -18,6 +31,15 @@ on:
         description: "执行的步骤，逗号分隔，留空为全部：collect,analysis,signals,report,learn,watchlist"
         required: false
         default: ""
+      stocks:
+        description: "只诊断这些股票并推送决策仪表盘，逗号分隔，代码、名称、拼音首字母均可（填了就不执行 steps）"
+        required: false
+        default: ""
+      no_notify:
+        description: "不推送任何消息"
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: daily-analysis
@@ -52,6 +74,41 @@ jobs:
       QUANT__NOTIFIER__FEISHU__WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK }}
       QUANT__NOTIFIER__FEISHU__SECRET: ${{ secrets.FEISHU_SECRET }}
       QUANT__NOTIFIER__EMAIL__PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+      # 推送新渠道
+      QUANT__NOTIFIER__TELEGRAM__ENABLED: ${{ secrets.TELEGRAM_BOT_TOKEN != '' && 'true' || '' }}
+      QUANT__NOTIFIER__TELEGRAM__BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      QUANT__NOTIFIER__TELEGRAM__CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      QUANT__NOTIFIER__DISCORD__ENABLED: ${{ secrets.DISCORD_WEBHOOK != '' && 'true' || '' }}
+      QUANT__NOTIFIER__DISCORD__WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK }}
+      QUANT__NOTIFIER__SLACK__ENABLED: ${{ secrets.SLACK_WEBHOOK != '' && 'true' || '' }}
+      QUANT__NOTIFIER__SLACK__WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+      QUANT__NOTIFIER__PUSHPLUS__ENABLED: ${{ secrets.PUSHPLUS_TOKEN != '' && 'true' || '' }}
+      QUANT__NOTIFIER__PUSHPLUS__TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+      QUANT__NOTIFIER__PUSHPLUS__TOPIC: ${{ vars.PUSHPLUS_TOPIC }}
+      QUANT__NOTIFIER__SERVERCHAN__ENABLED: ${{ secrets.SERVERCHAN_SENDKEY != '' && 'true' || '' }}
+      QUANT__NOTIFIER__SERVERCHAN__SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+      QUANT__NOTIFIER__NTFY__ENABLED: ${{ secrets.NTFY_TOPIC != '' && 'true' || '' }}
+      QUANT__NOTIFIER__NTFY__TOPIC: ${{ secrets.NTFY_TOPIC }}
+      QUANT__NOTIFIER__NTFY__SERVER: ${{ vars.NTFY_SERVER }}
+      QUANT__NOTIFIER__NTFY__TOKEN: ${{ secrets.NTFY_TOKEN }}
+      QUANT__NOTIFIER__GOTIFY__ENABLED: ${{ secrets.GOTIFY_TOKEN != '' && 'true' || '' }}
+      QUANT__NOTIFIER__GOTIFY__SERVER: ${{ vars.GOTIFY_SERVER }}
+      QUANT__NOTIFIER__GOTIFY__TOKEN: ${{ secrets.GOTIFY_TOKEN }}
+      QUANT__NOTIFIER__PUSHOVER__ENABLED: ${{ secrets.PUSHOVER_USER_KEY != '' && 'true' || '' }}
+      QUANT__NOTIFIER__PUSHOVER__USER_KEY: ${{ secrets.PUSHOVER_USER_KEY }}
+      QUANT__NOTIFIER__PUSHOVER__API_TOKEN: ${{ secrets.PUSHOVER_API_TOKEN }}
+      QUANT__NOTIFIER__BARK__ENABLED: ${{ secrets.BARK_DEVICE_KEY != '' && 'true' || '' }}
+      QUANT__NOTIFIER__BARK__DEVICE_KEY: ${{ secrets.BARK_DEVICE_KEY }}
+      QUANT__NOTIFIER__BARK__SERVER: ${{ vars.BARK_SERVER }}
+      QUANT__NOTIFIER__WEBHOOK__ENABLED: ${{ secrets.CUSTOM_WEBHOOK_URL != '' && 'true' || '' }}
+      QUANT__NOTIFIER__WEBHOOK__URL: ${{ secrets.CUSTOM_WEBHOOK_URL }}
+      # 联网搜索（任一搜索服务配置了就启用）
+      QUANT__SEARCH__ENABLED: ${{ (secrets.BOCHA_API_KEYS != '' || secrets.TAVILY_API_KEYS != '' || secrets.SERPAPI_API_KEYS != '' || secrets.BRAVE_API_KEYS != '' || vars.SEARXNG_BASE_URLS != '') && 'true' || '' }}
+      QUANT__SEARCH__BOCHA__API_KEYS: ${{ secrets.BOCHA_API_KEYS }}
+      QUANT__SEARCH__TAVILY__API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
+      QUANT__SEARCH__SERPAPI__API_KEYS: ${{ secrets.SERPAPI_API_KEYS }}
+      QUANT__SEARCH__BRAVE__API_KEYS: ${{ secrets.BRAVE_API_KEYS }}
+      QUANT__SEARCH__SEARXNG__BASE_URLS: ${{ vars.SEARXNG_BASE_URLS }}
     steps:
       - uses: actions/checkout@v7
 
@@ -87,11 +144,17 @@ jobs:
       - name: 执行
         env:
           STEPS: ${{ inputs.steps }}
+          STOCKS: ${{ inputs.stocks }}
+          NO_NOTIFY: ${{ inputs.no_notify && 'true' || '' }}
         run: |
-          if [ -n "$STEPS" ]; then
-            python main.py --once --steps "$STEPS"
+          args=()
+          [ -n "$NO_NOTIFY" ] && args+=(--no-notify)
+          if [ -n "$STOCKS" ]; then
+            python main.py --stocks "$STOCKS" "${args[@]}"
+          elif [ -n "$STEPS" ]; then
+            python main.py --once --steps "$STEPS" "${args[@]}"
           else
-            python main.py --once
+            python main.py --once "${args[@]}"
           fi
 
       - name: 保存数据库

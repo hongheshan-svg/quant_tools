@@ -109,11 +109,15 @@ class WatchlistReportService:
         return self._diagnosis
 
     def run(self, push: bool = True, progress: Callable[[int, int], None] | None = None,
-            now: datetime | None = None) -> dict[str, Any]:
+            now: datetime | None = None, codes: list[str] | None = None) -> dict[str, Any]:
+        """codes 不为空时诊断这些股票（命令行 --stocks），否则诊断自选股。"""
         now = now or datetime.now()
-        stocks = WatchlistService(self.config).list()
+        if codes:
+            stocks = self._stocks_of(codes)
+        else:
+            stocks = WatchlistService(self.config).list()
         if not stocks:
-            return {"error": "自选股为空，先在【自选股】页添加", "total": 0}
+            return {"error": "没有可分析的股票" if codes else "自选股为空，先在【自选股】页添加", "total": 0}
         threshold = reuse_threshold(now)
         items, failed, done = [], [], 0
         with ThreadPoolExecutor(max_workers=min(self.workers, len(stocks)), thread_name_prefix="watchlist") as pool:
@@ -141,6 +145,21 @@ class WatchlistReportService:
         logger.info(f"自选股决策仪表盘 {trade_date}：{len(items)} 只完成，{len(failed)} 只失败，推送 {pushed}")
         return {"trade_date": trade_date, "total": len(stocks), "done": len(items), "failed": failed,
                 "counts": counts, "markdown": markdown, "pushed": pushed}
+
+    def _stocks_of(self, codes: list[str]) -> list[dict[str, Any]]:
+        """代码列表 → [{code, name}]（去重保序，名称从 stock_info 取，取不到用行情库）。"""
+        from src.database.models import StockDaily, StockInfo
+        from src.utils.stock_code import bare_code, code_candidates
+
+        result = []
+        with get_db_session(self.db_path) as session:
+            for code in dict.fromkeys(bare_code(c) for c in codes):
+                name = session.query(StockInfo.name).filter(StockInfo.code.in_(code_candidates(code))).limit(1).scalar()
+                if not name:
+                    name = (session.query(StockDaily.name).filter(StockDaily.code.in_(code_candidates(code)))
+                            .order_by(StockDaily.trade_date.desc()).limit(1).scalar())
+                result.append({"code": code, "name": name or ""})
+        return result
 
     def _diagnose_one(self, stock: dict[str, Any], threshold: str) -> dict[str, Any]:
         code = stock["code"]
