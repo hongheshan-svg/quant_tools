@@ -66,4 +66,4 @@ jobs:
       # 测试替换了 electron 模块，不需要安装 Electron
       - name: Test
         working-directory: apps/desktop
-        run: node --test tests/
+        run: npm test
