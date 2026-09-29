@@ -346,11 +346,6 @@ web:
   task_workers: 4          # 同时执行的后台任务数
   cors_origins: ["http://localhost:5173", "http://127.0.0.1:5173"]   # 前端开发服务器
 
-# --- Web仪表盘配置 ---
-dashboard:
-  host: "0.0.0.0"
-  port: 8000
-
 # --- Qt6 桌面端配置 ---
 desktop:
   refresh_interval_seconds: 30
