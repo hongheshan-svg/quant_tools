@@ -29,7 +29,7 @@ NPM = "npm.cmd" if sys.platform == "win32" else "npm"
 # 运行时按字符串导入、PyInstaller 静态分析找不到的模块
 HIDDEN_IMPORTS = ["tiktoken_ext", "tiktoken_ext.openai_public", "multipart"]
 # 带数据文件（价格表、日历、字典等）的包
-COLLECT_DATA = ["litellm", "akshare", "tiktoken_ext"]
+COLLECT_DATA = ["litellm", "akshare", "tiktoken_ext", "efinance"]
 # 大量按需导入子模块的包
 COLLECT_SUBMODULES = ["litellm", "uvicorn"]
 # 带原生库的包（akshare 的交易日历等接口用 py_mini_racer 执行 JS）

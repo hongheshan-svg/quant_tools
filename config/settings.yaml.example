@@ -245,6 +245,15 @@ notifier:
 # 股票池过滤沿用 config/stock_pool.yaml；依赖日线历史，首次使用先运行 python scripts/fetch_history.py --mode daily
 # 内置策略：volume_breakout 放量突破、strong_close 强势未板、dragon_pullback 龙回头、theme_follow 主线补涨、
 #           trend_pullback 缩量回踩、oversold_rebound 超跌反弹；按大盘环境标注是否适配（适配的排在前面）
+# 数据源顺序：前一个失败或没有数据才用下一个（参考 daily_stock_analysis 的多数据源）
+data_sources:
+  # 日线回补：tencent 腾讯、sina 新浪、eastmoney 东方财富、baostock、pytdx 通达信（不复权）、efinance（东方财富接口）、tushare（需要 token，不复权）
+  daily_history: [tencent, sina, eastmoney, baostock, pytdx, efinance, tushare]
+  # 实时行情：tencent、eastmoney、sina、efinance、pytdx
+  realtime: [tencent, eastmoney, sina, efinance, pytdx]
+  tushare_token: ""       # Tushare Pro 的 token，填写后 tushare 才可用
+  pytdx_servers: []       # 自定义通达信行情服务器，如 ["117.34.114.17:7709"]；为空用内置列表
+
 # 聊天机器人：在钉钉、飞书里发「诊断 茅台」「大盘」「自选」「持仓」或直接提问（AI 问股），只读，不能下单。
 # 用长连接收消息，不需要公网 IP；随 main.py 或 server.py（桌面端）运行，修改后重启生效
 bot:

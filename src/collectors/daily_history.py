@@ -1,5 +1,8 @@
 """
-个股日线历史下载（腾讯 → 新浪 → 东方财富）与解析，供 scripts/fetch_history.py 批量回补和按需补齐共用。
+个股日线历史下载与解析，供 scripts/fetch_history.py 批量回补和按需补齐共用。
+
+默认顺序：腾讯 → 新浪 → 东方财富 → baostock → 通达信 → efinance → Tushare（后四个见 extra_sources.py），
+由 data_sources.daily_history 调整；前一个失败或没有数据才用下一个。
 
 ensure_daily_history(code)：本地近期日线不足时联网下载并补齐缺失的交易日（不覆盖已有行），
 用于个股详情 K 线、AI 诊断、问股等只关心单只股票的场景。
@@ -102,65 +105,74 @@ def to_ak_symbol(code: str) -> str:
     return prefixed_code(code)
 
 
-def fetch_daily_df_with_fallback(code: str, start_date: str, end_date: str):
-    start_compact = start_date.replace("-", "")
-    end_compact = end_date.replace("-", "")
-    symbol = to_ak_symbol(code)
+def _fetch_tx(code: str, start_date: str, end_date: str):
+    return call_with_retry(
+        lambda: ak.stock_zh_a_hist_tx(symbol=to_ak_symbol(code), start_date=start_date.replace("-", ""),
+                                      end_date=end_date.replace("-", ""), adjust="qfq"),
+        attempts=2,
+    )
+
+
+def _fetch_sina(code: str, start_date: str, end_date: str):
+    df = call_with_retry(lambda: ak.stock_zh_a_daily(symbol=to_ak_symbol(code), adjust="qfq"), attempts=2)
+    if df is None or df.empty:
+        return None
+    df = normalize_daily_date_column(df)
+    if df is None:
+        raise ValueError("missing date column")
+    ds = df["date"].astype(str).str[:10]
+    return df.loc[(ds >= start_date) & (ds <= end_date)].copy()
+
+
+def _fetch_em(code: str, start_date: str, end_date: str):
+    return call_with_retry(
+        lambda: ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start_date.replace("-", ""),
+                                   end_date=end_date.replace("-", ""), adjust="qfq"),
+        attempts=3,
+    )
+
+
+def _extra(name: str):
+    def fetch(code: str, start_date: str, end_date: str):
+        from src.collectors import extra_sources
+
+        return getattr(extra_sources, f"fetch_daily_{name}")(code, start_date, end_date)
+    return fetch
+
+
+# 配置名 → (返回的来源标记, 取数函数)；来源标记决定 records_from_daily_df 的解析方式
+DAILY_SOURCES = {
+    "tencent": ("tx", _fetch_tx),
+    "sina": ("daily", _fetch_sina),
+    "eastmoney": ("em", _fetch_em),
+    "baostock": ("baostock", _extra("baostock")),
+    "pytdx": ("pytdx", _extra("pytdx")),
+    "efinance": ("efinance", _extra("efinance")),
+    "tushare": ("tushare", _extra("tushare")),
+}
+
+
+def daily_source_order() -> list[str]:
+    from src.config_loader import load_config
+
+    configured = (load_config().get("data_sources") or {}).get("daily_history") or []
+    order = [name for name in configured if name in DAILY_SOURCES]
+    return order or list(DAILY_SOURCES)
+
+
+def fetch_daily_df_with_fallback(code: str, start_date: str, end_date: str, order: list[str] | None = None):
+    """按顺序尝试各数据源，返回 (来源标记, DataFrame)；全部失败时抛 RuntimeError（含各源的错误）"""
     errors: list[str] = []
-
-    try:
-        df_tx = call_with_retry(
-            lambda: ak.stock_zh_a_hist_tx(
-                symbol=symbol,
-                start_date=start_compact,
-                end_date=end_compact,
-                adjust="qfq",
-            ),
-            attempts=2,
-        )
-        if df_tx is not None and not df_tx.empty:
-            return "tx", df_tx
-        errors.append("tx empty")
-    except Exception as e:
-        errors.append(f"tx: {e}")
-
-    try:
-        df_daily = call_with_retry(
-            lambda: ak.stock_zh_a_daily(symbol=symbol, adjust="qfq"),
-            attempts=2,
-        )
-        if df_daily is not None and not df_daily.empty:
-            df_daily = normalize_daily_date_column(df_daily)
-            if df_daily is None:
-                errors.append("daily: missing date column")
-            else:
-                ds = df_daily["date"].astype(str).str[:10]
-                df_daily = df_daily.loc[(ds >= start_date) & (ds <= end_date)].copy()
-                if not df_daily.empty:
-                    return "daily", df_daily
-                errors.append("daily empty")
-        else:
-            errors.append("daily empty")
-    except Exception as e:
-        errors.append(f"daily: {e}")
-
-    try:
-        df_em = call_with_retry(
-            lambda: ak.stock_zh_a_hist(
-                symbol=code,
-                period="daily",
-                start_date=start_compact,
-                end_date=end_compact,
-                adjust="qfq",
-            ),
-            attempts=3,
-        )
-        if df_em is not None and not df_em.empty:
-            return "em", df_em
-        errors.append("em empty")
-    except Exception as e:
-        errors.append(f"em: {e}")
-
+    for name in order or daily_source_order():
+        label, fetch = DAILY_SOURCES[name]
+        try:
+            df = fetch(code, start_date, end_date)
+        except Exception as e:
+            errors.append(f"{label}: {e}")
+            continue
+        if df is not None and not df.empty:
+            return label, df
+        errors.append(f"{label} empty")
     raise RuntimeError(" | ".join(errors))
 
 

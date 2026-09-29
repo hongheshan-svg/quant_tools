@@ -116,6 +116,19 @@ def build_probes(trade_day: Callable[[], str]) -> list[Probe]:
         _, df = fetch_daily_df_with_fallback(SAMPLE_CODE, (end - timedelta(days=30)).isoformat(), end.isoformat())
         return _count(df)
 
+    def extra_daily(name: str) -> Callable[[], int]:
+        def run() -> int:
+            from src.collectors import extra_sources
+
+            end = date.today()
+            return _count(getattr(extra_sources, f"fetch_daily_{name}")(SAMPLE_CODE, (end - timedelta(days=30)).isoformat(), end.isoformat()))
+        return run
+
+    def pytdx_spot() -> int:
+        from src.collectors.extra_sources import fetch_spot_pytdx
+
+        return _count(fetch_spot_pytdx(["600519", "000001", "300750", "688981"]))
+
     def stock_news() -> int:
         from src.collectors.stock_news import fetch_stock_news
 
@@ -138,7 +151,7 @@ def build_probes(trade_day: Callable[[], str]) -> list[Probe]:
             return len(getattr(importlib.import_module(f"src.collectors.{module}"), cls)({}).collect() or [])
         return run
 
-    return [
+    probes = [
         Probe("腾讯行情", tencent, critical=True),
         Probe("新浪交易日历", calendar, critical=True),
         Probe("东方财富涨停池", em_limit_up, critical=True, browser=True),
@@ -147,6 +160,10 @@ def build_probes(trade_day: Callable[[], str]) -> list[Probe]:
         Probe("同花顺资金流", ths_fund_flow, browser=True),
         Probe("东方财富资金流", em_fund_flow, browser=True),
         Probe("历史日线", daily_history),
+        Probe("baostock 日线", extra_daily("baostock")),
+        Probe("通达信日线", extra_daily("pytdx")),
+        Probe("通达信行情", pytdx_spot),
+        Probe("efinance 日线", extra_daily("efinance")),
         Probe("东方财富个股新闻", stock_news),
         Probe("东方财富公告", stock_notices),
         Probe("交易所股票列表", stock_list),
@@ -157,6 +174,11 @@ def build_probes(trade_day: Callable[[], str]) -> list[Probe]:
         Probe("抖音热榜", collector("douyin", "DouyinCollector"), browser=True),
         Probe("今日头条", collector("toutiao", "ToutiaoCollector"), browser=True),
     ]
+    from src.collectors.extra_sources import data_source_config
+
+    if data_source_config().get("tushare_token"):  # 没有 token 时不检查
+        probes.append(Probe("Tushare 日线", extra_daily("tushare")))
+    return probes
 
 
 def make_trade_day() -> Callable[[], str]:

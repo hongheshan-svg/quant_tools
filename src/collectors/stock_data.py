@@ -23,6 +23,7 @@ from src.database.models import (
     LimitUpStock,
     NorthboundFlow,
     StockDaily,
+    StockInfo,
 )
 
 HTTP_OK_STATUS = 200
@@ -50,6 +51,8 @@ TENCENT_PE_INDEX = 39
 TENCENT_PB_INDEX = 46
 NORTHBOUND_UNIT_SPLIT_THRESHOLD = 10000
 LIMIT_UP_PCT_TOLERANCE = 0.5  # 涨停价四舍五入导致实际涨幅略低于 10%/20%/30%
+# 实时行情默认的数据源顺序（data_sources.realtime 可调整）
+REALTIME_SOURCES = ("tencent", "eastmoney", "sina", "efinance", "pytdx")
 
 
 class StockDataCollector(BaseCollector):
@@ -561,7 +564,7 @@ class StockDataCollector(BaseCollector):
     def _collect_realtime_quotes(self, trade_date: str, db_path: str):
         """
         采集 A 股实时行情 —— 多源兜底策略。
-        优先级：腾讯财经(HTTP) -> AKShare(em) -> AKShare(sina)
+        默认顺序：腾讯财经(HTTP) -> 东方财富 -> 新浪 -> efinance -> 通达信，由 data_sources.realtime 调整
         任一源成功即返回，全部失败才报错。
         """
 
@@ -683,11 +686,28 @@ class StockDataCollector(BaseCollector):
                 df = df.rename(columns=rename)
             return df
 
-        sources = [
-            ("腾讯财经(HTTP)", _try_tencent),
-            ("东方财富(Playwright)", _try_em),
-            ("新浪(AKShare)", _try_sina),
-        ]
+        def _try_efinance():
+            from src.collectors.extra_sources import fetch_spot_efinance
+
+            return fetch_spot_efinance()
+
+        def _try_pytdx():
+            from src.collectors.extra_sources import fetch_spot_pytdx
+
+            with get_db_session(db_path) as session:
+                names = {code: name for code, name in session.query(StockInfo.code, StockInfo.name).all()}
+            codes = [self._extract_bare_equity_code(c) for c in self._get_all_stock_codes()]
+            return fetch_spot_pytdx([c for c in codes if c], names)
+
+        available = {
+            "tencent": ("腾讯财经(HTTP)", _try_tencent),
+            "eastmoney": ("东方财富(Playwright)", _try_em),
+            "sina": ("新浪(AKShare)", _try_sina),
+            "efinance": ("efinance", _try_efinance),
+            "pytdx": ("通达信(pytdx)", _try_pytdx),
+        }
+        order = (self.config.get("data_sources") or {}).get("realtime") or list(REALTIME_SOURCES)
+        sources = [available[name] for name in order if name in available] or [available["tencent"]]
 
         # 行情按交易日写库，不能用之前缓存的数据冒充当前行情，所以不允许 stale
         fetched = fetch_with_fallback("实时行情", sources, attempts=2, retry_wait=1.5)
