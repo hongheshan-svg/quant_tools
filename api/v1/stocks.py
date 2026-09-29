@@ -7,6 +7,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
+from loguru import logger
 
 from api.deps import get_pipeline, get_tasks
 from api.tasks import TaskManager
@@ -90,8 +91,25 @@ def diagnosis_image(diagnosis_id: int, pipeline: PipelineService = Depends(get_p
     return Response(png, media_type="image/png", headers={"Content-Disposition": _attachment(row, "png")})
 
 
+def _fund(code: str, pipeline: PipelineService) -> dict[str, Any] | None:
+    """ETF / 指数的识别结果；指数代码带交易所前缀，不能对它调用 bare_code。"""
+    from src.services.fund_registry import resolve_fund
+
+    return resolve_fund(code, pipeline.db_path)
+
+
 @router.get("/{code}/daily")
 def daily(code: str, limit: int | None = Query(None, ge=1, le=5000), pipeline: PipelineService = Depends(get_pipeline)) -> list[dict[str, Any]]:
+    fund = _fund(code, pipeline)
+    if fund:
+        from src.collectors import fund_data
+
+        try:
+            fund_data.ensure_fund_daily(fund["code"], pipeline.db_path)
+            fund_data.refresh_recent_fund_daily(fund["code"], pipeline.db_path)
+        except Exception as e:
+            logger.warning(f"补齐 ETF/指数日线异常 [{fund['code']}]: {e}")
+        return fund_data.get_fund_daily(fund["code"], pipeline.db_path, limit)
     from src.services.data_query_service import DataQueryService
 
     return DataQueryService(pipeline.db_path).get_stock_daily_history(bare_code(code), limit)
@@ -100,20 +118,33 @@ def daily(code: str, limit: int | None = Query(None, ge=1, le=5000), pipeline: P
 @router.post("/{code}/history")
 def ensure_history(code: str, name: str = "", pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
     """本地日线不足时联网补齐，返回新写入的根数。"""
+    fund = _fund(code, pipeline)
+    if fund:
+        from src.collectors import fund_data
+
+        try:
+            return {"added": fund_data.ensure_fund_daily(fund["code"], pipeline.db_path)}
+        except Exception as e:
+            logger.warning(f"补齐 ETF/指数日线异常 [{fund['code']}]: {e}")
+            return {"added": 0}
     return {"added": pipeline.ensure_history(bare_code(code), name)}
 
 
 @router.get("/{code}/news")
 def news(code: str, refresh: bool = False, pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
+    if _fund(code, pipeline):  # ETF / 指数没有个股新闻和公告
+        return {"news": [], "notices": []}
     return pipeline.stock_news(bare_code(code), refresh)
 
 
 @router.get("/{code}/diagnosis")
 def latest_diagnosis(code: str, pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any] | None:
-    return pipeline.latest_diagnosis(bare_code(code))
+    fund = _fund(code, pipeline)
+    return pipeline.latest_diagnosis(fund["code"] if fund else bare_code(code))
 
 
 @router.post("/{code}/diagnosis")
 def diagnose(code: str, tasks: TaskManager = Depends(get_tasks), pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
-    code = bare_code(code)
-    return tasks.submit("diagnosis", pipeline.diagnose_stock, code, True, dedupe_key=f"diagnosis:{code}", label=f"AI 诊断 {code}")
+    fund = _fund(code, pipeline)
+    code = fund["code"] if fund else bare_code(code)
+    return tasks.submit("diagnosis", pipeline.diagnose_stock, code, True, dedupe_key=f"diagnosis:{code}", label=f"AI 诊断 {fund['name'] if fund else code}")

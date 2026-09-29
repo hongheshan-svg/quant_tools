@@ -62,6 +62,9 @@ def create_app(config: dict[str, Any] | None = None, *, pipeline=None, start_sch
             from src.bot.manager import start_bots
 
             threading.Thread(target=start_bots, args=(config, app.state.pipeline), name="bot-start", daemon=True).start()
+            from src.services.fund_registry import refresh_etf_list_background
+
+            refresh_etf_list_background(db_path)  # ETF 列表（搜索用），7 天内不重复联网
         yield
         if scheduler:
             app.state.scheduler = None

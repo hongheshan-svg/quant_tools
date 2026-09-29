@@ -136,7 +136,7 @@ def test_task_manager():
 def test_stock_and_market_endpoints(env, monkeypatch):
     client, app, _ = env
     assert client.get("/api/v1/health").json() == {"status": "ok"}
-    assert client.get("/api/v1/stocks/search", params={"q": "gzmt"}).json()[0] == {"code": "600519", "name": "贵州茅台"}
+    assert client.get("/api/v1/stocks/search", params={"q": "gzmt"}).json()[0] == {"code": "600519", "name": "贵州茅台", "kind": "stock"}
     assert client.get("/api/v1/stocks/sh600519/daily").json()[0]["close"] == 10.0
     assert client.get("/api/v1/stocks/600519/diagnosis").json() is None
     monkeypatch.setattr(app.state.pipeline, "diagnose_stock", lambda code, force=False: {"code": code, "action": "watch", "force": force})

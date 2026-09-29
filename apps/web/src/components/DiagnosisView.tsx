@@ -2,6 +2,7 @@
 import type { Diagnosis } from '@/api/types'
 import { cn } from '@/utils/cn'
 import { fmtNum, verdictClass } from '@/utils/format'
+import { FUND_LABELS } from '@/utils/fund'
 import { Badge } from './ui'
 
 const CHECK = { pass: '✅', warn: '⚠️', fail: '❌' } as Record<string, string>
@@ -16,6 +17,7 @@ export function DiagnosisView({ d }: { d: Diagnosis }) {
         <span className={cn('text-xl font-semibold', verdictClass(d.action_label))}>{d.action_label}</span>
         <span className="num text-lg">{d.score} 分</span>
         <Badge>信心 {d.confidence || '-'}</Badge>
+        {d.kind && <Badge>{FUND_LABELS[d.kind]}</Badge>}
         {d.trend_prediction && <Badge tone="accent">{d.trend_prediction}</Badge>}
         <span className="text-xs text-muted">诊断于 {d.created_at}（行情 {d.trade_date}）{d.cached ? '，30 分钟内的结果' : ''}</span>
       </div>

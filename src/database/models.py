@@ -760,3 +760,39 @@ class ExecutionEvent(Base):
         Index("idx_execution_event_order_time", "order_id", "created_at"),
         Index("idx_execution_event_type", "event_type"),
     )
+
+
+class FundInfo(Base):
+    """ETF 与指数的基本信息（ETF 来自新浪 ETF 列表，指数来自内置注册表）"""
+    __tablename__ = "fund_info"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(12), nullable=False, unique=True, comment="规范代码：ETF 为 6 位，指数带交易所前缀（如 sh000300）")
+    name = Column(String(40), comment="名称")
+    kind = Column(String(10), nullable=False, comment="etf / index")
+    exchange = Column(String(4), comment="sh / sz / bj")
+    updated_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (Index("idx_fund_info_kind", "kind"),)
+
+
+class FundDaily(Base):
+    """ETF 与指数日线（不写入 stock_daily，避免污染按全市场个股统计的大盘环境、选股、主线）"""
+    __tablename__ = "fund_daily"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(12), nullable=False, comment="规范代码")
+    name = Column(String(40), comment="名称")
+    trade_date = Column(String(10), nullable=False, comment="交易日 YYYY-MM-DD")
+    open = Column(Float)
+    high = Column(Float)
+    low = Column(Float)
+    close = Column(Float)
+    volume = Column(Float, comment="成交量（份/股）")
+    amount = Column(Float, comment="成交额（元）；指数无此数据时为 0")
+    change_pct = Column(Float, comment="涨跌幅 %")
+    created_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index("uq_fund_daily_code_date", "code", "trade_date", unique=True),
+    )

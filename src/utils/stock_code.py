@@ -68,3 +68,17 @@ def daily_limit_pct(code: str | None, name: str = "") -> float:
     if is_st(name):
         return 0.05
     return {"创业板": 0.20, "科创板": 0.20, "北交所": 0.30}.get(board_of(code), 0.10)
+
+
+def diagnosis_code(code: str | None) -> str:
+    """诊断记录的存储代码：内置指数保留带交易所前缀的规范代码（如 sh000300），其余按个股/ETF 取 6 位。
+
+    指数与个股的 6 位代码会冲突（000001 上证指数 vs 平安银行），指数代码绝不能调用 bare_code。
+    """
+    raw = (code or "").strip().lower()
+    if len(raw) == PREFIXED_CODE_LENGTH and raw[:2] in EXCHANGE_PREFIXES and raw[2:].isdigit():
+        from src.services.fund_registry import INDEX_CODES
+
+        if raw in INDEX_CODES:
+            return raw
+    return bare_code(raw)

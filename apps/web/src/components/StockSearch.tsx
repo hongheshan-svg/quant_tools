@@ -4,10 +4,11 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api/endpoints'
 import type { StockRef } from '@/api/types'
 import { cn } from '@/utils/cn'
+import { FUND_LABELS } from '@/utils/fund'
 
 export const SEARCH_DEBOUNCE_MS = 150
 
-export function StockSearch({ onSelect, placeholder = '搜索股票：代码 / 名称 / 拼音首字母', className, autoFocus }: {
+export function StockSearch({ onSelect, placeholder = '搜索股票 / ETF / 指数：代码 / 名称 / 拼音首字母', className, autoFocus }: {
   onSelect: (stock: StockRef) => void
   placeholder?: string
   className?: string
@@ -86,7 +87,12 @@ export function StockSearch({ onSelect, placeholder = '搜索股票：代码 / �
               onMouseEnter={() => setActive(i)}
               className={cn('flex cursor-pointer justify-between px-3 py-1.5 text-sm', i === active && 'bg-panel-2')}
             >
-              <span>{r.name}</span>
+              <span>
+                {r.name}
+                {r.kind && r.kind !== 'stock' && (
+                  <span className="ml-2 rounded border border-line px-1 text-xs text-muted">{FUND_LABELS[r.kind]}</span>
+                )}
+              </span>
               <span className="num text-muted">{r.code}</span>
             </li>
           ))}

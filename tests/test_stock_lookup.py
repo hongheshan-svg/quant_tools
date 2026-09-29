@@ -196,10 +196,10 @@ def search(db_path):
 
 
 def test_stock_search(search):
-    assert search.search("600519") == [{"code": "600519", "name": "贵州茅台"}]   # 交易所简称优先于行情名称
+    assert search.search("600519") == [{"code": "600519", "name": "贵州茅台", "kind": "stock"}]   # 交易所简称优先于行情名称
     assert search.search("sh600519")[0]["code"] == "600519"
     assert [r["code"] for r in search.search("60")] == ["600519", "601919", "603297"]
-    assert search.search("茅台") == [{"code": "600519", "name": "贵州茅台"}]
+    assert search.search("茅台") == [{"code": "600519", "name": "贵州茅台", "kind": "stock"}]
     assert search.search("gzmt")[0]["name"] == "贵州茅台"
     assert search.search("ZYHK")[0]["name"] == "中远海控"
     assert search.search("byd")[0]["code"] == "002594"

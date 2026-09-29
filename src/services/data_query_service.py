@@ -20,7 +20,7 @@ from src.database.models import (
     StockScore,
     TradeSignal,
 )
-from src.utils.stock_code import bare_code, prefixed_code
+from src.utils.stock_code import bare_code, diagnosis_code, prefixed_code
 
 HIGH_IMPORTANCE_THRESHOLD = 7
 MEDIUM_IMPORTANCE_THRESHOLD = 4
@@ -45,7 +45,7 @@ class DataQueryService:
 
         with get_db_session(self.db_path) as session:
             rows = (
-                session.query(StockDiagnosis).filter(StockDiagnosis.code == bare_code(code))
+                session.query(StockDiagnosis).filter(StockDiagnosis.code == diagnosis_code(code))
                 .order_by(StockDiagnosis.created_at.desc(), StockDiagnosis.id.desc()).limit(limit).all()
             )
             result = []
@@ -85,7 +85,7 @@ class DataQueryService:
                 raw = code.strip()
                 if raw[-3:-2] == "." and raw[-2:].lower() in ("sh", "sz", "bj"):
                     raw = raw[:-3]  # 兼容 600519.SH 写法
-                query = query.filter(StockDiagnosis.code == bare_code(raw))
+                query = query.filter(StockDiagnosis.code == diagnosis_code(raw))
             if action:
                 query = query.filter(StockDiagnosis.action == (normalize_action(action) or action))
             if days and days > 0:

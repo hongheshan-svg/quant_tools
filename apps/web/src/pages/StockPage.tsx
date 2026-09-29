@@ -1,4 +1,4 @@
-// 个股详情：K 线（日/周/月）、日线数据、新闻公告、AI 诊断、加入自选
+// 个股详情：K 线（日/周/月）、日线数据、新闻公告、AI 诊断、加入自选；ETF/指数只有 K 线、日线和 AI 诊断
 import { Star } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
@@ -12,12 +12,14 @@ import { useApi } from '@/hooks/useApi'
 import { progressText, useTask } from '@/hooks/useTask'
 import { toast } from '@/stores/toast'
 import { fmtAmount, fmtNum } from '@/utils/format'
+import { FUND_LABELS, fundKind } from '@/utils/fund'
 
 type TabKey = 'kline' | 'daily' | 'news' | 'diagnosis'
 const MIN_BARS = 60
 
 export function StockPage() {
   const { code = '' } = useParams()
+  const fund = fundKind(code)
   const [tab, setTab] = useState<TabKey>('kline')
   const [period, setPeriod] = useState<Period>('day')
   const daily = useApi<DailyBar[]>(() => api.daily(code), [code])
@@ -46,8 +48,9 @@ export function StockPage() {
   }, [code, daily.loading])
 
   useEffect(() => {
+    if (fund) return // ETF / 指数不进自选股
     api.watchlist().then((rows) => setWatched(rows.some((r) => r.code === code))).catch(() => setWatched(null))
-  }, [code])
+  }, [code, fund])
 
   const toggleWatch = async () => {
     if (watched) {
@@ -78,6 +81,7 @@ export function StockPage() {
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <h1 className="text-lg font-semibold">{name || code}</h1>
         <span className="num text-muted">{code}</span>
+        {fund && <Badge tone="accent">{FUND_LABELS[fund]}</Badge>}
         {latest && (
           <>
             <span className="num text-lg">{fmtNum(latest.close)}</span>
@@ -86,7 +90,7 @@ export function StockPage() {
           </>
         )}
         {backfilling && <Badge tone="accent">本地日线不足，正在联网补齐…</Badge>}
-        {watched != null && (
+        {!fund && watched != null && (
           <Button className="ml-auto" onClick={toggleWatch}>
             <Star className={watched ? 'size-4 fill-warn text-warn' : 'size-4'} /> {watched ? '移出自选' : '加入自选'}
           </Button>
@@ -97,7 +101,12 @@ export function StockPage() {
         <Tabs<TabKey>
           value={tab}
           onChange={setTab}
-          tabs={[{ key: 'kline', label: 'K 线' }, { key: 'daily', label: '日线数据' }, { key: 'news', label: '新闻公告' }, { key: 'diagnosis', label: 'AI 诊断' }]}
+          tabs={[
+            { key: 'kline', label: 'K 线' },
+            { key: 'daily', label: '日线数据' },
+            ...(fund ? [] : [{ key: 'news' as TabKey, label: '新闻公告' }]),
+            { key: 'diagnosis', label: 'AI 诊断' },
+          ]}
         />
         {tab === 'kline' && (
           <>
@@ -111,7 +120,7 @@ export function StockPage() {
         )}
         {tab === 'daily' && <DataTable columns={dailyColumns} rows={[...bars].reverse()} rowKey={(b) => b.trade_date} maxHeight="60vh" />}
         {tab === 'news' && <NewsTab code={code} />}
-        {tab === 'diagnosis' && <DiagnosisTab code={code} />}
+        {tab === 'diagnosis' && <DiagnosisTab code={code} isFund={!!fund} />}
       </Card>
     </div>
   )
@@ -156,14 +165,14 @@ function NewsTab({ code }: { code: string }) {
   )
 }
 
-function DiagnosisTab({ code }: { code: string }) {
+function DiagnosisTab({ code, isFund }: { code: string; isFund: boolean }) {
   const { data, loading, setData } = useApi<Diagnosis | null>(() => api.latestDiagnosis(code), [code])
   const task = useTask<Diagnosis>()
   const run = () => task.run(() => api.diagnose(code)).then(setData).catch(() => {})
   return (
     <div>
       <div className="mb-3 flex items-center justify-between gap-2">
-        <p className="text-xs text-muted">结合技术面、资金、筹码、业绩、新闻公告、主线和大盘，由技术面/情报分析员与决策员给出结论（约 20~60 秒）</p>
+        <p className="text-xs text-muted">{isFund ? '结合技术面、大盘环境、对应主线和相关资讯给出结论（ETF / 指数没有资金流、筹码、业绩和公告数据，约 20~60 秒）' : '结合技术面、资金、筹码、业绩、新闻公告、主线和大盘，由技术面/情报分析员与决策员给出结论（约 20~60 秒）'}</p>
         <Link to={`/history?code=${code}`} className="ml-auto text-xs text-accent hover:underline">历史诊断</Link>
         <Button variant="primary" loading={task.running} onClick={run}>{task.running ? `诊断中 ${progressText(task.progress)}` : data ? '重新诊断' : '开始诊断'}</Button>
       </div>

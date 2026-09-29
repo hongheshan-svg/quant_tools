@@ -2,6 +2,8 @@
 AI 问股的工具集：只读本地数据库和已有的采集接口，返回给 LLM 的简短文本；不下单、不改数据。
 
 股票参数可以是代码（600519、sh600519）或名称/拼音首字母，会先经股票搜索解析成代码。
+ETF 和指数（代码 510300、sh000300，或名称沪深300）从 fund_daily 取数，只支持 resolve_stock、quote、daily_bars、
+technical、diagnosis；资金流、筹码、业绩、新闻公告等个股专属工具遇到它们返回「该工具只适用于个股」。
 """
 
 from __future__ import annotations
@@ -18,6 +20,12 @@ from src.utils.stock_code import bare_code, board_of, code_candidates
 MAX_RESULT_CHARS = 1500
 DEFAULT_BAR_DAYS = 20
 MAX_BAR_DAYS = 60
+STOCK_ONLY_TEXT = "该工具只适用于个股，不支持 ETF 和指数"
+KIND_LABELS = {"etf": "ETF", "index": "指数"}
+
+
+class StockOnlyError(ValueError):
+    """个股专属工具收到了 ETF/指数。"""
 
 
 @dataclass(frozen=True)
@@ -66,6 +74,8 @@ class ChatTools:
             return f"没有名为 {name} 的工具，可用：{'、'.join(self._handlers)}"
         try:
             text = handler(args if isinstance(args, dict) else {})
+        except StockOnlyError:
+            return STOCK_ONLY_TEXT
         except Exception as e:
             logger.warning(f"问股工具 {name} 失败: {e}")
             return f"工具执行失败：{e}"
@@ -73,13 +83,18 @@ class ChatTools:
 
     # ---- 股票解析 ----
 
-    def _resolve(self, args: dict, required: bool = True) -> tuple[str, str]:
-        """(代码, 名称)；参数为名称/拼音时先搜索。"""
+    def _resolve_kind(self, args: dict, required: bool = True) -> tuple[str, str, str]:
+        """(代码, 名称, 类型 stock/etf/index)；参数为名称/拼音时先搜索。ETF/指数返回规范代码。"""
         raw = str(args.get("code") or args.get("query") or args.get("name") or "").strip()
         if not raw:
             if required:
                 raise ValueError("缺少股票代码")
-            return "", ""
+            return "", "", "stock"
+        from src.services.fund_registry import resolve_fund
+
+        fund = resolve_fund(raw, self.db_path)
+        if fund:
+            return fund["code"], fund["name"], fund["kind"]
         bare = bare_code(raw)
         if not (len(bare) == 6 and bare.isdigit()):
             from src.services.stock_search import StockSearch
@@ -87,13 +102,31 @@ class ChatTools:
             found = StockSearch(self.db_path).search(raw, 1)
             if not found:
                 raise ValueError(f"找不到股票「{raw}」")
-            return found[0]["code"], found[0]["name"]
+            return found[0]["code"], found[0]["name"], found[0].get("kind", "stock")
         with get_db_session(self.db_path) as session:
             name = (
                 session.query(StockDaily.name).filter(StockDaily.code.in_(code_candidates(bare)), StockDaily.name.isnot(None))
                 .order_by(StockDaily.trade_date.desc()).limit(1).scalar()
             )
-        return bare, name or ""
+        return bare, name or "", "stock"
+
+    def _resolve(self, args: dict, required: bool = True) -> tuple[str, str]:
+        """(代码, 名称)，只接受个股；ETF/指数抛出 StockOnlyError（由 call() 转成说明文字）。"""
+        code, name, kind = self._resolve_kind(args, required)
+        if kind != "stock":
+            raise StockOnlyError(STOCK_ONLY_TEXT)
+        return code, name
+
+    def _fund_bars(self, code: str, min_bars: int = 0) -> list[dict]:
+        """ETF/指数日线（升序）；本地不足时联网补齐，补齐失败不影响已有数据。"""
+        from src.collectors import fund_data
+
+        try:
+            fund_data.ensure_fund_daily(code, self.db_path)
+            fund_data.refresh_recent_fund_daily(code, self.db_path)
+        except Exception as e:
+            logger.debug(f"补齐 ETF/指数日线失败 [{code}]: {e}")
+        return fund_data.get_fund_daily(code, self.db_path)
 
     # ---- 工具 ----
 
@@ -101,10 +134,22 @@ class ChatTools:
         from src.services.stock_search import StockSearch
 
         found = StockSearch(self.db_path).search(str(args.get("query") or args.get("code") or ""), 5)
-        return "；".join(f"{r['name']}({r['code']})" for r in found) or "没有找到匹配的股票"
+        return "；".join(
+            f"{r['name']}({r['code']}，{r['kind']})" if r.get("kind", "stock") != "stock" else f"{r['name']}({r['code']})"
+            for r in found
+        ) or "没有找到匹配的股票"
 
     def _tool_quote(self, args: dict) -> str:
-        code, name = self._resolve(args)
+        code, name, kind = self._resolve_kind(args)
+        if kind != "stock":
+            bars = self._fund_bars(code)
+            if not bars:
+                return f"{name}({code}) 行情库中没有数据"
+            b = bars[-1]
+            parts = [f"{b['name'] or name}({code}) {KIND_LABELS[kind]} {b['trade_date']} 收盘 {b['close']}（{b['change_pct'] or 0:+.2f}%）"]
+            if b.get("amount"):
+                parts.append(f"成交约 {b['amount'] / 1e8:.2f} 亿")
+            return "，".join(parts)
         with get_db_session(self.db_path) as session:
             b = (
                 session.query(StockDaily).filter(StockDaily.code.in_(code_candidates(code)))
@@ -129,8 +174,13 @@ class ChatTools:
     def _tool_daily_bars(self, args: dict) -> str:
         from src.collectors.daily_history import ensure_daily_history
 
-        code, name = self._resolve(args)
+        code, name, kind = self._resolve_kind(args)
         days = max(1, min(int(args.get("days") or DEFAULT_BAR_DAYS), MAX_BAR_DAYS))
+        if kind != "stock":
+            bars = [b for b in self._fund_bars(code) if b["close"]][-days:]
+            if not bars:
+                return f"{name}({code}) 没有日线数据"
+            return f"{name}({code}) 近 {len(bars)} 日：" + "；".join(f"{b['trade_date'][5:]} {b['close']}({b['change_pct'] or 0:+.1f}%)" for b in bars)
         ensure_daily_history(code, self.db_path, name)
         with get_db_session(self.db_path) as session:
             rows = (
@@ -148,7 +198,15 @@ class ChatTools:
         from src.collectors.daily_history import ensure_daily_history
         from src.strategy.tech_score import analyze_technical
 
-        code, name = self._resolve(args)
+        code, name, kind = self._resolve_kind(args)
+        if kind != "stock":
+            from src.strategy.tech_score import analyze_series
+
+            bars = self._fund_bars(code)
+            tech = analyze_series([b["close"] for b in bars if b["close"]], [b["volume"] for b in bars if b["volume"]],
+                                  [b["change_pct"] for b in bars if b["change_pct"] is not None])
+            text = f"{name}({code}) 技术评分 {tech.score:.0f}：{tech.brief() or '日线不足'}"
+            return text + (f"；利好信号：{'、'.join(tech.reasons)}" if tech.reasons else "")
         ensure_daily_history(code, self.db_path, name)
         tech = analyze_technical(code, self.db_path)
         text = f"{name}({code}) 技术评分 {tech.score:.0f}：{tech.brief() or '日线不足'}"
@@ -267,10 +325,12 @@ class ChatTools:
         return "\n".join(texts)
 
     def _tool_diagnosis(self, args: dict) -> str:
+        from src.services.fund_diagnosis import FundDiagnosisService
         from src.services.stock_diagnosis import StockDiagnosisService
 
-        code, name = self._resolve(args)
-        result = StockDiagnosisService(self.config).latest(code)
+        code, name, kind = self._resolve_kind(args)
+        service = StockDiagnosisService(self.config) if kind == "stock" else FundDiagnosisService(self.config)
+        result = service.latest(code)
         if not result:
             return f"{name}({code}) 还没有 AI 诊断记录"
         return (f"{result['name']}({code}) {result['created_at']} 诊断：{result['action_label']}，评分 {result['score']}；"

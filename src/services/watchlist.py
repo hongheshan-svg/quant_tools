@@ -133,7 +133,11 @@ class WatchlistService:
         query = (text or "").strip()
         if not query:
             return None
-        found = StockSearch(self.db_path).search(query, 5)
+        from src.services.fund_registry import resolve_fund
+
+        if resolve_fund(query, self.db_path):  # ETF 和指数不进自选股
+            return None
+        found = [r for r in StockSearch(self.db_path).search(query, 10) if r.get("kind", "stock") == "stock"][:5]
         exact = next((r for r in found if r["code"] == bare_code(query) or r["name"] == query), None)
         if exact:
             return exact["code"], exact["name"]

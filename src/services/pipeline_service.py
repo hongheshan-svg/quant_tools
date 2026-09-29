@@ -203,17 +203,28 @@ class PipelineService:
 
     def diagnose_stock(self, code: str, force: bool = False) -> dict[str, Any]:
         """个股 AI 诊断（决策仪表盘）；30 分钟内的结果直接复用，force=True 时重新诊断。"""
+        from src.services.fund_registry import resolve_fund
         from src.services.stock_diagnosis import StockDiagnosisService
 
         try:
+            if resolve_fund(code, self.db_path):  # ETF / 指数走基金诊断，个股逻辑不变
+                from src.services.fund_diagnosis import FundDiagnosisService
+
+                return FundDiagnosisService(self.config).diagnose(code, force=force)
             return StockDiagnosisService(self.config).diagnose(code, force=force)
         except Exception as e:
             logger.error(f"个股诊断异常 [{code}]: {e}")
             return {"code": code, "error": str(e)}
 
     def latest_diagnosis(self, code: str) -> dict[str, Any] | None:
+        from src.services.fund_registry import resolve_fund
         from src.services.stock_diagnosis import StockDiagnosisService
 
+        fund = resolve_fund(code, self.db_path)
+        if fund:  # 按规范代码查询
+            from src.services.fund_diagnosis import FundDiagnosisService
+
+            return FundDiagnosisService(self.config).latest(fund["code"])
         return StockDiagnosisService(self.config).latest(code)
 
     def diagnosis_history(self, code: str, limit: int = 5) -> list[dict[str, Any]]:

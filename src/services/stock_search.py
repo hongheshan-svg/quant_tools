@@ -3,7 +3,8 @@
 
 股票列表取 stock_info（交易所官方列表）和最新一天的全市场行情，进程内缓存 12 小时。
 多音字按所有读音生成首字母组合（如「朝阳」同时匹配 zy 和 cy）。
-排序：代码完全匹配 > 代码/名称/首字母前缀 > 名称包含 > 首字母包含。
+排序：代码完全匹配 > 代码/名称/首字母前缀 > 名称包含 > 首字母包含；同一档次个股排在 ETF 和指数前面。
+结果带 kind：stock 个股、etf ETF、index 指数（指数的代码带交易所前缀，如 sh000300）。
 """
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ def name_initials(name: str) -> tuple[str, ...]:
 
 
 class StockSearch:
-    _entries: list[tuple[str, str, tuple[str, ...]]] = []
+    _entries: list[tuple[str, str, tuple[str, ...], str]] = []
     _built_at: datetime | None = None
     _db_path = ""
     _lock = threading.Lock()
@@ -50,7 +51,7 @@ class StockSearch:
     def __init__(self, db_path: str):
         self.db_path = db_path
 
-    def _ensure_index(self) -> list[tuple[str, str, tuple[str, ...]]]:
+    def _ensure_index(self) -> list[tuple[str, str, tuple[str, ...], str]]:
         cls = StockSearch
         with cls._lock:
             fresh = cls._built_at and datetime.now() - cls._built_at < timedelta(hours=INDEX_TTL_HOURS)
@@ -61,7 +62,7 @@ class StockSearch:
             cls._entries, cls._built_at, cls._db_path = entries, datetime.now(), self.db_path
         return entries
 
-    def _build(self) -> list[tuple[str, str, tuple[str, ...]]]:
+    def _build(self) -> list[tuple[str, str, tuple[str, ...], str]]:
         names: dict[str, str] = {}
         try:
             with get_db_session(self.db_path) as session:
@@ -75,9 +76,17 @@ class StockSearch:
                         names[bare_code(code)] = name.strip()
         except Exception as e:
             logger.warning(f"股票搜索索引构建失败: {e}")
-        entries = [(code, name, name_initials(name)) for code, name in sorted(names.items())
+        entries = [(code, name, name_initials(name), "stock") for code, name in sorted(names.items())
                    if len(code) == 6 and code.isdigit()]
-        logger.debug(f"股票搜索索引：{len(entries)} 只")
+        try:
+            from src.services.fund_registry import INDEX_CODES, list_funds
+
+            for fund in list_funds(self.db_path):
+                extra = tuple(a.lower() for a in INDEX_CODES.get(fund["code"], {}).get("aliases", ()) if a.isascii())
+                entries.append((fund["code"], fund["name"], (*name_initials(fund["name"]), *extra), fund["kind"]))
+        except Exception as e:
+            logger.warning(f"ETF/指数搜索索引构建失败: {e}")
+        logger.debug(f"股票搜索索引：{len(entries)} 条")
         return entries
 
     def search(self, text: str, limit: int = 20) -> list[dict[str, Any]]:
@@ -86,13 +95,19 @@ class StockSearch:
             return []
         lowered = _NON_ALNUM.sub("", query.lower())
         code_query = bare_code(lowered) if lowered.isdigit() or (lowered[:2] in ("sh", "sz", "bj") and lowered[2:].isdigit()) else ""
+        prefixed = lowered[:2] if code_query and lowered != code_query else ""  # 输入了交易所前缀
         scored = []
-        for code, name, initials in self._ensure_index():
-            rank = self._rank(query, lowered, code_query, code, name, initials)
+        for code, name, initials, kind in self._ensure_index():
+            if kind == "index":  # 指数代码带前缀，按 6 位数字匹配；输入了前缀时必须一致
+                if prefixed and not code.startswith(prefixed):
+                    continue
+                rank = self._rank(query, lowered, code_query, code[2:], name, initials)
+            else:
+                rank = self._rank(query, lowered, code_query, code, name, initials)
             if rank is not None:
-                scored.append((rank, code, name))
+                scored.append((rank, kind != "stock", code, name, kind))
         scored.sort()
-        return [{"code": code, "name": name} for _, code, name in scored[:limit]]
+        return [{"code": code, "name": name, "kind": kind} for _, _, code, name, kind in scored[:limit]]
 
     @staticmethod
     def _rank(query: str, lowered: str, code_query: str, code: str, name: str, initials: tuple[str, ...]) -> int | None:

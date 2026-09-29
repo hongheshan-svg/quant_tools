@@ -132,16 +132,25 @@ class CommandRouter:
     def _help(self, message: BotMessage, args: str, progress) -> str:
         return HELP_TEXT
 
-    def _resolve(self, text: str) -> tuple[str, str] | None:
+    def _resolve(self, text: str, funds: bool = False) -> tuple[str, str] | None:
+        """funds=True 时先识别 ETF/指数（诊断类命令用）；自选股等仍只接受个股。"""
         from src.services.watchlist import WatchlistService
 
         query = _FILLER.sub("", text.strip())
-        return WatchlistService(self.config).resolve(query) if query else None
+        if not query:
+            return None
+        if funds:
+            from src.services.fund_registry import resolve_fund
+
+            fund = resolve_fund(query, WatchlistService(self.config).db_path)
+            if fund:
+                return fund["code"], fund["name"]
+        return WatchlistService(self.config).resolve(query)
 
     def _diagnose(self, message: BotMessage, args: str, progress) -> str:
         if not args:
             return "请带上股票，例如：诊断 茅台"
-        resolved = self._resolve(args)
+        resolved = self._resolve(args, funds=True)
         if not resolved:
             # 「分析一下最近的行情」这类不是个股诊断，交给问股
             return self._chat(message, message.text.strip(), progress)
@@ -161,7 +170,7 @@ class CommandRouter:
         resolved: list[tuple[str, str]] = []
         failed: list[str] = []
         for token in tokens[:MAX_BATCH]:
-            found = self._resolve(token)
+            found = self._resolve(token, funds=True)
             if found and found not in resolved:
                 resolved.append(found)
             elif not found:
@@ -187,7 +196,7 @@ class CommandRouter:
         return "\n".join(lines)
 
     def _history(self, message: BotMessage, args: str, progress) -> str | None:
-        resolved = self._resolve(args) if args.strip() else None
+        resolved = self._resolve(args, funds=True) if args.strip() else None
         if not resolved:
             return None  # 「历史上茅台涨过几次停」这类不是查诊断记录，交给问股
         from src.analyzers.decision import ACTION_LABELS

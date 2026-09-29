@@ -172,6 +172,7 @@ export interface Theme {
 export interface StockRef {
   code: string
   name: string
+  kind?: 'stock' | 'etf' | 'index'
 }
 
 export interface DailyBar {
@@ -271,6 +272,7 @@ export interface Diagnosis {
   agents: AgentOpinion[]
   disagreement: string
   calibration: string
+  kind?: 'etf' | 'index'
   error?: string
   cached?: boolean
 }
