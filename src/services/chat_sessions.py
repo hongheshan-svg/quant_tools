@@ -9,7 +9,7 @@ import json
 import threading
 import uuid
 from dataclasses import asdict
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from src.config_loader import load_config
 from src.database.db import get_db_session
@@ -22,6 +22,7 @@ TITLE_CHARS = 40
 class ChatSessionStore:
     _locks: dict[str, threading.Lock] = {}
     _locks_guard = threading.Lock()
+    _cancels: dict[str, threading.Event] = {}
 
     def __init__(self, config: dict | None = None, session_factory: Callable[[dict], StockChatSession] | None = None):
         self.config = config or load_config()
@@ -79,6 +80,49 @@ class ChatSessionStore:
                 if perspective:
                     r.perspective = perspective
             return asdict(turn)
+
+    def ask_stream(self, session_id: str, question: str, perspective: str | None = None,
+                   cancel: threading.Event | None = None) -> Iterator[dict[str, Any]]:
+        """流式提问：整个流期间持有会话锁，结束（含中途关闭）后持久化；未知会话抛 KeyError。"""
+        record = self.get(session_id)
+        if record is None:
+            raise KeyError(session_id)
+        return self._ask_stream(session_id, question, perspective, cancel or threading.Event())
+
+    def _ask_stream(self, session_id: str, question: str, perspective: str | None,
+                    cancel: threading.Event) -> Iterator[dict[str, Any]]:
+        with self._lock(session_id):
+            record = self.get(session_id)
+            if record is None:
+                raise KeyError(session_id)
+            chat = self._restore(record)
+            before = len(chat.turns)
+            with self._locks_guard:
+                self._cancels[session_id] = cancel
+            try:
+                yield from chat.ask_stream(question, perspective or record["perspective"] or "综合", cancel=cancel)
+            finally:
+                with self._locks_guard:
+                    if self._cancels.get(session_id) is cancel:
+                        del self._cancels[session_id]
+                if len(chat.turns) > before:
+                    with get_db_session(self.db_path) as session:
+                        r = session.get(ChatSessionRecord, session_id)
+                        if r is not None:
+                            r.turns_json = json.dumps([asdict(t) for t in chat.turns], ensure_ascii=False)
+                            if not record["turns"]:
+                                r.title = question.strip()[:TITLE_CHARS] or "新会话"
+                            if perspective:
+                                r.perspective = perspective
+
+    def cancel(self, session_id: str) -> bool:
+        """取消该会话正在进行的流；没有进行中的流返回 False。"""
+        with self._locks_guard:
+            event = self._cancels.get(session_id)
+        if event is None:
+            return False
+        event.set()
+        return True
 
     def export_markdown(self, session_id: str) -> str | None:
         record = self.get(session_id)

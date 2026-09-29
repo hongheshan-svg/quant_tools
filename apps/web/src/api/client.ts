@@ -53,4 +53,53 @@ export const http = {
     form.append('file', file)
     return request<T>(path, { method: 'POST', body: form })
   },
+  /** POST + SSE：按空行切分事件（一个事件可能跨多个 chunk），每个 `data:` 行的 JSON 交给 onEvent；流结束时 resolve */
+  stream: async <E = unknown>(
+    path: string,
+    data: unknown,
+    opts: { onEvent: (event: E) => void; signal?: AbortSignal },
+  ): Promise<void> => {
+    const res = await fetch(`${API_BASE}${path}`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      body: json(data),
+      signal: opts.signal,
+    })
+    if (!res.ok) {
+      const body = await res.json().catch(() => null)
+      const message = detailOf(body, `请求失败（${res.status}）`)
+      if (res.status === 401) window.dispatchEvent(new CustomEvent('auth:required', { detail: message }))
+      throw new ApiError(message, res.status)
+    }
+    if (!res.body) throw new ApiError('浏览器不支持流式响应', 0)
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    const flush = (block: string) => {
+      const payload = block
+        .split('\n')
+        .filter((l) => l.startsWith('data:'))
+        .map((l) => l.slice(5).replace(/^ /, ''))
+        .join('\n')
+      if (!payload) return
+      try {
+        opts.onEvent(JSON.parse(payload) as E)
+      } catch {
+        /* 忽略无法解析的事件 */
+      }
+    }
+    for (;;) {
+      const { value, done } = await reader.read()
+      buffer += decoder.decode(value, { stream: !done })
+      buffer = buffer.replace(/\r\n/g, '\n')
+      let idx: number
+      while ((idx = buffer.indexOf('\n\n')) >= 0) {
+        flush(buffer.slice(0, idx))
+        buffer = buffer.slice(idx + 2)
+      }
+      if (done) break
+    }
+    if (buffer.trim()) flush(buffer)
+  },
 }

@@ -1,7 +1,8 @@
 // AI 问股：会话列表 + 多轮对话；提问作为后台任务执行，显示正在查询的数据
-import { Download, Plus, Send, Share2, Trash2 } from 'lucide-react'
+import { Download, Plus, Send, Share2, Square, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
+import { ApiError } from '@/api/client'
 import { api } from '@/api/endpoints'
 import type { ChatSession, ChatSkill, ChatTurn } from '@/api/types'
 import { Markdown } from '@/components/Markdown'
@@ -10,6 +11,13 @@ import { useApi } from '@/hooks/useApi'
 import { progressText, useTask } from '@/hooks/useTask'
 import { toast } from '@/stores/toast'
 import { cn } from '@/utils/cn'
+
+// 流式回答进行中的临时状态
+interface Live {
+  status: string
+  tools: string[]
+  answer: string
+}
 
 const EXAMPLES = ['中远海控现在能买吗？止损放哪？', '今天的主线是什么，龙头是谁？', '我的持仓风险大吗？', '用龙回头的标准看看招商轮船']
 
@@ -50,6 +58,8 @@ export function ChatPage() {
   const [perspective, setPerspective] = useState('综合')
   const [question, setQuestion] = useState('')
   const [pending, setPending] = useState('')
+  const [live, setLive] = useState<Live | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
   const ask = useTask<ChatTurn>()
   const groups = groupSkills(skills.data ?? [])
   const current = (skills.data ?? []).find((s) => s.display_name === perspective)
@@ -66,11 +76,11 @@ export function ChatPage() {
     }).catch(() => navigate('/chat'))
   }, [sessionId, navigate])
 
-  useEffect(() => bottom.current?.scrollIntoView?.({ behavior: 'smooth' }), [session?.turns.length, pending])
+  useEffect(() => bottom.current?.scrollIntoView?.({ behavior: 'smooth' }), [session?.turns.length, pending, live?.answer])
 
   const send = async (text = question) => {
     const q = text.trim()
-    if (!q || ask.running) return
+    if (!q || ask.running || pending) return
     let current = session
     if (!current) {
       current = await api.createChat(perspective)
@@ -79,15 +89,71 @@ export function ChatPage() {
     }
     setQuestion('')
     setPending(q)
+    const sid = current.id
+    const controller = new AbortController()
+    abortRef.current = controller
+    const state: Live = { status: '思考中', tools: [], answer: '' }
+    setLive({ ...state })
+    let received = false
+    let doneTurn: ChatTurn | null = null
+    let streamError = ''
     try {
-      const turn = await ask.run(() => api.ask(current!.id, q, perspective))
-      setSession((s) => (s ? { ...s, turns: [...s.turns, turn] } : s))
-      void sessions.reload()
-    } catch {
-      setQuestion(q)
+      await api.askStream(sid, q, perspective, {
+        signal: controller.signal,
+        onEvent: (ev) => {
+          received = true
+          if (ev.type === 'status') state.status = ev.text
+          else if (ev.type === 'tool') state.tools = [...state.tools, ev.label]
+          else if (ev.type === 'delta') state.answer += ev.text
+          else if (ev.type === 'error') streamError = ev.message
+          else if (ev.type === 'done') doneTurn = { ...ev.turn, tools: ev.turn.tools.map((t) => ({ ...t, result: '' })) }
+          setLive({ ...state })
+        },
+      })
+      if (doneTurn) {
+        const turn: ChatTurn = doneTurn
+        setSession((s) => (s ? { ...s, turns: [...s.turns, turn] } : s))
+        void sessions.reload()
+      } else if (streamError) {
+        toast.error(streamError)
+        setQuestion(q)
+      }
+    } catch (e) {
+      if (controller.signal.aborted) {
+        // 用户点了「停止」：保留已生成的部分回答
+        const turn: ChatTurn = {
+          question: q, answer: state.answer, perspective, tools: [], error: '已取消',
+          asked_at: new Date().toLocaleString('sv').slice(0, 16),
+        }
+        setSession((s) => (s ? { ...s, turns: [...s.turns, turn] } : s))
+        void sessions.reload()
+      } else if (e instanceof ApiError && e.status === 401) {
+        setQuestion(q)
+      } else if (!received || (e instanceof ApiError && e.status === 404)) {
+        // 流式不可用：回退到后台任务轮询
+        try {
+          const turn = await ask.run(() => api.ask(sid, q, perspective))
+          setSession((s) => (s ? { ...s, turns: [...s.turns, turn] } : s))
+          void sessions.reload()
+        } catch {
+          setQuestion(q)
+        }
+      } else {
+        toast.error(e instanceof Error ? e.message : '连接中断')
+        setQuestion(q)
+      }
     } finally {
+      abortRef.current = null
+      setLive(null)
       setPending('')
     }
+  }
+
+  const stop = () => {
+    const controller = abortRef.current
+    if (!controller || !session) return
+    void api.cancelChat(session.id).catch(() => undefined)
+    controller.abort()
   }
 
   const remove = async (id: string) => {
@@ -144,7 +210,15 @@ export function ChatPage() {
             {pending && (
               <div className="space-y-2">
                 <div className="ml-auto w-fit max-w-[85%] rounded-lg bg-accent-strong/20 px-3 py-2 text-sm">{pending}</div>
-                <Spinner text={progressText(ask.progress) || '思考中…'} />
+                {live?.tools.length ? (
+                  <div className="flex flex-wrap gap-1 text-xs text-muted">
+                    {live.tools.map((t, i) => <span key={i} className="rounded border border-line px-1.5 py-0.5">{t}</span>)}
+                  </div>
+                ) : null}
+                {live?.answer ? (
+                  <div className="rounded-lg border border-line bg-panel-2 px-3 py-2"><Markdown text={live.answer} /></div>
+                ) : null}
+                <Spinner text={live ? live.status : progressText(ask.progress) || '思考中…'} />
               </div>
             )}
             <div ref={bottom} />
@@ -174,9 +248,15 @@ export function ChatPage() {
                 }
               }}
             />
-            <Button variant="primary" loading={ask.running} onClick={() => void send()} aria-label="发送">
-              <Send className="size-4" /> 发送
-            </Button>
+            {live ? (
+              <Button onClick={stop} aria-label="停止">
+                <Square className="size-4" /> 停止
+              </Button>
+            ) : (
+              <Button variant="primary" loading={ask.running} onClick={() => void send()} aria-label="发送">
+                <Send className="size-4" /> 发送
+              </Button>
+            )}
           </div>
         </Card>
       </div>

@@ -446,6 +446,14 @@ export interface ChatTurn {
   asked_at: string
 }
 
+export type ChatStreamEvent =
+  | { type: 'status'; text: string }
+  | { type: 'tool'; name: string; label: string; args: Dict }
+  | { type: 'tool_result'; name: string; label: string; summary: string }
+  | { type: 'delta'; text: string }
+  | { type: 'error'; message: string }
+  | { type: 'done'; turn: Omit<ChatTurn, 'tools'> & { tools: { name: string; label: string; args: Dict }[] } }
+
 export interface ChatSessionSummary {
   id: string
   title: string

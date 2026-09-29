@@ -74,6 +74,13 @@ export const api = {
   deleteChat: (id: string) => http.del<{ ok: boolean }>(`/chat/sessions/${id}`),
   ask: (id: string, question: string, perspective?: string) =>
     http.post<T.Task<T.ChatTurn>>(`/chat/sessions/${id}/ask`, { question, perspective }),
+  askStream: (
+    id: string,
+    question: string,
+    perspective: string | undefined,
+    handlers: { onEvent: (event: T.ChatStreamEvent) => void; signal?: AbortSignal },
+  ) => http.stream<T.ChatStreamEvent>(`/chat/sessions/${id}/ask/stream`, { question, perspective }, handlers),
+  cancelChat: (id: string) => http.post<{ ok: boolean }>(`/chat/sessions/${id}/cancel`),
   exportChatUrl: (id: string) => `/api/v1/chat/sessions/${id}/export`,
   pushChat: (id: string) => http.post<{ pushed: boolean; reason?: string }>(`/chat/sessions/${id}/push`),
 

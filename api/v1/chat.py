@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from api.deps import bad_request, get_pipeline, get_tasks, not_found
@@ -79,6 +80,35 @@ def ask(session_id: str, body: AskBody, store: ChatSessionStore = Depends(get_st
 
     perspective = normalize_perspective(body.perspective) if body.perspective else None  # 支持英文名和别名
     return tasks.submit("chat", store.ask, session_id, body.question, perspective, label="AI 问股")
+
+
+@router.post("/sessions/{session_id}/ask/stream")
+def ask_stream(session_id: str, body: AskBody, store: ChatSessionStore = Depends(get_store)) -> StreamingResponse:
+    """流式提问（SSE）：每个事件一行 data: {json}，最后一个事件是 done。"""
+    if store.get(session_id) is None:
+        raise not_found("会话不存在")
+    from src.services.stock_chat import normalize_perspective
+
+    perspective = normalize_perspective(body.perspective) if body.perspective else None
+    try:
+        events = store.ask_stream(session_id, body.question, perspective)
+    except KeyError:
+        raise not_found("会话不存在")
+
+    def generate():
+        try:
+            for event in events:
+                yield f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
+        finally:
+            events.close()
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.post("/sessions/{session_id}/cancel")
+def cancel(session_id: str, store: ChatSessionStore = Depends(get_store)) -> dict[str, Any]:
+    return {"ok": store.cancel(session_id)}
 
 
 @router.get("/sessions/{session_id}/export", response_class=PlainTextResponse)
