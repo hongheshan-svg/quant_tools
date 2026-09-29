@@ -299,6 +299,7 @@ def _run_self_learning(config: dict):
 JOBS: dict[str, tuple[str, Callable[[dict], None]]] = {
     "hot_search": ("热搜数据采集", _run_hot_search_collection),
     "cailianshe": ("财联社快讯采集", _run_cailianshe_collection),
+    "rss": ("RSS 资讯源采集", _run_rss_collection),
     "stock_data": ("行情数据采集", _run_stock_data_collection),
     "global_data": ("国际数据采集", _run_global_data_collection),
     "daily_analysis": ("每日综合分析", _run_daily_analysis),
@@ -385,7 +386,7 @@ def build_scheduler(config: dict, scheduler=None):
             trigger=IntervalTrigger(minutes=max(5, int(intel_cfg.get("interval_minutes", 30) or 30))),
             args=[config],
             id="rss",
-            name="RSS 资讯源采集",
+            name=JOBS["rss"][0],
         )
 
     # 行情数据采集（每15分钟，交易时间内）

@@ -13,7 +13,8 @@ from tests.test_api import _wait, env  # noqa: F401  (env 是 pytest fixture)
 def test_jobs_cover_registered_ids():
     built = sched.build_scheduler({}, BackgroundScheduler())
     ids = {j.id for j in built.get_jobs()}
-    assert ids == set(sched.JOBS)
+    assert ids <= set(sched.JOBS)
+    assert set(sched.JOBS) - ids == {"rss"}     # 没有启用的资讯源时不注册 rss
     for job in built.get_jobs():
         assert job.name == sched.JOBS[job.id][0]
         assert callable(sched.JOBS[job.id][1])
@@ -22,7 +23,7 @@ def test_jobs_cover_registered_ids():
 def test_describe_jobs_with_scheduler():
     built = sched.build_scheduler({}, BackgroundScheduler())
     rows = {r["id"]: r for r in sched.describe_jobs(built)}
-    assert set(rows) == set(sched.JOBS)
+    assert set(rows) == set(sched.JOBS) - {"rss"}
     for key in ("hot_search", "cailianshe", "stock_data", "global_data"):
         assert "分钟" in rows[key]["trigger"]
     for key in ("daily_analysis", "signal_generation", "daily_report", "watchlist_report", "self_learning"):
@@ -33,6 +34,18 @@ def test_describe_jobs_with_scheduler():
         assert {"id", "name", "trigger", "next_run_time", "paused"} <= set(row)
         assert row["name"] == sched.JOBS[row["id"]][0]
         assert row["paused"] is False
+
+
+RSS_CONFIG = {"intelligence": {"enabled": True, "sources": [
+    {"name": "x", "url": "https://e.com/f.xml", "enabled": True}]}}
+
+
+def test_rss_job_registered_with_enabled_source():
+    built = sched.build_scheduler(RSS_CONFIG, BackgroundScheduler())
+    assert {j.id for j in built.get_jobs()} == set(sched.JOBS)
+    rows = {r["id"]: r for r in sched.describe_jobs(built)}
+    assert rows["rss"]["name"] == sched.JOBS["rss"][0]
+    assert "分钟" in rows["rss"]["trigger"]
 
 
 def test_describe_jobs_uses_config_intervals():
