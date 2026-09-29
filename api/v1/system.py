@@ -6,6 +6,7 @@ import copy
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request, Response
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from api.auth import COOKIE_NAME, AuthStore
@@ -107,6 +108,33 @@ def get_task(task_id: str, tasks: TaskManager = Depends(get_tasks)) -> dict[str,
     if task is None:
         raise not_found("任务不存在或已过期")
     return task
+
+
+# ---------- 定时任务面板 ----------
+
+@router.get("/system/scheduler")
+def scheduler_status(request: Request) -> dict[str, Any]:
+    from src.scheduler import describe_jobs
+
+    scheduler = getattr(request.app.state, "scheduler", None)
+    running = scheduler is not None
+    return {
+        "running": running,
+        "message": "" if running else "本进程没有运行定时任务（--no-scheduler 或 web.scheduler=false），可能由 main.py 负责",
+        "jobs": describe_jobs(scheduler),
+    }
+
+
+@router.post("/system/scheduler/{job_id}/run")
+def run_job_now(job_id: str, tasks: TaskManager = Depends(get_tasks),
+                pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
+    """立即运行一个定时任务（后台任务）；行情和分析类任务在非交易日会自行跳过"""
+    from src.scheduler import JOBS
+
+    if job_id not in JOBS:
+        raise not_found("未知的定时任务")
+    name, fn = JOBS[job_id]
+    return tasks.submit("job", fn, pipeline.config, dedupe_key=f"job:{job_id}", label=f"立即运行：{name}")
 
 
 # ---------- 大模型用量 ----------
@@ -369,3 +397,36 @@ def save_bot_settings(body: BotBody, request: Request, config: dict = Depends(ge
     was_running = running_bots()
     started = start_bots(new_config, request.app.state.pipeline) if request.app.state.background else []
     return {"ok": True, "started": started, "restart_required": bool(was_running), "background": request.app.state.background}
+
+
+# ---------- 配置备份与恢复 ----------
+
+class ImportBody(BaseModel):
+    yaml: str
+
+
+@router.get("/settings/export")
+def export_settings_file(include_secrets: bool = False) -> PlainTextResponse:
+    from datetime import date
+
+    from src.settings_store import export_settings
+
+    filename = f"settings-{date.today():%Y%m%d}.yaml"
+    return PlainTextResponse(export_settings(include_secrets), media_type="text/yaml; charset=utf-8",
+                             headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@router.post("/settings/import")
+def import_settings_file(body: ImportBody, request: Request) -> dict[str, Any]:
+    """导入配置覆盖 settings.yaml；值为 ****** 的密钥沿用当前配置"""
+    from src.config_loader import reload_config
+    from src.settings_store import import_settings
+
+    from api.app import apply_config
+
+    try:
+        result = import_settings(body.yaml)
+    except ValueError as e:
+        raise bad_request(str(e))
+    apply_config(request.app, reload_config())
+    return result

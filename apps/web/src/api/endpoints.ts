@@ -13,6 +13,8 @@ export const api = {
   task: (id: string) => http.get<T.Task>(`/tasks/${id}`),
   tasks: () => http.get<T.Task[]>('/tasks'),
   sources: () => http.get<T.SourceStatus[]>('/system/sources'),
+  scheduler: () => http.get<T.SchedulerStatus>('/system/scheduler'),
+  runJob: (id: string) => http.post<T.Task>(`/system/scheduler/${id}/run`),
   usage: (days: number) => http.get<T.UsageSummary>('/usage', { days }),
 
   // 首页与大盘
@@ -101,6 +103,8 @@ export const api = {
     http.put<{ ok: boolean }>(`/real/plans/${code}`, { stop_loss, target_price }),
 
   // 设置
+  exportSettingsUrl: (includeSecrets: boolean) => `/api/v1/settings/export?include_secrets=${includeSecrets}`,
+  importSettings: (yaml: string) => http.post<T.SettingsImportResult>('/settings/import', { yaml }),
   setWebAuth: (auth_enabled: boolean, password = '') => http.put<{ ok: boolean }>('/settings/web-auth', { auth_enabled, password }),
   llmSettings: () => http.get<T.LLMSettings>('/settings/llm'),
   saveLlm: (llm: Record<string, unknown>) => http.put<{ ok: boolean }>('/settings/llm', { llm }),

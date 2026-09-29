@@ -1,13 +1,15 @@
 // 设置：AI 模型（主/备）、推送渠道与路由、聊天机器人、登录安全；在桌面端里多一个「桌面端」页
 import { useEffect, useState } from 'react'
 import { api } from '@/api/endpoints'
-import type { AuthStatus, BotSettings, LLMRole, LLMSettings, NotifierDiagnosis, NotifierField, NotifierSettings, SearchTestResult } from '@/api/types'
+import type { AuthStatus, SchedulerJob, SchedulerStatus, SettingsImportResult, BotSettings, LLMRole, LLMSettings, NotifierDiagnosis, NotifierField, NotifierSettings, SearchTestResult } from '@/api/types'
+import { DataTable } from '@/components/DataTable'
 import { Button, Card, ErrorBox, Field, Input, PageHeader, Select, Spinner, Tabs, Textarea } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
+import { useTask } from '@/hooks/useTask'
 import { toast } from '@/stores/toast'
 import { getDesktop, type DesktopInfo, type QuantDesktop } from '@/utils/desktop'
 
-type TabKey = 'llm' | 'notifier' | 'bot' | 'search' | 'security' | 'desktop'
+type TabKey = 'llm' | 'notifier' | 'bot' | 'search' | 'scheduler' | 'backup' | 'security' | 'desktop'
 
 export function SettingsPage() {
   const [tab, setTab] = useState<TabKey>('llm')
@@ -17,6 +19,8 @@ export function SettingsPage() {
     { key: 'notifier', label: '推送' },
     { key: 'bot', label: '聊天机器人' },
     { key: 'search', label: '联网搜索' },
+    { key: 'scheduler', label: '定时任务' },
+    { key: 'backup', label: '备份与恢复' },
     { key: 'security', label: '登录安全' },
   ]
   if (desktop) tabs.push({ key: 'desktop', label: '桌面端' })
@@ -29,6 +33,8 @@ export function SettingsPage() {
         {tab === 'notifier' && <NotifierForm />}
         {tab === 'bot' && <BotForm />}
         {tab === 'search' && <SearchForm />}
+        {tab === 'scheduler' && <SchedulerPanel />}
+        {tab === 'backup' && <BackupPanel />}
         {tab === 'security' && <SecurityForm />}
         {tab === 'desktop' && desktop && <DesktopPanel desktop={desktop} />}
       </Card>
@@ -517,6 +523,111 @@ function SearchForm() {
           ))}
         </ul>
       )}
+    </div>
+  )
+}
+
+function SchedulerPanel() {
+  const status = useApi<SchedulerStatus>(api.scheduler)
+  const { run } = useTask()
+  const [runningId, setRunningId] = useState('')
+  if (status.error) return <ErrorBox message={status.error} />
+  if (!status.data) return <Spinner />
+  const { running, message, jobs } = status.data
+  const runNow = async (job: SchedulerJob) => {
+    setRunningId(job.id)
+    try {
+      await run(() => api.runJob(job.id), { success: `${job.name}已运行完成` })
+    } catch {
+      // 错误已由 useTask 提示
+    } finally {
+      setRunningId('')
+      status.reload()
+    }
+  }
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-muted">
+        {running ? '本进程正在运行定时任务。' : message}非交易日会跳过行情和分析类任务。
+      </p>
+      <DataTable
+        rows={jobs}
+        rowKey={(j) => j.id}
+        columns={[
+          { key: 'name', title: '任务', render: (j) => j.name },
+          { key: 'trigger', title: '触发规则', render: (j) => j.trigger || '-' },
+          { key: 'next', title: '下次运行', render: (j) => (j.next_run_time ? j.next_run_time.replace('T', ' ').slice(0, 19) : '-') },
+          { key: 'state', title: '状态', render: (j) => (!running ? '未运行' : j.paused ? '已暂停' : '正常') },
+          {
+            key: 'op',
+            title: '操作',
+            render: (j) => (
+              <Button loading={runningId === j.id} disabled={!!runningId} onClick={() => runNow(j)}>
+                立即运行
+              </Button>
+            ),
+          },
+        ]}
+      />
+    </div>
+  )
+}
+
+function BackupPanel() {
+  const [includeSecrets, setIncludeSecrets] = useState(false)
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<SettingsImportResult | null>(null)
+
+  const pickFile = async (file: File | undefined) => {
+    if (file) setText(await file.text())
+  }
+  const doImport = async () => {
+    if (!text.trim()) return toast.error('请先选择文件或粘贴配置内容')
+    if (!window.confirm('导入会整体覆盖当前 settings.yaml，确定继续吗？')) return
+    setBusy(true)
+    try {
+      setResult(await api.importSettings(text))
+      toast.success('配置已导入并生效')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="space-y-6">
+      <section className="space-y-2">
+        <h3 className="text-sm font-medium">导出配置</h3>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={includeSecrets} onChange={(e) => setIncludeSecrets(e.target.checked)} />
+          包含密钥
+        </label>
+        {includeSecrets && <p className="text-xs text-up">风险提示：导出文件将包含 API Key、Webhook 等明文密钥，请妥善保管，不要分享或提交到仓库。</p>}
+        <a className="inline-block rounded-md border border-line px-3 py-1.5 text-sm" href={api.exportSettingsUrl(includeSecrets)} download>
+          导出
+        </a>
+        <p className="text-xs text-muted">不包含密钥时，密钥导出为 ******，导入时会沿用当前配置里的值。</p>
+      </section>
+      <section className="space-y-2">
+        <h3 className="text-sm font-medium">导入配置</h3>
+        <input type="file" accept=".yaml,.yml,text/yaml" aria-label="选择配置文件" onChange={(e) => pickFile(e.target.files?.[0])} />
+        <Textarea rows={10} value={text} onChange={(e) => setText(e.target.value)} placeholder="或在此粘贴 YAML 配置" aria-label="配置内容" />
+        <Button variant="primary" loading={busy} onClick={doImport}>
+          导入
+        </Button>
+        {result && (
+          <div className="space-y-1 text-sm">
+            <div>已导入配置段：{result.sections.join('、') || '无'}</div>
+            <div>还原密钥：{result.restored} 项</div>
+            {result.warnings.map((w) => (
+              <div key={w} className="text-up">
+                {w}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   )
 }

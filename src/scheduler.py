@@ -2,6 +2,7 @@
 任务调度器 - APScheduler 定时采集和分析
 """
 
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -273,6 +274,61 @@ def _run_self_learning(config: dict):
         logger.error(f"自学习任务异常: {e}")
 
 
+# 定时任务清单：任务 id -> (中文名, 任务函数)；build_scheduler 注册、Web 定时任务面板和「立即运行」共用
+JOBS: dict[str, tuple[str, Callable[[dict], None]]] = {
+    "hot_search": ("热搜数据采集", _run_hot_search_collection),
+    "cailianshe": ("财联社快讯采集", _run_cailianshe_collection),
+    "stock_data": ("行情数据采集", _run_stock_data_collection),
+    "global_data": ("国际数据采集", _run_global_data_collection),
+    "daily_analysis": ("每日综合分析", _run_daily_analysis),
+    "signal_generation": ("每日信号生成", _run_signal_generation),
+    "daily_report": ("大盘复盘与日报", _run_daily_report),
+    "watchlist_report": ("自选股决策仪表盘", _run_watchlist_report),
+    "self_learning": ("每日自学习", _run_self_learning),
+}
+
+_WEEKDAYS = {"mon-fri": "工作日", "*": "每天"}
+
+
+def _describe_trigger(trigger) -> str:
+    """把触发器转成中文描述：间隔任务「每 30 分钟」，cron 任务「工作日 15:30」。"""
+    if isinstance(trigger, IntervalTrigger):
+        seconds = int(trigger.interval.total_seconds())
+        if seconds % 3600 == 0:
+            return f"每 {seconds // 3600} 小时"
+        if seconds % 60 == 0:
+            return f"每 {seconds // 60} 分钟"
+        return f"每 {seconds} 秒"
+    if isinstance(trigger, CronTrigger):
+        fields = {f.name: str(f) for f in trigger.fields}
+        dow = fields.get("day_of_week", "*")
+        prefix = _WEEKDAYS.get(dow, f"每周 {dow}")
+        hour, minute = fields.get("hour", "*"), fields.get("minute", "*")
+        if hour.isdigit() and minute.isdigit():
+            return f"{prefix} {int(hour):02d}:{int(minute):02d}"
+        return f"{prefix} {hour}时{minute}分"
+    return str(trigger)
+
+
+def describe_jobs(scheduler) -> list[dict]:
+    """列出定时任务（id、中文名、触发规则、下次运行时间、是否暂停）；scheduler 为 None 时返回全部已知任务。"""
+    if scheduler is None:
+        return [{"id": jid, "name": name, "trigger": "", "next_run_time": None, "paused": False}
+                for jid, (name, _) in JOBS.items()]
+    rows = []
+    for job in scheduler.get_jobs():
+        # 调度器未启动时 job 没有 next_run_time 属性（pending 状态）
+        nxt = getattr(job, "next_run_time", None)
+        rows.append({
+            "id": job.id,
+            "name": JOBS[job.id][0] if job.id in JOBS else job.name,
+            "trigger": _describe_trigger(job.trigger),
+            "next_run_time": nxt.isoformat() if nxt else None,
+            "paused": bool(getattr(scheduler, "running", False)) and nxt is None,
+        })
+    return rows
+
+
 def build_scheduler(config: dict, scheduler=None):
     """把全部定时任务加到调度器上（默认 BlockingScheduler；API 服务传入 BackgroundScheduler）。"""
     sched_cfg = config.get("scheduler", {})
@@ -285,7 +341,7 @@ def build_scheduler(config: dict, scheduler=None):
         trigger=IntervalTrigger(minutes=interval),
         args=[config],
         id="hot_search",
-        name="热搜数据采集",
+        name=JOBS["hot_search"][0],
     )
 
     # 财联社采集（每5分钟）
@@ -295,7 +351,7 @@ def build_scheduler(config: dict, scheduler=None):
         trigger=IntervalTrigger(minutes=interval),
         args=[config],
         id="cailianshe",
-        name="财联社快讯采集",
+        name=JOBS["cailianshe"][0],
     )
 
     # 行情数据采集（每15分钟，交易时间内）
@@ -305,7 +361,7 @@ def build_scheduler(config: dict, scheduler=None):
         trigger=IntervalTrigger(minutes=interval),
         args=[config],
         id="stock_data",
-        name="行情数据采集",
+        name=JOBS["stock_data"][0],
     )
 
     # 国际数据采集（每30分钟）
@@ -316,7 +372,7 @@ def build_scheduler(config: dict, scheduler=None):
         trigger=IntervalTrigger(minutes=interval),
         args=[config],
         id="global_data",
-        name="国际数据采集",
+        name=JOBS["global_data"][0],
     )
 
     # 每日综合分析（收盘后15:30）
@@ -327,7 +383,7 @@ def build_scheduler(config: dict, scheduler=None):
         trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
         args=[config],
         id="daily_analysis",
-        name="每日综合分析",
+        name=JOBS["daily_analysis"][0],
     )
 
     # 每日信号生成（16:00）
@@ -338,7 +394,7 @@ def build_scheduler(config: dict, scheduler=None):
         trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
         args=[config],
         id="signal_generation",
-        name="每日信号生成",
+        name=JOBS["signal_generation"][0],
     )
 
     # 每日报告推送（16:10，信号和订单生成之后）
@@ -349,7 +405,7 @@ def build_scheduler(config: dict, scheduler=None):
         trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
         args=[config],
         id="daily_report",
-        name="每日报告推送",
+        name=JOBS["daily_report"][0],
     )
 
     # 自选股决策仪表盘（16:30，大盘复盘和日报之后）
@@ -360,7 +416,7 @@ def build_scheduler(config: dict, scheduler=None):
         trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
         args=[config],
         id="watchlist_report",
-        name="自选股决策仪表盘",
+        name=JOBS["watchlist_report"][0],
     )
 
     # 每日自学习（16:20）
@@ -371,7 +427,7 @@ def build_scheduler(config: dict, scheduler=None):
         trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
         args=[config],
         id="self_learning",
-        name="每日自学习",
+        name=JOBS["self_learning"][0],
     )
 
     logger.info(f"调度器已配置 {len(scheduler.get_jobs())} 个任务:")

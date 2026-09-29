@@ -662,6 +662,26 @@ export interface UsageSummary {
 
 // ---------- 设置 ----------
 
+export interface SchedulerJob {
+  id: string
+  name: string
+  trigger: string
+  next_run_time: string | null
+  paused: boolean
+}
+
+export interface SchedulerStatus {
+  running: boolean
+  message: string
+  jobs: SchedulerJob[]
+}
+
+export interface SettingsImportResult {
+  sections: string[]
+  restored: number
+  warnings: string[]
+}
+
 export interface LLMRole {
   provider?: string
   api_key?: string
