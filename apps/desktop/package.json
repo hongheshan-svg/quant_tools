@@ -7,8 +7,8 @@
   "scripts": {
     "dev": "electron .",
     "test": "node --test tests/",
-    "dist": "electron-builder",
-    "dist:dir": "electron-builder --dir"
+    "dist": "electron-builder --publish never",
+    "dist:dir": "electron-builder --dir --publish never"
   },
   "devDependencies": {
     "electron": "^44.4.5",

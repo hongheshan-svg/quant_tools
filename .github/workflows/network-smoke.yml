@@ -1,0 +1,41 @@
+name: 数据源检查
+
+# 每个交易日开盘后联网检查各数据源（scripts/check_sources.py），及早发现接口变化。
+# 关键数据源（行情、交易日历、涨停池）不可用时任务失败；结果表格见任务摘要。
+# GitHub 的服务器在境外，个别源偶尔失败不一定是接口变了，可以手动重跑确认。
+
+on:
+  schedule:
+    - cron: "15 2 * * 1-5"   # 北京时间 10:15
+  workflow_dispatch:
+
+concurrency:
+  group: network-smoke
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    if: github.event_name == 'workflow_dispatch' || vars.ENABLE_NETWORK_SMOKE == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      TZ: Asia/Shanghai
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          grep -viE '^(pyqt6|pyinstaller)' requirements.txt > /tmp/requirements.txt
+          pip install -r /tmp/requirements.txt
+          playwright install --with-deps chromium
+
+      - name: 检查数据源
+        run: python scripts/check_sources.py

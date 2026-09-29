@@ -1,0 +1,111 @@
+name: 每日分析
+
+# 收盘后在 GitHub Actions 上执行一遍：数据采集 → 综合分析 → 交易信号 → 大盘复盘与日报推送 → 自学习 → 自选股仪表盘。
+#
+# 启用：仓库 Settings → Secrets and variables → Actions
+#   Variables：ENABLE_DAILY_ANALYSIS=true（没有它时定时任务不运行，手动运行不受影响）
+#   配置二选一（可以同时用，单独的 Secret 优先）：
+#     Secret SETTINGS_YAML：完整的 config/settings.yaml 内容
+#     单独的 Secret / Variable，映射见下方 env（QUANT__ 开头的环境变量会覆盖配置）
+# 数据库通过 actions/cache 保留到下一次运行。GitHub 的服务器在境外，部分国内数据源可能访问失败或变慢。
+
+on:
+  schedule:
+    - cron: "40 8 * * 1-5"   # 北京时间 16:40（周一至周五；节假日由程序按交易日历跳过）
+  workflow_dispatch:
+    inputs:
+      steps:
+        description: "执行的步骤，逗号分隔，留空为全部：collect,analysis,signals,report,learn,watchlist"
+        required: false
+        default: ""
+
+concurrency:
+  group: daily-analysis
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    if: github.event_name == 'workflow_dispatch' || vars.ENABLE_DAILY_ANALYSIS == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      TZ: Asia/Shanghai
+      # 大模型
+      QUANT__LLM__PRIMARY__PROVIDER: ${{ vars.LLM_PROVIDER }}
+      QUANT__LLM__PRIMARY__BASE_URL: ${{ vars.LLM_BASE_URL }}
+      QUANT__LLM__PRIMARY__MODEL: ${{ vars.LLM_MODEL }}
+      QUANT__LLM__PRIMARY__API_KEY: ${{ secrets.LLM_API_KEY }}
+      QUANT__LLM__BACKUP__PROVIDER: ${{ vars.LLM_BACKUP_PROVIDER }}
+      QUANT__LLM__BACKUP__BASE_URL: ${{ vars.LLM_BACKUP_BASE_URL }}
+      QUANT__LLM__BACKUP__MODEL: ${{ vars.LLM_BACKUP_MODEL }}
+      QUANT__LLM__BACKUP__API_KEY: ${{ secrets.LLM_BACKUP_API_KEY }}
+      # 推送（配置了 Webhook 的渠道自动启用）
+      QUANT__NOTIFIER__WECHAT__ENABLED: ${{ secrets.WECHAT_WEBHOOK != '' && 'true' || '' }}
+      QUANT__NOTIFIER__WECHAT__WEBHOOK_URL: ${{ secrets.WECHAT_WEBHOOK }}
+      QUANT__NOTIFIER__DINGTALK__ENABLED: ${{ secrets.DINGTALK_WEBHOOK != '' && 'true' || '' }}
+      QUANT__NOTIFIER__DINGTALK__WEBHOOK_URL: ${{ secrets.DINGTALK_WEBHOOK }}
+      QUANT__NOTIFIER__DINGTALK__SECRET: ${{ secrets.DINGTALK_SECRET }}
+      QUANT__NOTIFIER__FEISHU__ENABLED: ${{ secrets.FEISHU_WEBHOOK != '' && 'true' || '' }}
+      QUANT__NOTIFIER__FEISHU__WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK }}
+      QUANT__NOTIFIER__FEISHU__SECRET: ${{ secrets.FEISHU_SECRET }}
+      QUANT__NOTIFIER__EMAIL__PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          grep -viE '^(pyqt6|pyinstaller)' requirements.txt > /tmp/requirements.txt
+          pip install -r /tmp/requirements.txt
+          playwright install --with-deps chromium
+
+      - name: 写入配置
+        env:
+          SETTINGS_YAML: ${{ secrets.SETTINGS_YAML }}
+        run: |
+          if [ -n "$SETTINGS_YAML" ]; then
+            printf '%s\n' "$SETTINGS_YAML" > config/settings.yaml
+            echo "已写入 config/settings.yaml"
+          else
+            echo "没有 SETTINGS_YAML，使用默认配置和环境变量"
+          fi
+
+      - name: 恢复数据库
+        uses: actions/cache/restore@v6
+        with:
+          path: data
+          key: quant-data-${{ github.run_id }}
+          restore-keys: quant-data-
+
+      - name: 执行
+        env:
+          STEPS: ${{ inputs.steps }}
+        run: |
+          if [ -n "$STEPS" ]; then
+            python main.py --once --steps "$STEPS"
+          else
+            python main.py --once
+          fi
+
+      - name: 保存数据库
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: data
+          key: quant-data-${{ github.run_id }}
+
+      - name: 上传日志
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: daily-analysis-logs-${{ github.run_number }}
+          path: logs/
+          retention-days: 7
+          if-no-files-found: ignore
