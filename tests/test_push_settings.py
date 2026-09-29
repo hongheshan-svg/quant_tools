@@ -52,7 +52,7 @@ def test_diagnose_config():
         wechat={"enabled": True, "webhook_url": "http://qyapi.weixin.qq.com/x"},
         feishu={"enabled": False, "webhook_url": "https://example.com/hook", "secret": "your-secret"},
         email={"enabled": True, "smtp_host": "smtp.qq.com", "to": []},
-        routes={"alert": ["dingtalk"], "chat": ["telegram"]},
+        routes={"alert": ["dingtalk"], "chat": ["line"]},
     )
     result = diagnose(config)
     issues = {c["channel"]: c["issues"] for c in result["channels"]}
@@ -62,8 +62,8 @@ def test_diagnose_config():
                                 "加签密钥还是示例占位符（不需要加签就留空）"]
     assert issues["email"] == ["缺少收件人", "没有填写账号或授权码，大多数邮箱的 SMTP 需要登录"]
     assert result["routes"] == ["盘中提醒 只推送到 钉钉，但这些渠道都没启用或配置不完整，这类消息不会推送",
-                                "AI 问股 的路由里有未知渠道：telegram",
-                                "AI 问股 只推送到 telegram，但这些渠道都没启用或配置不完整，这类消息不会推送"]
+                                "AI 问股 的路由里有未知渠道：line",
+                                "AI 问股 只推送到 line，但这些渠道都没启用或配置不完整，这类消息不会推送"]
     assert diagnose(_config())["channels"][0]["issues"] == []
 
 
