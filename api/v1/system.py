@@ -184,6 +184,80 @@ def test_llm(body: LLMSettingsBody, config: dict = Depends(get_config)) -> dict[
     return {"ok": bool(reply), "reply": (reply or "")[:50]}
 
 
+# ---------- 联网搜索设置 ----------
+
+SEARCH_KEY_PROVIDERS = ("bocha", "tavily", "serpapi", "brave")
+
+
+def _key_list(value: Any) -> list[str]:
+    from src.collectors.news_search import _as_list
+
+    return _as_list(value)
+
+
+def _mask_search(search: dict[str, Any]) -> dict[str, Any]:
+    masked = copy.deepcopy(search)
+    for name in SEARCH_KEY_PROVIDERS:
+        conf = masked.get(name)
+        if isinstance(conf, dict):
+            conf["api_keys"] = [MASK + k[-4:] for k in _key_list(conf.get("api_keys"))]
+    return masked
+
+
+def _merge_search(current: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    """前端回传掩码 Key 时按后 4 位还原为当前配置里的原值，找不到就丢弃。"""
+    merged = {**current, **incoming}
+    for name in SEARCH_KEY_PROVIDERS:
+        if name not in incoming:
+            continue
+        new = dict(incoming[name] or {})
+        old_keys = _key_list((current.get(name) or {}).get("api_keys"))
+        keys: list[str] = []
+        for key in _key_list(new.get("api_keys")):
+            if key.startswith(MASK):
+                key = next((k for k in old_keys if k.endswith(key[len(MASK):])), "")
+            if key and key not in keys:
+                keys.append(key)
+        merged[name] = {**(current.get(name) or {}), **new, "api_keys": keys}
+    return merged
+
+
+class SearchSettingsBody(BaseModel):
+    search: dict[str, Any]
+
+
+class SearchTestBody(SearchSettingsBody):
+    query: str = "贵州茅台"
+
+
+@router.get("/settings/search")
+def get_search_settings(config: dict = Depends(get_config)) -> dict[str, Any]:
+    from src.collectors.news_search import PROVIDERS
+
+    return {"search": _mask_search(config.get("search") or {}), "providers": PROVIDERS}
+
+
+@router.put("/settings/search")
+def save_search_settings(body: SearchSettingsBody, request: Request, config: dict = Depends(get_config)) -> dict[str, Any]:
+    from src.config_loader import reload_config
+    from src.settings_store import save_section
+
+    from api.app import apply_config
+
+    save_section("search", _merge_search(config.get("search") or {}, body.search))
+    new_config = reload_config()
+    apply_config(request.app, new_config)
+    return {"search": _mask_search(new_config.get("search") or {})}
+
+
+@router.post("/settings/search/test")
+def test_search_settings(body: SearchTestBody, config: dict = Depends(get_config)) -> dict[str, Any]:
+    from src.collectors import news_search
+
+    merged = {**config, "search": _merge_search(config.get("search") or {}, body.search)}
+    return {"results": news_search.test_providers(merged, body.query.strip() or "贵州茅台")}
+
+
 # ---------- 推送设置 ----------
 
 @router.get("/settings/notifier")

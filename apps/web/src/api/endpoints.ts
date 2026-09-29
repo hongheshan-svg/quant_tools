@@ -87,6 +87,10 @@ export const api = {
   llmSettings: () => http.get<T.LLMSettings>('/settings/llm'),
   saveLlm: (llm: Record<string, unknown>) => http.put<{ ok: boolean }>('/settings/llm', { llm }),
   testLlm: (llm: Record<string, unknown>) => http.post<{ ok: boolean; reply?: string; error?: string }>('/settings/llm/test', { llm }),
+  searchSettings: () => http.get<T.SearchSettings>('/settings/search'),
+  saveSearch: (search: Record<string, unknown>) => http.put<{ search: T.SearchSettings['search'] }>('/settings/search', { search }),
+  testSearch: (search: Record<string, unknown>, query: string) =>
+    http.post<{ results: T.SearchTestResult[] }>('/settings/search/test', { search, query }),
   botSettings: () => http.get<T.BotSettings>('/settings/bot'),
   saveBot: (bot: Record<string, unknown>) => http.put<T.BotSaveResult>('/settings/bot', { bot }),
   notifierSettings: () => http.get<T.NotifierSettings>('/settings/notifier'),

@@ -1,13 +1,13 @@
 // 设置：AI 模型（主/备）、推送渠道与路由、聊天机器人、登录安全；在桌面端里多一个「桌面端」页
 import { useEffect, useState } from 'react'
 import { api } from '@/api/endpoints'
-import type { AuthStatus, BotSettings, LLMRole, LLMSettings, NotifierDiagnosis, NotifierField, NotifierSettings } from '@/api/types'
-import { Button, Card, ErrorBox, Field, Input, PageHeader, Select, Spinner, Tabs } from '@/components/ui'
+import type { AuthStatus, BotSettings, LLMRole, LLMSettings, NotifierDiagnosis, NotifierField, NotifierSettings, SearchTestResult } from '@/api/types'
+import { Button, Card, ErrorBox, Field, Input, PageHeader, Select, Spinner, Tabs, Textarea } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
 import { toast } from '@/stores/toast'
 import { getDesktop, type DesktopInfo, type QuantDesktop } from '@/utils/desktop'
 
-type TabKey = 'llm' | 'notifier' | 'bot' | 'security' | 'desktop'
+type TabKey = 'llm' | 'notifier' | 'bot' | 'search' | 'security' | 'desktop'
 
 export function SettingsPage() {
   const [tab, setTab] = useState<TabKey>('llm')
@@ -16,6 +16,7 @@ export function SettingsPage() {
     { key: 'llm', label: 'AI 模型' },
     { key: 'notifier', label: '推送' },
     { key: 'bot', label: '聊天机器人' },
+    { key: 'search', label: '联网搜索' },
     { key: 'security', label: '登录安全' },
   ]
   if (desktop) tabs.push({ key: 'desktop', label: '桌面端' })
@@ -27,6 +28,7 @@ export function SettingsPage() {
         {tab === 'llm' && <LLMSettingsForm />}
         {tab === 'notifier' && <NotifierForm />}
         {tab === 'bot' && <BotForm />}
+        {tab === 'search' && <SearchForm />}
         {tab === 'security' && <SecurityForm />}
         {tab === 'desktop' && desktop && <DesktopPanel desktop={desktop} />}
       </Card>
@@ -389,6 +391,128 @@ function NotifierForm() {
           }
         }}>保存</Button>
       </div>
+    </div>
+  )
+}
+
+const SEARCH_KEY_PROVIDERS = ['bocha', 'tavily', 'serpapi', 'brave'] as const
+
+const splitLines = (text: string) => text.split(/[\n,]/).map((s) => s.trim()).filter(Boolean)
+
+function SearchForm() {
+  const { data, error, loading, reload } = useApi(api.searchSettings)
+  const [form, setForm] = useState<Record<string, any>>({})
+  const [keys, setKeys] = useState<Record<string, string>>({})
+  const [providers, setProviders] = useState('')
+  const [query, setQuery] = useState('贵州茅台')
+  const [results, setResults] = useState<SearchTestResult[] | null>(null)
+  const [busy, setBusy] = useState('')
+
+  useEffect(() => {
+    if (!data) return
+    const s = data.search
+    setForm(s)
+    setProviders((Array.isArray(s.providers) ? s.providers : Object.keys(data.providers)).join(', '))
+    const next: Record<string, string> = {}
+    for (const p of SEARCH_KEY_PROVIDERS) next[p] = ((s[p]?.api_keys as string[] | undefined) ?? []).join('\n')
+    next.searxng = (s.searxng?.base_urls ?? []).join('\n')
+    setKeys(next)
+  }, [data])
+
+  if (loading && !data) return <Spinner />
+  if (error || !data) return <ErrorBox message={error || '加载失败'} onRetry={reload} />
+
+  const build = () => {
+    const search: Record<string, any> = {
+      ...form,
+      providers: splitLines(providers),
+      max_results: Number(form.max_results) || 8,
+      days: Number(form.days) || 7,
+      cache_minutes: Number(form.cache_minutes) || 30,
+      searxng: { ...(form.searxng ?? {}), base_urls: splitLines(keys.searxng ?? ''), timeout: Number(form.searxng?.timeout) || 10 },
+    }
+    for (const p of SEARCH_KEY_PROVIDERS) search[p] = { ...(form[p] ?? {}), api_keys: splitLines(keys[p] ?? '') }
+    return search
+  }
+  const setNum = (key: string, value: string) => setForm({ ...form, [key]: value })
+
+  return (
+    <div className="max-w-3xl space-y-4">
+      <p className="text-xs text-muted">
+        个股诊断和 AI 问股用它联网搜索最新消息。按下面的顺序依次尝试，失败或无结果换下一个；博查对中文新闻效果较好。
+        Key 可填多个（一行一个）轮换使用，已保存的 Key 显示为掩码，不修改原样保留即可。
+      </p>
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={!!form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} /> 启用联网搜索
+      </label>
+      <Field label="服务顺序（逗号分隔）" hint={`可选：${Object.entries(data.providers).map(([k, v]) => `${k}（${v}）`).join('、')}`}>
+        <Input value={providers} onChange={(e) => setProviders(e.target.value)} />
+      </Field>
+      <div className="grid gap-3 md:grid-cols-2">
+        {SEARCH_KEY_PROVIDERS.map((p) => (
+          <Field key={p} label={`${data.providers[p] ?? p} API Key（一行一个）`}>
+            <Textarea rows={2} value={keys[p] ?? ''} onChange={(e) => setKeys({ ...keys, [p]: e.target.value })} />
+          </Field>
+        ))}
+        <Field label="SearXNG 地址（一行一个）" hint="自建实例需在 settings.yml 开启 json 格式">
+          <Textarea rows={2} value={keys.searxng ?? ''} onChange={(e) => setKeys({ ...keys, searxng: e.target.value })} />
+        </Field>
+        <Field label="SearXNG 超时（秒）">
+          <Input type="number" value={form.searxng?.timeout ?? 10} onChange={(e) => setForm({ ...form, searxng: { ...(form.searxng ?? {}), timeout: e.target.value } })} />
+        </Field>
+      </div>
+      <div className="grid gap-3 md:grid-cols-3">
+        <Field label="每次最多条数"><Input type="number" value={form.max_results ?? 8} onChange={(e) => setNum('max_results', e.target.value)} /></Field>
+        <Field label="只保留最近天数"><Input type="number" value={form.days ?? 7} onChange={(e) => setNum('days', e.target.value)} /></Field>
+        <Field label="缓存时间（分钟）"><Input type="number" value={form.cache_minutes ?? 30} onChange={(e) => setNum('cache_minutes', e.target.value)} /></Field>
+      </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <Field label="测试查询词"><Input value={query} onChange={(e) => setQuery(e.target.value)} /></Field>
+        <Button
+          loading={busy === 'test'}
+          onClick={async () => {
+            setBusy('test')
+            try {
+              setResults((await api.testSearch(build(), query)).results)
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : String(e))
+            } finally {
+              setBusy('')
+            }
+          }}
+        >
+          测试
+        </Button>
+        <Button
+          variant="primary"
+          loading={busy === 'save'}
+          onClick={async () => {
+            setBusy('save')
+            try {
+              await api.saveSearch(build())
+              toast.success('联网搜索设置已保存')
+              void reload()
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : String(e))
+            } finally {
+              setBusy('')
+            }
+          }}
+        >
+          保存
+        </Button>
+      </div>
+      {results && (
+        <ul className="space-y-1 text-sm">
+          {results.length === 0 && <li className="text-muted">没有已配置的搜索服务</li>}
+          {results.map((r) => (
+            <li key={r.provider}>
+              <span className={r.ok ? 'text-down' : 'text-up'}>{r.ok ? '成功' : '失败'}</span> {r.label}
+              {r.ok ? `：${r.count} 条，如「${r.samples.join('」「')}」` : `：${r.error}`}
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }

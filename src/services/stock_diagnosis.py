@@ -183,6 +183,25 @@ class StockDiagnosisService:
 
     # ---------- 上下文 ----------
 
+    def _web_search_lines(self, code: str, name: str, existing: list[str]) -> list[str]:
+        """联网搜索的个股新闻（未启用搜索时不调用）；与已有资讯按标题去重，最多 5 条。"""
+        from src.collectors import news_search
+
+        if not news_search.is_enabled(self.config):
+            return []
+        try:
+            results = news_search.search_stock_news(code, name, self.config, limit=5)
+        except Exception as e:
+            logger.debug(f"联网搜索个股新闻失败: {e}")
+            return []
+        lines = []
+        for r in results:
+            if any(r.title in line for line in existing):
+                continue
+            label = r.source or news_search.PROVIDERS.get(r.provider, r.provider)
+            lines.append(f"{r.published or '近期'} [联网·{label}] {r.title}")
+        return lines[:5]
+
     def build_context(self, code: str) -> dict[str, Any]:
         """汇总诊断所需数据，返回 {"name", "quote", "text", ...}；text 为交给 LLM 的完整上下文。"""
         from src.analyzers.market_regime import MarketRegimeAnalyzer
@@ -273,6 +292,7 @@ class StockDiagnosisService:
         seen = set(news_lines)
         news_lines += [f"{n['date'][:10]} [{n['source'] or '东方财富'}] {n['title']}" for n in stock_news["news"][:STOCK_NEWS_LIMIT]
                        if n["title"] not in seen]
+        news_lines += self._web_search_lines(code, name, news_lines)
         notices = stock_news["notices"]
         notice_lines = [f"{n['date']} {n['title']}" + (f"（风险：{n['risk']}）" if n["risk"] else "") for n in notices[:NOTICE_LIMIT]]
         risk_notices = [n for n in notices if n["risk"]]

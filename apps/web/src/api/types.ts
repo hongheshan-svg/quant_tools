@@ -608,6 +608,27 @@ export interface NotifierSettings {
   fields: Dict<NotifierField[]>
 }
 
+export interface SearchSettings {
+  search: {
+    enabled?: boolean
+    providers?: string[] | string
+    max_results?: number
+    days?: number
+    cache_minutes?: number
+    searxng?: { base_urls?: string[]; timeout?: number }
+  } & Dict<any>
+  providers: Dict<string>
+}
+
+export interface SearchTestResult {
+  provider: string
+  label: string
+  ok: boolean
+  count: number
+  error: string
+  samples: string[]
+}
+
 export interface BotSettings {
   bot: Dict<any>
   running: string[]

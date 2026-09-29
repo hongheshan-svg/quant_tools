@@ -37,6 +37,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec("chips", "筹码", "code", "获利盘比例、平均成本、90% 筹码区间和集中度"),
     ToolSpec("earnings", "业绩", "code", "最新业绩预告或业绩快报"),
     ToolSpec("news", "新闻公告", "code", "近 7 天个股新闻和近 30 天公告（标注立案、减持等风险）"),
+    ToolSpec("web_search", "联网搜索", "query: 搜索词", "搜索最新新闻，需要在设置里配置搜索服务"),
     ToolSpec("limit_up_history", "涨停记录", "code", "近期涨停记录：连板、封板时间、炸板次数、涨停原因"),
     ToolSpec("theme", "主线地位", "code（可选）", "当前题材/行业主线；给 code 时说明该股是否为主线龙头或跟风"),
     ToolSpec("market", "大盘环境", "无", "指数、涨跌家数、成交额、量化大盘环境、主线和降温板块、重要快讯"),
@@ -184,6 +185,22 @@ class ChatTools:
         news = [f"{n['date'][:10]} {n['title']}" for n in data["news"][:8]]
         return (f"{name}({code}) 公告：" + ("；".join(notices) or "近 30 天无")
                 + "\n新闻：" + ("；".join(news) or "近 7 天无"))
+
+    def _tool_web_search(self, args: dict) -> str:
+        from src.collectors import news_search
+
+        if not news_search.is_enabled(self.config):
+            return "没有配置联网搜索服务，可以用 news 工具查东方财富的个股新闻和公告"
+        query = str(args.get("query") or args.get("code") or "").strip()
+        if not query:
+            raise ValueError("缺少搜索词")
+        results = news_search.search(query, self.config, max_results=8)
+        if not results:
+            return f"联网搜索「{query}」没有找到结果"
+        return "\n".join(
+            f"{r.published or '-'} [{r.source or news_search.PROVIDERS.get(r.provider, r.provider)}] {r.title} — {r.snippet[:80]}"
+            for r in results[:8]
+        )
 
     def _tool_limit_up_history(self, args: dict) -> str:
         code, name = self._resolve(args)

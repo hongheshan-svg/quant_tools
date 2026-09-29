@@ -309,6 +309,27 @@ data_sources:
   tushare_token: ""       # Tushare Pro 的 token，填写后 tushare 才可用
   pytdx_servers: []       # 自定义通达信行情服务器，如 ["117.34.114.17:7709"]；为空用内置列表
 
+# 联网新闻搜索：个股诊断和 AI 问股（web_search 工具）用它补充最新消息。按 providers 顺序依次尝试，失败或无结果换下一个
+# 每个 provider 的 api_keys 可填多个（一行一个 Key），轮换使用；某个 Key 被拒绝或限流会冷却 10 分钟
+# 也可用环境变量 QUANT__SEARCH__BOCHA__API_KEYS=key1,key2 覆盖（逗号分隔）
+search:
+  enabled: false
+  providers: [bocha, tavily, serpapi, brave, searxng]
+  max_results: 8          # 每次搜索最多返回条数
+  days: 7                 # 只保留最近多少天的结果（日期未知的保留）
+  cache_minutes: 30       # 相同搜索词的缓存时间
+  bocha:                  # 博查 https://open.bochaai.com ，中文新闻效果好，推荐首选
+    api_keys: []
+  tavily:                 # https://tavily.com ，每月有免费额度
+    api_keys: []
+  serpapi:                # https://serpapi.com ，Google 新闻搜索
+    api_keys: []
+  brave:                  # https://brave.com/search/api ，Brave 新闻搜索
+    api_keys: []
+  searxng:                # 自建 SearXNG（需在 settings.yml 的 search.formats 里开启 json），填实例地址，如 http://127.0.0.1:8080
+    base_urls: []
+    timeout: 10
+
 # 聊天机器人：在钉钉、飞书里发「诊断 茅台」「大盘」「自选」「持仓」或直接提问（AI 问股），只读，不能下单。
 # 用长连接收消息，不需要公网 IP；随 main.py 或 server.py（桌面端）运行，修改后重启生效
 bot:
