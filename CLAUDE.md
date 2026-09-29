@@ -4,7 +4,9 @@
 
 ## 项目概述
 
-A股舆情驱动量化交易系统：从新闻、社交热榜、行情等多个来源采集舆情数据，用 LLM 分析，按加权因子给涨停股打分，预测下一交易时段的涨停股，并可把交易信号转成模拟盘订单。项目在 Windows 上开发，所以入口脚本会强制 stdout 使用 UTF-8，打包脚本也是 PowerShell。
+A股舆情驱动量化交易系统：从新闻、社交热榜、行情等多个来源采集舆情数据，用 LLM 分析，按加权因子给涨停股打分，预测下一交易时段的涨停股，并可把交易信号转成模拟盘订单。项目在 Windows 上开发，所以入口脚本会强制 stdout 使用 UTF-8。
+
+技术栈与 daily_stock_analysis 对齐：Python 后端（FastAPI `api/` + 业务代码 `src/`）、React Web 前端（`apps/web`）、Electron 桌面端（`apps/desktop`，内嵌打包的后台服务）、钉钉/飞书聊天机器人（`src/bot`）、Docker（`docker/`）和 GitHub Actions 定时运行。原 PyQt6 桌面端（`src/desktop`、`run_dashboard.py`）仍保留可用，新功能优先做在 Web 端。
 
 ## 环境准备
 
@@ -12,6 +14,8 @@ A股舆情驱动量化交易系统：从新闻、社交热榜、行情等多个�
 pip install -r requirements.txt
 playwright install chromium   # 必需：东方财富、同花顺、社交平台采集器依赖无头 Chromium
 cp config/settings.yaml.example config/settings.yaml   # 然后填入 LLM API Key
+cd apps/web && npm ci && npm run build   # Node.js 22+；FastAPI 托管 apps/web/dist，没构建时访问页面返回 404 提示
+cd apps/desktop && npm install            # 只有开发 Electron 桌面端时需要
 ```
 
 SQLite 数据库会自动创建在 `data/quant.db`，LLM 响应缓存在 `data/llm_cache.sqlite3`。`data/`、`logs/` 和 `config/settings.yaml` 都已被 git 忽略。
@@ -19,8 +23,14 @@ SQLite 数据库会自动创建在 `data/quant.db`，LLM 响应缓存在 `data/l
 ## 运行
 
 ```bash
-python main.py                              # 无界面 APScheduler 定时循环
-python run_dashboard.py                     # PyQt6 桌面端（主界面）
+python server.py                            # Web 界面 + API（默认 127.0.0.1:8000）+ 定时任务 + 聊天机器人；--no-scheduler 只提供接口
+python main.py                              # 无界面 APScheduler 定时循环（含聊天机器人）
+python main.py --once [--steps collect,analysis]   # 按顺序执行一遍收盘后任务后退出（GitHub Actions、Docker 用）
+cd apps/web && npm run dev                  # 前端开发服务器 :5173，/api 代理到 8000（API_TARGET 可改）
+cd apps/desktop && npm run dev              # Electron 开发模式：在空闲端口启动仓库里的 server.py
+docker compose -f docker/docker-compose.yml up -d
+python scripts/check_sources.py [--only 腾讯,财联社] [--no-browser]   # 联网检查各数据源，不写库
+python run_dashboard.py                     # PyQt6 桌面端（旧版）
 python run_dashboard.py --headless          # 只执行一次 PipelineService.run_full()，不打开界面
 python run_dashboard.py --warmup-before-ui  # 先跑完整流程，再打开界面
 python run_full.py                          # 基于已采集数据一次性执行：LLM 舆情 → 题材 → 国际因子 → 评分 → Top 10
@@ -31,7 +41,7 @@ python scripts/fetch_history.py --mode daily --start-date 2024-01-01   # 回补�
 
 日线下载与解析在 `src/collectors/daily_history.py`，脚本只负责批量调度。`fetch_history.py` 的日线回补默认按每只股票的最新日期续传。显式指定 `--start-date` 时，历史起点晚于该日期 10 天以上的股票会从起点重新下载，因为日常采集会给每只股票写入当天行情，否则所有股票都会被当成已是最新。`--force-full` 忽略续传，`--overwrite` 重新下载并覆盖已有行（用于修复旧版本写错的成交量/成交额）。
 
-没有任何入口脚本会启动 FastAPI Web 仪表盘（`src/dashboard/app.py`），需要手动运行 `uvicorn src.dashboard.app:app --port 8000`。
+API 文档在 http://127.0.0.1:8000/docs 。
 
 ## 测试
 
@@ -48,18 +58,34 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
 - `.gitignore` 忽略了 `tests/` 以外所有位置的 `test_*.py`，新测试必须放在 `tests/` 下。
 - 涉及数据库的测试要先重置引擎单例（可照搬 `tests/test_self_learning.py` 里的 `_reset_db_engine()`）。
 - 测试必须能离线运行，GitHub CI（`.github/workflows/ci.yml`，Python 3.12）会在每次推送 main 时跑全部测试。会联网的地方（交易日历、上市日期、采集器）要 monkeypatch 掉；交易日历可以直接用 `trading_calendar._set_days({...})` 指定。
+- CI 机器没有 libEGL，`import PyQt6` 抛的是 `ImportError` 而不是 `ModuleNotFoundError`（`pytest.importorskip` 挡不住）。测试不要导入 Qt 模块；需要测的逻辑放到不依赖 Qt 的模块里（如 `src/desktop/markdown_render.py`）。
+- API 测试用 `tests/test_api.py` 的 `env` fixture（临时库 + `TestClient` + 临时 `settings.yaml`）；后台任务用 `_wait()` 轮询到结束。
 
-## 打包（Windows EXE）
+前端和桌面端（CI 的 `web`、`desktop` 任务）：
 
-运行 `powershell .\scripts\build_exe.ps1`。脚本用 `.venv\Scripts\python.exe` 和 `AStockQuantQt6.spec` 调用 PyInstaller；该 `.spec` 文件不在仓库里，因为 `*.spec` 被 git 忽略。产物是 `dist\AStockQuantQt6.exe`，脚本会把 `config/settings.yaml` 复制到它旁边。打包后运行时，`run_dashboard.py` 会切换到 EXE 所在目录，所以 `config/`、`data/`、`logs/` 都相对该目录解析。
+```bash
+cd apps/web && npm run lint && npm test && npm run build   # ESLint、Vitest + Testing Library、tsc + Vite
+cd apps/desktop && npm test                                 # node --test，不需要安装 Electron
+```
+
+- 前端测试用 `stubFetch()` 伪造接口，或 `vi.spyOn(api, '...')`；页面按 `role="tab"` 找标签页。
+- 桌面端测试只测 `src/backend.js` 的纯逻辑，`preload.test.js` 通过 `Module._load` 替换 `electron` 模块。
+
+## 打包
+
+- **桌面端安装包：** `python scripts/build_desktop.py`（`--backend-only`、`--skip-web`、`--dir`）。依次构建前端 → 用 PyInstaller 把 `server.py` 打成 onedir 的 `dist/backend/quant_server`（内置 `settings.yaml.example`、`stock_pool.yaml` 和前端，排除 PyQt6）→ electron-builder 打包（Windows NSIS、macOS dmg，产物在 `apps/desktop/dist/`）。只能打包当前系统的安装包；推送 `v*` 标签时 `desktop-release.yml` 在 Windows 和 macOS 上打包并上传到 Release。
+  - 运行时按字符串导入或带数据文件、原生库的包要加到脚本里的 `HIDDEN_IMPORTS`、`COLLECT_DATA`、`COLLECT_SUBMODULES`、`COLLECT_ALL`（例如 litellm 的价格表、akshare 的数据文件、py_mini_racer 的动态库）。打包后记得实际运行 `quant_server` 冒烟，缺文件只有运行到那段代码才会报错。
+  - 打包的后台服务用 `--workdir` 指定数据目录，启动时把内置的示例配置复制进去（每次覆盖），股票池规则只在缺失时复制；没传 `--workdir` 时用可执行文件所在目录。它还会在后台执行 `playwright install chromium`。
+- **旧版 PyQt6 EXE：** `powershell .\scripts\build_exe.ps1`，需要不在仓库里的 `AStockQuantQt6.spec`（`*.spec` 被 git 忽略）。运行时 `run_dashboard.py` 切换到 EXE 所在目录。
 
 ## 架构
 
 **采集器**（`src/collectors/`）→ SQLite（`src/database/`）→ **分析器**（`src/analyzers/`，调用 LLM）→ **策略**（`src/strategy/`）→ **交易**（`src/trading/`）
 
-### 两套运行时，各自编排
+### 三套运行时，各自编排
 
-- **`main.py` → `src/scheduler.py`**（BlockingScheduler）有两类任务：
+- **`server.py` → `api/app.py`**：Web 界面和 API。`web.scheduler` 为真（默认）时在 lifespan 里用 `build_scheduler(config, BackgroundScheduler())` 运行和 `main.py` 相同的定时任务，并在后台线程启动聊天机器人；`--no-scheduler` 两者都不运行（用于 `main.py` 已在运行的情况）。Electron 桌面端和 Docker 都运行它。
+- **`main.py` → `src/scheduler.py`**（BlockingScheduler，同时启动聊天机器人）有两类任务：
   - 间隔任务：热搜每 30 分钟，财联社每 5 分钟，行情每 15 分钟，国际新闻每 30 分钟。
   - 工作日定时任务：
     - 15:30 每日分析：舆情 → 涨停 → 国际因子 → `CompositeScorer.score_today()` → 距上次历史回测超过 `screening.backtest_interval_days` 天时先回测 → `StrategyScreener.run()`（全市场策略选股）。
@@ -70,7 +96,8 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
   - 行情采集任务结束后依次调用 `ExecutionService.generate_exit_orders()`（持仓止损止盈）和 `AlertService.run()`（盘中提醒）。
   - 所有间隔和时间都读自 `scheduler.*` 配置项。
   - 行情采集和上面三个每日任务在非交易日跳过（`_skip_non_trade_day()`），新闻、热搜、国际新闻照常采集。
-- **桌面端**（`run_dashboard.py` → `src/desktop/main_window.py`）**不使用** `scheduler.py`：
+  - `run_once(config, steps)`（`main.py --once`）按 `ONCE_STEPS` 的固定顺序把这些任务各执行一次。
+- **PyQt6 桌面端（旧版）**（`run_dashboard.py` → `src/desktop/main_window.py`）**不使用** `scheduler.py`：
   - Qt 定时器和按钮驱动 `PipelineService`（`collect()` → `self_learn()` → `premarket_predict()`；预测后生成订单并推送日报，15:00 后的预测还会先生成当天的大盘复盘）。每次自动采集完成后，在后台依次调用 `check_exits()` 和 `check_alerts()`。
   - 【信号绩效】（含 AI 诊断验证）【大盘复盘】【策略选股】【主线分析】【盘中提醒】页在切换到该页时才读取或计算，其中大盘复盘、策略选股和历史回测只读取上次的结果，点击按钮才重新生成；【数据源状态】页读取的是进程内的健康记录。【模拟交易】页每次刷新后在后台计算组合风险。
   - 个股详情对话框（在表格中双击股票，或用顶部搜索框按代码/名称/拼音首字母打开）：本地日线不足 60 根时在后台补齐后重绘 K 线；【AI诊断】页调用 `PipelineService.diagnose_stock()`，打开时只显示上次的诊断结果，点击按钮才调用 AI；【新闻公告】页切换过去才联网获取。
@@ -82,7 +109,40 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
   - `DataQueryService` 提供界面上的全部查询。
   - 耗时任务放在 `QThreadPool` 工作线程里执行。
 
-新增任务或数据源时，需要接入每一个应该运行它的运行时。
+新增任务或数据源时，需要接入每一个应该运行它的运行时。新增的界面功能要同时提供 API（`api/v1/`）和 Web 页面（`apps/web`）。
+
+### Web API（`api/`）
+
+- `create_app(config, *, pipeline=, start_scheduler=, static_dir=, auth=)`：测试可注入 `PipelineService`、关掉定时任务、指定前端目录和 `AuthStore`。`app.state` 上有 `pipeline`、`tasks`（`TaskManager`）、`auth`、`chat_store`、`background`（本进程是否运行定时任务和机器人）。
+- 路由在 `api/v1/`（system、market、stocks、screening、chat、watchlist、trading），统一前缀 `/api/v1`。其他路径托管 `apps/web/dist`（单页应用，找不到的路径返回 `index.html`；`/docs` 等 FastAPI 自带路由优先）。`DEFAULT_STATIC_DIR` 按仓库位置解析，与工作目录无关。
+- **耗时操作走后台任务：** `tasks.submit(kind, fn, *args, dedupe_key=, label=)` 立即返回任务字典，前端轮询 `/api/v1/tasks/{id}`。被调用的函数如果有 `progress` 参数会自动传入，`progress(done, total)` 或 `progress(文字)` 都可以；结果经 `jsonable_encoder` 转换。同一 `dedupe_key` 的任务在执行中时直接返回已有任务。
+- **访问控制**（`api/auth.py`，`check_request()`）：没开 `web.auth_enabled` 时只允许本机（含 TestClient 的 `testclient`）；开了以后要登录 Cookie（`qt_session`，HMAC 签名，密码 PBKDF2 存在 `data/web_auth.json`，首次登录即设置密码）或 `Authorization: Bearer <web.api_token>`。`/api/v1/health` 和 `/api/v1/auth/*` 公开。
+- **设置接口：** 返回时把密钥替换成 `******`（大模型 Key 保留后 4 位），保存时掩码原样回传就保留原值（`_merge_llm`、`_merge_notifier`、`_merge_bot`）；用 `settings_store.save_section()` 写回，再 `apply_config(app, reload_config())` 让 pipeline 和问股会话使用新配置。
+- AI 问股的多会话存在 `chat_session` 表（`src/services/chat_sessions.py` 的 `ChatSessionStore`），每个会话一把锁。
+
+### Web 前端（`apps/web`）
+
+- React 19 + TypeScript + Vite + Tailwind 4 + react-router + zustand + recharts。`@/` 指向 `src/`。
+- 接口：`src/api/client.ts`（`http.get/post/put/del/upload`，401 时派发 `auth:required` 事件）、`src/api/endpoints.ts`（`api` 对象）、`src/api/types.ts`。新增接口时三处一起改。
+- 数据加载用 `useApi(fn, deps)`；后台任务用 `useTask().run(() => api.xxx(), { success })`，它会轮询到任务结束并显示进度，任务中心（右上角）列出全部任务。
+- 通用组件在 `src/components/ui.tsx`（Button、Card、Tabs、Modal、Field…）和 `DataTable.tsx`、`CandlestickChart.tsx`（SVG K 线）。颜色用 `index.css` 里的 CSS 变量（深色/浅色主题），A 股习惯红涨绿跌：`text-up` 红、`text-down` 绿。
+- 在 Electron 里运行时 `window.quantDesktop`（`src/utils/desktop.ts`）可用，设置页据此显示「桌面端」页。
+
+### Electron 桌面端（`apps/desktop`）
+
+- `main.js`：单实例；在 8000–8100 找空闲端口启动后台服务，轮询 `/api/v1/health` 就绪后加载 Web 界面；启动失败或运行中崩溃显示 `renderer/loading.html` 的错误页（可重试）；退出时停止后台服务（Windows 用 `taskkill /T` 结束进程树）；站外链接用系统浏览器打开。日志写到数据目录的 `logs/desktop.log`。
+- `src/backend.js`：不依赖 Electron 的纯逻辑（找端口、启动命令、健康检查、停止进程），测试只测这里。
+- 开发模式用仓库 `.venv` 里的 Python 运行 `server.py`，数据就是仓库的 `config/`、`data/`；打包后运行 `resources/backend/quant_server`，数据目录为系统应用数据目录。环境变量：`QUANT_HOME`（数据目录）、`QUANT_PYTHON`（开发时的 Python）、`QUANT_BACKEND_PATH`（指定后台程序）。
+- `preload.js` 通过 `contextBridge` 暴露 `quantDesktop`（version、info、openDataDir、openLogDir、retry）。
+
+### 聊天机器人（`src/bot/`）
+
+- `router.CommandRouter`：与平台无关的命令分发，返回 Markdown。不带参数的命令（大盘、持仓…）要整句匹配，带参数的（诊断、自选）按前缀匹配，其余交给 AI 问股（按 `平台:会话:用户` 保存 `StockChatSession`，闲置 30 分钟后重建）。`bot.allowed_users` 非空时只允许名单内的用户。测试通过 `pipeline=`、`chat_factory=` 注入假对象。
+- `dispatcher.Dispatcher`：平台回调先确认收到，消息放进线程池处理；按消息 ID 去重（平台会重发）；回复按字节拆分。
+- `dingtalk.py`（Stream 模式，回复走消息里的 sessionWebhook）和 `feishu.py`（长连接，回复消息卡片，标题 `#` 转成加粗）。消息解析 `parse_message()` 是纯函数，不依赖 SDK。
+  - 飞书 SDK 的长连接客户端用模块级事件循环，在 uvicorn 里导入会拿到正在运行的循环，所以在自己的线程里换成新循环。
+  - 两个 SDK 的重连间隔都改成逐次加长（`retry_delay()`，最多 10 分钟），凭证填错时不刷日志。
+- `manager.start_bots(config, pipeline)`：同一进程每个平台只启动一次，占位或空的凭证跳过；SDK 导入较慢（打包后十几秒），服务里在后台线程调用。改了已在运行的机器人的凭证要重启服务。
 
 ### 交易日历（`src/trading_calendar.py`）
 
@@ -98,7 +158,13 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
   - **熔断：** 每个数据集一个 `CircuitBreaker`，连续失败 3 次熔断 5 分钟，冷却后放行一次探测；全部熔断时仍会尝试第一个源。
   - **缓存兜底：** 开启 `allow_stale` 时，所有源都失败后返回上次成功的数据，并标记 `stale`。按日期入库的数据（行情）不要开这个选项。
   - **健康记录：** 每次尝试都会记入进程级的 `source_health`。熔断器、缓存和健康记录都是进程级状态，测试前后要清空（参考 `tests/test_source_chain.py` 的 fixture）。
-- 实时行情按顺序回退：腾讯 `qt.gtimg.cn`（普通 HTTP）→ 东方财富 → AKShare 新浪。
+- 实时行情按 `data_sources.realtime` 的顺序回退，默认腾讯 `qt.gtimg.cn`（普通 HTTP）→ 东方财富 → AKShare 新浪 → efinance → 通达信（pytdx，全市场约 3 秒，名称取自 `stock_info`）。
+- 个股日线（回补和按需补齐）按 `data_sources.daily_history` 的顺序回退：`daily_history.DAILY_SOURCES` 把配置名映射成（来源标记, 取数函数），默认腾讯 → 新浪 → 东方财富 → baostock → 通达信 → efinance → Tushare。来源标记 `tx`/`daily`/`em` 走原有解析；额外数据源（`src/collectors/extra_sources.py`）统一返回 date、OHLC、volume（股）、amount（元）、turnover（小数）。
+  - baostock 用模块级单连接，调用加锁，登录输出被静默；不支持北交所。
+  - 通达信按「`data_sources.pytdx_servers` → 上次连上的 → 内置列表 → pytdx 自带列表」尝试服务器（pytdx 自带的大多已失效）；日线不复权，成交量单位是手。
+  - efinance 走东方财富接口，东方财富不可用时它也不可用；Tushare 需要 `data_sources.tushare_token`，日线不复权。
+- 财联社电报用签名的 `/v1/roll/get_roll_list`（`cailianshe.sign_params()`：参数按键排序后 SHA1 再 MD5），每次最多 50 条（超过返回空列表）；旧的 `nodeapi` 接口已 404，只作兜底。
+- 东方财富 `push2`/`push2his` 行情接口有时直接断开连接（2026-09 观察到，浏览器和普通 HTTP 都一样），依赖它的指数、资金流、efinance 会失败，所以各处都要有回退。`scripts/check_sources.py` 可以快速确认各源状态。
 - 涨停池：东方财富涨停池 → 东方财富强势股池。强势股池里有没涨停的股票，所以只保留涨幅达到该板块涨停幅度的行。
 - 涨停原因（概念题材）来自同花顺涨停池（`src/collectors/limit_up_reasons.py`，普通 HTTP，不需要 Playwright），入库时写入 `limit_up_stock.concepts`（用 + 连接），并优先作为 `reason`。同花顺失败不影响涨停池入库。历史数据用 `fetch_history.py --mode concepts` 补齐。
 - 结构不适合改成回退链的内联回退（指数、板块、北向资金、各资讯采集器），直接调用 `source_health.record()` 记录健康状态。
@@ -126,9 +192,10 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
 - `load_config()` 把 `settings.yaml` 深度合并到 `settings.yaml.example` 之上，所以新增配置项要在 example 文件里给默认值。
 - `settings.yaml` 不存在时，`load_config()` 会回退到 example 文件。
 - 结果按路径缓存，`reload_config()` 会清掉缓存。
-- 运行时有两处代码会重写 `settings.yaml`，而且都会丢掉文件里的注释：
+- **环境变量覆盖：** `QUANT__LLM__PRIMARY__API_KEY=sk-xxx` 覆盖 `llm.primary.api_key`（层级用双下划线，键名转小写；原值是字符串的项取原文，其余按 YAML 解析；空值忽略）。只作用于 `settings.yaml`（`stock_pool.yaml` 也用 `load_config` 读取，不受影响）。写回文件时 `strip_env_overrides()` 会剔除这些值，保证 Secrets 不落盘。
+- 运行时会重写 `settings.yaml` 的代码，都会丢掉文件里的注释：
   - 自学习（`save_config()`）写入完整的合并后配置。
-  - 桌面端 AI 设置对话框（`AISettingsDialog._save_to_yaml`）重写 `llm` 部分。
+  - `settings_store.save_section()`：Web 设置接口，以及 PyQt6 的 AI 设置、推送设置对话框，按段写回。
 
 ### 大盘复盘、AI 研判与策略选股
 
@@ -183,7 +250,9 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
 
 ### LLM
 
-- `LLMClient`（`src/analyzers/llm_client.py`）通过 OpenAI SDK 调用任意兼容 OpenAI 协议的 `base_url`（DeepSeek、通义千问、智谱 GLM、Kimi、硅基流动等）。
+- `LLMClient`（`src/analyzers/llm_client.py`）默认通过 LiteLLM 调用（`llm.backend: litellm`）。`build_route()` 把配置转成路由：anthropic、gemini、ollama 用原生的 `提供商/模型`，其他平台按 OpenAI 兼容接口走 `openai/模型` + `api_base`；Key 为空或仍是 `your-` 占位时跳过（ollama 不需要 Key）。`llm.backend: openai` 改用 OpenAI SDK 直连（不支持原生提供商）。平台预设在 `src/analyzers/llm_platforms.py`。
+  - 导入 LiteLLM 一律用 `llm_usage.import_litellm()`：它让 LiteLLM 使用本地价格表，否则导入时会联网下载。
+  - **用量统计：** 每次调用（含命中缓存和失败）由 `record_usage()` 写进缓存库的 `llm_usage` 表，记录 token 和估算费用（`llm.pricing` 可自定义单价）。功能按调用栈里第一个 `src.`/`api.` 模块归类，映射表是 `FEATURE_LABELS`，新增调用 LLM 的模块要加进去，否则显示为「其他」。`usage_summary()` 供 Web【AI 用量】页使用。
   - 主模型失败时切换到备用模型；备用模型的 Key 仍以 `your-` 开头时会被跳过。
   - 响应缓存在 SQLite 里，缓存键是模型 + 提示词 + 参数的哈希，带 TTL。
   - `reload()` 可热切换模型平台。
@@ -250,6 +319,12 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
   - **每天一次：** 指标交叉、接近止损、大盘转弱在 `DAILY_ONCE_TYPES` 中，每天只提醒一次。
   - **降噪：** `NoiseFilter`（`src/notifier/noise.py`）负责冷却期去重和免打扰时段（`notifier.quiet_hours`），紧急提醒不受免打扰限制。同一次检查的多条提醒合并成一条推送，所有提醒都记入 `alert_record` 表。
   - **状态：** 涨停状态和冷却记录是进程级状态，测试前后要调用 `alert_service.reset_state()`。
+
+### 部署与 CI（`docker/`、`.github/workflows/`）
+
+- Docker：多阶段构建（先构建前端），以 UID 1000 的 `quant` 用户运行，默认 `python server.py --host 0.0.0.0`。默认配置放在镜像的 `/app/defaults/config`，`entrypoint.sh` 启动时复制进挂载的 `/app/config`（示例配置覆盖、股票池缺失才复制），并修复挂载目录属主。compose 用环境变量开启 Web 登录，因为容器外的请求不算本机。
+- 工作流：`ci.yml`（后端测试、前端 lint/测试/构建、桌面端测试）、`daily-analysis.yml`（工作日 16:40 `main.py --once`，需要仓库变量 `ENABLE_DAILY_ANALYSIS=true`，配置来自 Secret `SETTINGS_YAML` 或映射成 `QUANT__` 环境变量的单独 Secret，数据库用 actions/cache 保留）、`network-smoke.yml`（`check_sources.py`，`ENABLE_NETWORK_SMOKE=true`）、`docker-publish.yml`（`v*` 标签发布 GHCR 镜像）、`desktop-release.yml`（`v*` 标签打包桌面端并上传 Release）。
+- Actions 里给布尔配置映射 Secret 时要写成 `${{ secrets.X != '' && 'true' || '' }}`：直接写比较表达式在 Secret 为空时得到字符串 `false`，会覆盖 `SETTINGS_YAML` 里的设置；空字符串才会被忽略。
 
 ## 约定
 

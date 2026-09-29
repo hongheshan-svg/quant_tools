@@ -27,26 +27,30 @@
 - **实盘记账：** 手动记录或导入券商交割单，计算真实持仓、成本、浮动和已实现盈亏；实盘持仓同样享有止损提醒、组合风险、个股诊断和问股（只记账，不连券商、不下单）。
 - **组合风险：** 模拟盘和实盘的总仓位与大盘环境是否匹配、个股和行业集中度、止损距离、最大回撤和当前回撤。
 - **每日推送：** 收盘后把大盘复盘（含 AI 复盘与次日计划）、交易信号、待确认订单、模拟盘账户和信号绩效推送到企业微信、钉钉、飞书或邮件；每类消息可以指定推送渠道，界面上可检查配置、发送测试消息。
-- **多种运行方式：** PyQt6 桌面端、无界面定时任务、FastAPI Web 仪表盘，以及可打包的 Windows EXE。
+- **聊天机器人：** 在钉钉、飞书里发「诊断 茅台」「大盘」「自选」「持仓」或直接提问（AI 问股），通过长连接收消息，不需要公网 IP。
+- **AI 用量统计：** 大模型通过 LiteLLM 接入（支持 Claude、Gemini、Ollama 本地模型和所有兼容 OpenAI 接口的平台），每次调用的 token 和估算费用按天、功能、模型汇总。
+- **多种运行方式：** Web 界面（React + FastAPI，可在手机上用）、Electron 桌面端（Windows 安装包、macOS dmg）、Docker、GitHub Actions 定时运行、无界面定时任务；原 PyQt6 桌面端仍可使用。
 
 ## 数据源
 
 | 类别 | 来源 |
 |---|---|
-| 实时行情 | 腾讯财经 → 东方财富 → AKShare（新浪），依次回退 |
+| 实时行情 | 腾讯财经 → 东方财富 → AKShare（新浪）→ efinance → 通达信（pytdx），依次回退 |
 | 涨停池、龙虎榜、北向资金 | 东方财富 |
 | 涨停原因（概念题材） | 同花顺涨停池 |
 | 个股资金流 | 同花顺 → 东方财富 |
 | 筹码分布 | AKShare → 本地日线估算 |
 | 业绩预告、业绩快报 | 东方财富（AKShare） |
 | 个股新闻、公告 | 东方财富 |
-| 个股历史日线（按需补齐） | 腾讯 → 新浪 → 东方财富 |
+| 个股历史日线（回补、按需补齐） | 腾讯 → 新浪 → 东方财富 → baostock → 通达信 → efinance → Tushare Pro（需要 token） |
 | 财经资讯 | 财联社电报、雪球、韭研公社、同花顺热股、东方财富热门概念 |
 | 社交热搜 | 微博、抖音、今日头条 |
 | 国际新闻 | 财联社国际、华尔街见闻、金十数据、东方财富全球 |
 | 美股 | 重点公司财报（Mag7、半导体、中概股龙头）、VIX、美元兑人民币汇率 |
 
-东方财富、同花顺等网站有反爬检测，这些数据通过 Playwright 驱动的无头 Chromium 获取。
+东方财富、同花顺等网站有反爬检测，这些数据通过 Playwright 驱动的无头 Chromium 获取。实时行情和日线的回退顺序可以在 `data_sources` 配置里调整。
+
+`python scripts/check_sources.py` 会逐个请求各数据源，列出是否可用、条数和用时（不写数据库），用来确认接口有没有变化。
 
 数据源稳定性：
 
@@ -56,10 +60,11 @@
 
 ## 环境要求
 
-- Python 3.10 及以上（已在 Python 3.14 上测试）
-- Chromium（通过 Playwright 安装）
-- 至少一个兼容 OpenAI 接口的 LLM API Key，支持 DeepSeek、通义千问、智谱 GLM、Kimi、百度文心、豆包、硅基流动、OpenAI 或自定义地址
-- Windows、macOS、Linux 均可运行；打包 EXE 仅支持 Windows
+- Python 3.10 及以上（CI 使用 3.12，也在 3.14 上测试）
+- Node.js 22 及以上（构建 Web 前端和桌面端；CI 使用 24）
+- Chromium（通过 Playwright 安装；Docker 镜像和打包的桌面端会自动准备）
+- 至少一个大模型 API Key：DeepSeek、通义千问、智谱 GLM、Kimi、百度文心、豆包、硅基流动、OpenAI、Claude、Gemini，或本地的 Ollama（不需要 Key）
+- Windows、macOS、Linux 均可运行
 
 ## 快速开始
 
@@ -75,13 +80,22 @@ playwright install chromium
 cp config/settings.yaml.example config/settings.yaml
 ```
 
-编辑 `config/settings.yaml`，至少填入 `llm.primary.api_key`，然后启动桌面端：
+编辑 `config/settings.yaml`，至少填入 `llm.primary.api_key`（也可以启动后在界面的【设置】里填写）。然后构建前端并启动 Web 服务：
 
 ```bash
-python run_dashboard.py
+cd apps/web && npm ci && npm run build && cd ../..
+python server.py
 ```
 
-也可以先跳过 API Key 直接启动，再在界面上点【AI设置】切换平台、填写 Key。
+浏览器打开 http://127.0.0.1:8000 。`server.py` 同时运行定时任务和聊天机器人，相当于 `main.py` 加上 Web 界面。
+
+想用桌面窗口，可以运行 Electron 桌面端（开发模式直接使用仓库里的配置和数据）：
+
+```bash
+cd apps/desktop && npm install && npm run dev
+```
+
+原来的 PyQt6 桌面端仍然可用：`python run_dashboard.py`。
 
 数据库（`data/quant.db`）和日志目录（`logs/`）首次运行时自动创建。
 
@@ -89,17 +103,21 @@ python run_dashboard.py
 
 | 命令 | 说明 |
 |---|---|
-| `python run_dashboard.py` | 桌面端（主界面）：股票搜索、交易决策、实时资讯流、AI 问股、自选股、模拟交易（含组合风险）、实盘记账、信号绩效（含 AI 诊断验证）、大盘复盘、策略选股（含历史回测）、主线分析、盘中提醒、数据源状态；个股详情含 K 线、新闻公告、AI 诊断和加入自选；AI 涨停预测、推送日报、推送设置 |
+| `python server.py` | Web 界面和 API（默认 http://127.0.0.1:8000），同时运行定时任务和聊天机器人；`--no-scheduler` 只提供界面和接口（已经在运行 `main.py` 时用），`--host 0.0.0.0` 让局域网访问（需要先开启 Web 登录），`--workdir` 指定存放 `config/`、`data/`、`logs/` 的目录 |
+| `cd apps/desktop && npm run dev` | Electron 桌面端（开发模式），自动在空闲端口启动 `server.py` 并打开 Web 界面 |
+| `python run_dashboard.py` | PyQt6 桌面端（旧版）：股票搜索、交易决策、实时资讯流、AI 问股、自选股、模拟交易（含组合风险）、实盘记账、信号绩效（含 AI 诊断验证）、大盘复盘、策略选股（含历史回测）、主线分析、盘中提醒、数据源状态；个股详情含 K 线、新闻公告、AI 诊断和加入自选；AI 涨停预测、推送日报、推送设置 |
 | `python run_dashboard.py --headless` | 不打开界面，执行一次完整流程（采集 → 自学习 → 涨停预测 → 生成订单）后退出 |
 | `python run_dashboard.py --warmup-before-ui` | 先执行一次完整流程，再打开界面 |
-| `python main.py` | 无界面常驻运行，按下方时间表定时执行 |
+| `python main.py` | 无界面常驻运行，按下方时间表定时执行，并运行聊天机器人 |
+| `python main.py --once` | 按顺序执行一遍收盘后的任务（采集 → 每日分析 → 交易信号 → 大盘复盘与日报 → 自学习 → 自选股仪表盘）后退出，`--steps collect,analysis` 只执行部分步骤；供 GitHub Actions、Docker 或系统定时任务使用 |
 | `python run_full.py` | 基于已采集数据一次性执行：舆情分析 → 题材提取 → 国际因子 → 评分，打印 Top 10 |
 | `python run_score.py` | 只对已有数据评分 |
 | `python run_demo.py` | 演示数据采集与展示 |
-| `uvicorn src.dashboard.app:app --port 8000` | 启动 Web 仪表盘，浏览器访问 http://localhost:8000 |
+| `docker compose -f docker/docker-compose.yml up -d` | Docker 运行 Web 界面和定时任务，见下方 [Docker](#docker) |
+| `python scripts/check_sources.py` | 检查各数据源是否可用 |
 | `python scripts/fetch_history.py --mode daily --start-date 2024-01-01` | 回补历史数据；`--mode` 可选 `all`、`daily`、`limit_up`、`concepts`（给已有涨停记录补齐题材）、`dragon_tiger`；默认断点续传并补齐 `--start-date` 之后缺失的日线，`--force-full` 全量重拉，`--overwrite` 覆盖已有日线 |
 
-`main.py` 的默认时间表（可在 `scheduler` 配置中修改）。行情采集和每日任务按交易日历运行，周末和法定节假日自动跳过；新闻类采集照常进行。
+`main.py` 和 `server.py` 的默认时间表（可在 `scheduler` 配置中修改）。行情采集和每日任务按交易日历运行，周末和法定节假日自动跳过；新闻类采集照常进行。
 
 | 任务 | 频率 |
 |---|---|
@@ -111,6 +129,72 @@ python run_dashboard.py
 | LLM 大盘复盘、推送每日报告 | 工作日 16:10 |
 | 自学习 | 工作日 16:20 |
 | 自选股决策仪表盘 | 工作日 16:30 |
+
+## Web 界面与桌面端
+
+Web 界面（`apps/web`，React + TypeScript + Vite + Tailwind）覆盖桌面端的全部功能：交易决策、资讯流、AI 问股（多会话、导出、推送）、自选股、模拟交易、实盘记账、大盘复盘、主线分析、策略选股、信号绩效、盘中提醒、数据源状态、AI 用量和设置；顶部可按代码、名称、拼音首字母搜索个股。采集、预测、诊断等耗时操作在后台任务中执行，右上角【任务】查看进度。支持深色、浅色主题和手机布局。
+
+- **访问控制：** 默认只允许本机访问。开启 Web 登录（【设置 → 登录安全】或 `web.auth_enabled`）后，局域网和手机也能访问，首次登录时设置密码；脚本调用可以用 `web.api_token`（`Authorization: Bearer <token>`）。
+- **接口：** API 在 `/api/v1` 下，启动后访问 http://127.0.0.1:8000/docs 查看全部接口。
+
+Electron 桌面端（`apps/desktop`）启动时在空闲端口拉起后台服务，就绪后加载 Web 界面；关闭窗口时停止后台服务，同一时间只运行一个实例。打包后的配置、数据库和日志放在系统的应用数据目录（Windows 为 `%APPDATA%\AStockQuant`，可用环境变量 `QUANT_HOME` 指定），首次启动时自动下载 Chromium。
+
+打包安装包（需要 Node.js 和装好依赖的 Python 环境，在哪个系统上运行就打包哪个系统的安装包）：
+
+```bash
+python scripts/build_desktop.py          # 前端 → 后台服务（PyInstaller）→ Electron 安装包，产物在 apps/desktop/dist/
+```
+
+## Docker
+
+```bash
+cp config/settings.yaml.example config/settings.yaml   # 可选：也可以只用环境变量
+docker compose -f docker/docker-compose.yml up -d
+```
+
+浏览器打开 http://localhost:8000 ，首次登录时设置密码（容器外访问必须登录）。`config/`、`data/`、`logs/` 挂载到宿主机；镜像已装好 Chromium。手动执行一遍收盘后任务：
+
+```bash
+docker compose -f docker/docker-compose.yml run --rm quant python main.py --once
+```
+
+推送 `v*` 标签时，GitHub Actions 会把镜像发布到 `ghcr.io/<owner>/<repo>`。
+
+## 环境变量配置
+
+所有配置都可以用 `QUANT__` 开头的环境变量覆盖，层级用双下划线分隔，例如 `QUANT__LLM__PRIMARY__API_KEY=sk-xxx` 覆盖 `llm.primary.api_key`，`QUANT__WEB__AUTH_ENABLED=true` 开启 Web 登录。环境变量优先级最高；界面保存设置、自学习写回配置时，来自环境变量的值不会写进 `settings.yaml`。Docker 可以把它们写在仓库根目录的 `.env` 里（已被 git 忽略）。
+
+## GitHub Actions 定时运行
+
+不想常开电脑时，可以让 GitHub Actions 在每个工作日 16:40 执行 `main.py --once` 并推送日报（`.github/workflows/daily-analysis.yml`）：
+
+1. 仓库 **Settings → Secrets and variables → Actions → Variables** 添加 `ENABLE_DAILY_ANALYSIS=true`。
+2. 配置二选一：Secret `SETTINGS_YAML` 填完整的 `settings.yaml` 内容；或者分别填 Secret `LLM_API_KEY`、`DINGTALK_WEBHOOK` 等，以及 Variable `LLM_PROVIDER`、`LLM_BASE_URL`、`LLM_MODEL`（完整列表见工作流文件）。
+3. 数据库通过 Actions 缓存保留到下一次运行，日志作为构建产物保存 7 天。
+
+GitHub 的服务器在境外，部分国内数据源可能访问失败或变慢。`network-smoke.yml` 在工作日开盘后运行 `scripts/check_sources.py`（设置 `ENABLE_NETWORK_SMOKE=true` 启用），及早发现数据源接口变化。
+
+## 聊天机器人
+
+在钉钉或飞书里和系统对话，只读，不能下单：
+
+| 消息 | 回复 |
+|---|---|
+| `诊断 茅台`（或 `分析`、`/analyze`，代码、名称、拼音首字母都行） | 个股 AI 诊断的决策仪表盘 |
+| `大盘` | 最近一次大盘复盘和次日姿态 |
+| `预测` | 今日 AI 涨停预测 |
+| `自选`、`自选 加 茅台`、`自选 删 茅台` | 自选股和最近诊断，增删自选 |
+| `持仓` | 模拟盘和实盘记账的持仓 |
+| `状态` | 数据源健康状况 |
+| `清空` | 结束当前 AI 问股对话 |
+| 其他内容 | AI 问股（同一会话 30 分钟内保持上下文，群里每人各自一段） |
+
+两个平台都用长连接收消息，不需要公网 IP 和回调地址：
+
+- **钉钉：** 开放平台创建企业内部应用 → 添加机器人，消息接收模式选「Stream 模式」，把 Client ID 和 Client Secret 填进 `bot.dingtalk`。
+- **飞书：** 开放平台创建企业自建应用 → 添加机器人 → 事件订阅选「使用长连接接收事件」并订阅「接收消息」，开通收发消息权限，把 App ID 和 App Secret 填进 `bot.feishu`。
+
+单聊直接发，群聊需要 @机器人。`bot.allowed_users` 可以限制使用者（没有权限的人发消息时会收到自己的用户 ID）。机器人随 `main.py` 和 `server.py`（含桌面端）运行，也可以在 Web【设置 → 聊天机器人】里配置。
 
 ## 大盘环境与主线
 
@@ -339,7 +423,7 @@ python scripts/fetch_history.py --mode daily --start-date 2026-06-01
 
 | 配置段 | 内容 |
 |---|---|
-| `llm` | 主模型、备用模型（主模型失败时自动切换）、超时、重试、响应缓存 |
+| `llm` | 主模型、备用模型（主模型失败时自动切换）、调用方式（`backend`：litellm / openai）、超时、重试、响应缓存、自定义单价（`pricing`，用于估算费用） |
 | `scheduler` | `main.py` 的采集间隔和每日任务时间 |
 | `trading` | 交易时段；交易执行开关、自动确认、单笔订单预算、每次最多订单数、模拟盘初始资金、是否按大盘环境调整仓位 |
 | `strategy` | 因子权重、自学习参数、Top N 数量、AI 研判开关 |
@@ -353,7 +437,9 @@ python scripts/fetch_history.py --mode daily --start-date 2026-06-01
 | `notifier` | 每日报告开关、免打扰时段；企业微信、钉钉、飞书机器人 Webhook（钉钉、飞书支持签名）；邮件（SMTP）；按消息类型的推送路由 `routes`。桌面端【推送设置】可以直接修改 |
 | `diagnosis` | 个股诊断模式（single / standard / full）、历史校准开关 |
 | `watchlist` | 自选股每日仪表盘开关、自选股上限、同时诊断的股票数 |
-| `dashboard` | Web 仪表盘地址和端口 |
+| `web` | Web 服务地址和端口、登录开关、会话天数、API Token、是否同时运行定时任务、后台任务并发数、跨域来源 |
+| `bot` | 钉钉、飞书聊天机器人的凭证和开关，允许使用的用户 |
+| `data_sources` | 日线回补和实时行情的数据源顺序、Tushare token、自定义通达信服务器 |
 
 股票池过滤规则在 `config/stock_pool.yaml`，下单前由风控模块逐条校验（策略选股也按其中的黑名单、股价和市值过滤）：
 
@@ -363,24 +449,29 @@ python scripts/fetch_history.py --mode daily --start-date 2026-06-01
 - **股价范围：** 默认 3–100 元。
 - **流通市值范围：** 默认 20–5000 亿元。
 
-> **注意：** 自学习和桌面端【AI设置】会改写 `config/settings.yaml`，文件中的注释会丢失。如果不希望自学习写回文件，设置 `strategy.learning.persist_to_yaml: false`。
+> **注意：** 自学习、Web【设置】和桌面端【AI设置】会改写 `config/settings.yaml`，文件中的注释会丢失。如果不希望自学习写回文件，设置 `strategy.learning.persist_to_yaml: false`。
 
 ## 项目结构
 
 ```
-├── main.py / run_*.py      入口脚本
+├── main.py / server.py     定时任务、Web 服务入口（run_*.py 为其他入口脚本）
+├── api/                    FastAPI 接口（/api/v1）、登录、后台任务
+├── apps/
+│   ├── web/                Web 前端（React + TypeScript + Vite + Tailwind）
+│   └── desktop/            Electron 桌面端
+├── docker/                 Dockerfile、docker-compose
 ├── config/                 配置文件
-├── scripts/                历史数据回补、Windows 打包脚本
+├── scripts/                历史数据回补、数据源检查、打包脚本
 ├── src/
+│   ├── bot/                钉钉、飞书聊天机器人
 │   ├── collectors/         数据采集器
 │   ├── analyzers/          LLM 客户端与舆情、题材、国际因子分析
 │   ├── strategy/           因子评分、综合评分、策略选股与回测、风控
 │   ├── services/           流程编排、并发采集、涨停预测、个股诊断、AI 问股、大盘复盘、盘中提醒、组合风险、自学习、AI 研判
 │   ├── trading/            订单执行与模拟券商
 │   ├── database/           SQLAlchemy 模型与 SQLite 会话
-│   ├── desktop/            PyQt6 桌面端
-│   ├── dashboard/          FastAPI Web 仪表盘
-│   ├── notifier/           企业微信、钉钉、飞书推送
+│   ├── desktop/            PyQt6 桌面端（旧版）
+│   ├── notifier/           企业微信、钉钉、飞书、邮件推送
 │   ├── backtest/           回测引擎
 │   └── scheduler.py        定时任务
 └── tests/                  测试
@@ -390,20 +481,19 @@ python scripts/fetch_history.py --mode daily --start-date 2026-06-01
 
 ## 开发
 
-运行测试（测试不会访问网络；推送到 main 后 GitHub CI 会自动运行）：
+运行测试（测试不会访问网络；推送到 main 后 GitHub CI 会自动运行后端、前端和桌面端测试）：
 
 ```bash
 pip install pytest
 python -m pytest -q tests/
+
+cd apps/web && npm run lint && npm test && npm run build   # 前端
+cd apps/desktop && npm test                                 # 桌面端
 ```
 
-打包 Windows EXE：
+前端开发：先运行 `python server.py`，再在 `apps/web` 运行 `npm run dev`，打开 http://localhost:5173（接口自动代理到 8000 端口）。
 
-```powershell
-powershell .\scripts\build_exe.ps1
-```
-
-打包脚本依赖 PyInstaller 配置文件 `AStockQuantQt6.spec`，该文件未纳入仓库，需要自行准备。产物为 `dist\AStockQuantQt6.exe`，运行时从 EXE 所在目录读取 `config/`、`data/` 和 `logs/`。
+打包：桌面端安装包用 `python scripts/build_desktop.py`；推送 `v*` 标签时 GitHub Actions 会打包 Windows 和 macOS 安装包并上传到 Release。旧版 PyQt6 EXE 仍可用 `powershell .\scripts\build_exe.ps1` 打包（需要自行准备未纳入仓库的 `AStockQuantQt6.spec`）。
 
 提交信息遵循 Conventional Commits（`feat:`、`fix:`、`docs:` 等）。更多约定见 [AGENTS.md](AGENTS.md)。
 
