@@ -1,7 +1,7 @@
 // 页面框架：左侧导航、顶部股票搜索、任务中心、主题切换
 import {
   Activity, BarChart3, Bell, BookOpen, Crosshair, Filter, Flame, Gauge, History, LayoutDashboard, LineChart, LogOut, Menu,
-  MessagesSquare, Moon, Newspaper, Settings, Star, Sun, Wallet,
+  MessagesSquare, Microscope, Moon, Newspaper, Settings, Star, Sun, Wallet,
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
@@ -33,6 +33,7 @@ export const NAV: { group: string; items: { to: string; label: string; icon: Rea
     items: [
       { to: '/review', label: '大盘复盘', icon: <LineChart className="size-4" /> },
       { to: '/themes', label: '主线分析', icon: <Flame className="size-4" /> },
+      { to: '/research', label: '深度研究', icon: <Microscope className="size-4" /> },
       { to: '/screening', label: '策略选股', icon: <Filter className="size-4" /> },
       { to: '/performance', label: '信号绩效', icon: <BarChart3 className="size-4" /> },
       { to: '/history', label: '诊断历史', icon: <History className="size-4" /> },

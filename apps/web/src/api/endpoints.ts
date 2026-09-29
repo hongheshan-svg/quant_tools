@@ -94,6 +94,13 @@ export const api = {
   exportChatUrl: (id: string) => `/api/v1/chat/sessions/${id}/export`,
   pushChat: (id: string) => http.post<{ pushed: boolean; reason?: string }>(`/chat/sessions/${id}/push`),
 
+  // 深度研究
+  startResearch: (topic: string) => http.post<T.Task<T.ResearchReport>>('/research', { topic }),
+  researchList: (limit = 50) => http.get<T.ResearchSummary[]>(`/research?limit=${limit}`),
+  researchReport: (id: number) => http.get<T.ResearchReport>(`/research/${id}`),
+  deleteResearch: (id: number) => http.del<{ ok: boolean }>(`/research/${id}`),
+  researchMarkdownUrl: (id: number) => `/api/v1/research/${id}/markdown`,
+
   // 自选股
   watchlist: () => http.get<T.WatchlistRow[]>('/watchlist'),
   addWatch: (text: string) => http.post<{ ok: boolean; code?: string; name?: string; error?: string }>('/watchlist', { text }),

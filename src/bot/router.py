@@ -33,6 +33,7 @@ HELP_TEXT = """**A股量化助手**
 - **批量 茅台 宁德时代**：批量诊断，最多 5 只（空格、逗号、顿号分隔）
 - **历史 茅台**：最近 5 次诊断记录
 - **策略**：列出全部问股策略；**策略 龙回头 宁德时代能买吗**：按指定策略提问
+- **研究 固态电池产业链**：深度研究报告，联网检索并综合行情，约 1~2 分钟（也可用 深度研究、/research）
 - **大盘**：最近一次大盘复盘和次日姿态
 - **预测**：今日 AI 涨停预测
 - **自选**：自选股和最近诊断；**自选 加 茅台** / **自选 删 茅台**
@@ -75,6 +76,7 @@ class CommandRouter:
             Command(("批量诊断", "批量", "batch"), self._batch, takes_args=True),
             Command(("历史", "history"), self._history, takes_args=True),
             Command(("策略", "strategies", "skills"), self._strategy, takes_args=True),
+            Command(("深度研究", "研究", "research"), self._research, takes_args=True),
             Command(("大盘", "复盘", "market"), self._market),
             Command(("预测", "涨停预测", "predict"), self._predict),
             Command(("自选股", "自选", "watchlist"), self._watchlist, takes_args=True),
@@ -226,6 +228,21 @@ class CommandRouter:
             regimes = f"\n适配大盘环境：{'、'.join(skill.market_regimes)}" if skill.market_regimes else ""
             return f"### {skill.display_name}\n\n{skill.description}{regimes}\n\n用法：策略 {skill.display_name} 宁德时代能买吗"
         return self._chat(message, question, progress, perspective=skill.display_name)
+
+    def _research(self, message: BotMessage, args: str, progress) -> str:
+        topic = args.strip()
+        if not topic:
+            return "请带上研究主题，例如：研究 固态电池产业链近期催化"
+        if len(topic) > 100:
+            return "研究主题不能超过 100 个字"
+        progress(f"开始研究「{topic}」，大约需要 1~2 分钟…")
+        from src.services.research import ResearchService
+
+        try:
+            result = ResearchService(self.config).run(topic)
+        except Exception as e:
+            return f"研究「{topic}」失败：{e}"
+        return f"# {topic}\n\n{result['markdown']}"
 
     def _market(self, message: BotMessage, args: str, progress) -> str:
         from src.services.market_review import render_markdown

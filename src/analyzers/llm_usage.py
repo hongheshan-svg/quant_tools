@@ -21,6 +21,7 @@ FEATURE_LABELS = {
     "src.services.stock_diagnosis": "个股诊断",
     "src.services.diagnosis_agents": "个股诊断",
     "src.services.stock_chat": "AI 问股",
+    "src.services.research": "深度研究",
     "src.services.market_review": "大盘复盘",
     "src.services.premarket_predictor": "涨停预测",
     "src.services.trade_advisor": "AI 研判",

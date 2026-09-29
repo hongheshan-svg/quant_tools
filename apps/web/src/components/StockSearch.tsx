@@ -54,6 +54,7 @@ export function StockSearch({ onSelect, placeholder = '搜索股票 / ETF / 指�
     <div className={cn('relative', className)}>
       <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted" />
       <input
+        type="search"
         value={text}
         autoFocus={autoFocus}
         onChange={(e) => setText(e.target.value)}

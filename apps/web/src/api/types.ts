@@ -895,3 +895,28 @@ export interface NotifierDiagnosis {
   channels: { channel: string; label: string; enabled: boolean; configured: boolean; issues: string[] }[]
   routes: string[]
 }
+
+export interface ResearchEvidence {
+  id: string
+  source: string
+  title: string
+  content: string
+  url: string
+}
+
+export interface ResearchSummary {
+  id: number
+  topic: string
+  created_at: string
+  summary: string
+}
+
+export interface ResearchReport {
+  id: number
+  topic: string
+  markdown: string
+  questions: string[]
+  evidence: ResearchEvidence[]
+  stocks: { code: string; name: string }[]
+  created_at: string
+}

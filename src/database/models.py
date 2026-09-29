@@ -834,3 +834,18 @@ class FundDaily(Base):
     __table_args__ = (
         Index("uq_fund_daily_code_date", "code", "trade_date", unique=True),
     )
+
+
+class ResearchReport(Base):
+    """深度研究报告：主题拆解 -> 多源取证 -> 综合成文"""
+    __tablename__ = "research_report"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    topic = Column(String(200), nullable=False, comment="研究主题")
+    markdown = Column(Text, nullable=False, comment="报告正文 Markdown")
+    questions_json = Column(Text, comment="子问题 JSON 列表")
+    evidence_json = Column(Text, comment="证据 JSON 列表")
+    stocks_json = Column(Text, comment="相关股票 JSON [{code,name}]")
+    created_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (Index("idx_research_report_created", "created_at"),)
