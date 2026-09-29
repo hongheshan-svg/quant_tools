@@ -23,6 +23,7 @@ def start_bots(config: dict, pipeline=None) -> list[str]:
     platforms = {
         "dingtalk": (cfg.get("dingtalk") or {}, ("client_id", "client_secret")),
         "feishu": (cfg.get("feishu") or {}, ("app_id", "app_secret")),
+        "discord": (cfg.get("discord") or {}, ("token",)),
     }
     wanted = [name for name, (pcfg, _keys) in platforms.items() if pcfg.get("enabled")]
     if not wanted:
@@ -44,11 +45,19 @@ def start_bots(config: dict, pipeline=None) -> list[str]:
                     from src.bot.dingtalk import DingTalkBot
 
                     bot = DingTalkBot(pcfg["client_id"], pcfg["client_secret"], dispatcher)
+                elif name == "discord":
+                    from src.bot.discord import DiscordBot
+
+                    bot = DiscordBot(pcfg["token"], dispatcher, guild_mode=pcfg.get("guild_mode") or "mention",
+                                     allowed_channels=[str(c) for c in (pcfg.get("allowed_channels") or [])])
+                    if bot.start() is False:  # discord.py 没装
+                        continue
                 else:
                     from src.bot.feishu import FeishuBot
 
                     bot = FeishuBot(pcfg["app_id"], pcfg["app_secret"], dispatcher, domain=pcfg.get("domain", "feishu"))
-                bot.start()
+                if name != "discord":
+                    bot.start()
             except ImportError as e:
                 logger.warning(f"[bot] {name} 的 SDK 没有安装（pip install -r requirements.txt）: {e}")
                 continue

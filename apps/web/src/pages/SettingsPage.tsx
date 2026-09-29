@@ -272,7 +272,7 @@ function BotForm() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted">
-        在钉钉、飞书里发「诊断 茅台」「大盘」「自选」「持仓」或直接提问（AI 问股），只读，不能下单。用长连接收消息，不需要公网 IP；
+        在钉钉、飞书、Discord 里发「诊断 茅台」「大盘」「自选」「持仓」或直接提问（AI 问股），只读，不能下单。用长连接收消息，不需要公网 IP；
         单聊直接发，群聊需要 @机器人。
       </p>
       <div className="grid gap-3 lg:grid-cols-2">
@@ -299,6 +299,32 @@ function BotForm() {
             )}
           </fieldset>
         ))}
+        <fieldset className="space-y-2 rounded-md border border-line p-3">
+          <legend className="px-1 text-sm text-accent">
+            Discord{data.running.includes('discord') && <span className="ml-2 text-xs text-down">运行中</span>}
+          </legend>
+          <p className="text-xs text-muted">
+            Discord 开发者后台 → Application → Bot，复制 Token；需要在 Discord 开发者后台开启 Message Content Intent。使用 Gateway 长连接，不需要公网地址
+          </p>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={!!form.discord?.enabled} onChange={(e) => set('discord', 'enabled', e.target.checked)} /> 启用
+          </label>
+          <Field label="Bot Token">
+            <Input type="password" value={form.discord?.token ?? ''} onChange={(e) => set('discord', 'token', e.target.value)} />
+          </Field>
+          <Field label="允许的频道 ID（逗号分隔，为空不限制）">
+            <Input
+              value={(form.discord?.allowed_channels ?? []).join(', ')}
+              onChange={(e) => set('discord', 'allowed_channels', e.target.value.split(/[,，;；\s]+/).map((x) => x.trim()).filter(Boolean))}
+            />
+          </Field>
+          <Field label="服务器内回复方式">
+            <Select className="w-full" value={form.discord?.guild_mode ?? 'mention'} onChange={(e) => set('discord', 'guild_mode', e.target.value)}>
+              <option value="mention">mention（仅 @机器人 或以 / 开头）</option>
+              <option value="all">all（回复所有消息）</option>
+            </Select>
+          </Field>
+        </fieldset>
       </div>
       <Field label="允许使用的用户 ID（逗号分隔，为空不限制；无权限的用户发消息时会收到自己的 ID）">
         <Input

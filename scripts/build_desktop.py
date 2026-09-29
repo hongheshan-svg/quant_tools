@@ -31,7 +31,8 @@ HIDDEN_IMPORTS = ["tiktoken_ext", "tiktoken_ext.openai_public", "multipart"]
 # 带数据文件（价格表、日历、字典等）的包
 COLLECT_DATA = ["litellm", "akshare", "tiktoken_ext", "efinance"]
 # 大量按需导入子模块的包
-COLLECT_SUBMODULES = ["litellm", "uvicorn"]
+# discord.py 按需导入大量子模块；它依赖的 aiohttp 有 PyInstaller 自带 hook，无需额外收集
+COLLECT_SUBMODULES = ["litellm", "uvicorn", "discord"]
 # 带原生库的包（akshare 的交易日历等接口用 py_mini_racer 执行 JS）
 COLLECT_ALL = ["py_mini_racer"]
 # 后台服务用不到的大包（Qt 只有旧桌面端使用）

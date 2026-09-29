@@ -499,7 +499,7 @@ def test_notifier(channel: str, body: NotifierBody, config: dict = Depends(get_c
 
 # ---------- 聊天机器人 ----------
 
-BOT_SECRETS = (("dingtalk", "client_secret"), ("feishu", "app_secret"))
+BOT_SECRETS = (("dingtalk", "client_secret"), ("feishu", "app_secret"), ("discord", "token"))
 
 
 @router.get("/settings/bot")

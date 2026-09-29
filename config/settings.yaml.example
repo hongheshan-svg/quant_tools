@@ -362,7 +362,7 @@ intelligence:
   # 示例：
   # - {name: 示例, url: "https://example.com/feed.xml", enabled: true}
 
-# 聊天机器人：在钉钉、飞书里发「诊断 茅台」「大盘」「自选」「持仓」或直接提问（AI 问股），只读，不能下单。
+# 聊天机器人：在钉钉、飞书、Discord 里发「诊断 茅台」「大盘」「自选」「持仓」或直接提问（AI 问股），只读，不能下单。
 # 用长连接收消息，不需要公网 IP；随 main.py 或 server.py（桌面端）运行，修改后重启生效
 bot:
   dingtalk:
@@ -376,6 +376,12 @@ bot:
     app_id: ""
     app_secret: ""
     domain: feishu      # 海外版 Lark 填 lark
+  discord:
+    # Discord 开发者后台 → Application → Bot，复制 Token，并开启 Message Content Intent；用 Gateway 长连接，不需要公网地址
+    enabled: false
+    token: ""
+    allowed_channels: []   # 频道 ID 列表，空表示不限制
+    guild_mode: mention    # mention：服务器里只回复 @机器人 或以 / 开头的消息；all：回复所有消息（私信总是回复）
   # 允许使用的用户 ID（钉钉 senderStaffId、飞书 open_id）；为空不限制。无权限的用户发消息时会收到自己的 ID
   allowed_users: []
   workers: 2            # 同时处理的消息数
