@@ -283,6 +283,28 @@ class RealPositionPlan(Base):
     )
 
 
+class RealCorporateAction(Base):
+    """实盘分红送转（公司行为）：现金分红到账、送转股到账、股息红利税补缴"""
+    __tablename__ = "real_corporate_action"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(10), nullable=False, comment="股票代码（6位）")
+    name = Column(String(20), comment="股票名称")
+    ex_date = Column(String(10), nullable=False, comment="除权除息日 YYYY-MM-DD")
+    action = Column(String(10), nullable=False, comment="dividend 现金分红 / bonus 送转股 / tax 红利税补缴")
+    cash = Column(Float, default=0.0, comment="dividend 到账金额、tax 扣税金额（元，正数）")
+    shares = Column(Integer, default=0, comment="bonus 送转到账的股数")
+    note = Column(String(200), comment="备注")
+    source = Column(String(10), default="manual", comment="manual 手动 / import 导入")
+    import_key = Column(String(120), comment="导入去重键")
+    created_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index("idx_real_corp_action_date", "ex_date", "code"),
+        Index("idx_real_corp_action_import_key", "import_key", unique=True),
+    )
+
+
 class ChatSessionRecord(Base):
     """AI 问股会话（Web 端保存，重启后可继续查看和追问）"""
     __tablename__ = "chat_session"

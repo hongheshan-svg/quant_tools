@@ -563,6 +563,31 @@ export interface RealTrade {
   note: string
 }
 
+export interface RealCorporateAction {
+  id: number
+  code: string
+  name: string
+  ex_date: string
+  action: 'dividend' | 'bonus' | 'tax' | string
+  action_label: string
+  cash: number
+  shares: number
+  note: string
+  source: string
+}
+
+export interface RealImportPreview {
+  format: string
+  trades: { trade_date: string; trade_time?: string; code: string; name: string; side: string; price: number; quantity: number; fee: number; duplicate?: boolean }[]
+  actions: { ex_date: string; code: string; name: string; action: string; action_label?: string; cash: number; shares: number; duplicate?: boolean }[]
+  new_trades: number
+  new_actions: number
+  duplicates: number
+  skipped: number
+  warnings: string[]
+  error?: string
+}
+
 export interface RealPortfolio {
   snapshot: {
     account: { cash: number; market_value: number; total_assets: number; unrealized_pnl: number; realized_pnl: number; cash_known: boolean }

@@ -99,7 +99,11 @@ export const api = {
   real: () => http.get<T.RealPortfolio>('/real'),
   addRealTrade: (trade: Record<string, unknown>) => http.post<{ ok: boolean }>('/real/trades', trade),
   deleteRealTrade: (id: number) => http.del<{ ok: boolean }>(`/real/trades/${id}`),
-  importRealTrades: (file: File) => http.upload<{ added: number; duplicate: number; skipped: number; error: string }>('/real/trades/import', file),
+  importRealTrades: (file: File) => http.upload<{ added: number; duplicate: number; skipped: number; actions_added?: number; error: string }>('/real/trades/import', file),
+  previewRealImport: (file: File) => http.upload<T.RealImportPreview>('/real/trades/import?preview=true', file),
+  realActions: () => http.get<T.RealCorporateAction[]>('/real/actions'),
+  addRealAction: (body: Record<string, unknown>) => http.post<{ ok: boolean }>('/real/actions', body),
+  deleteRealAction: (id: number) => http.del<{ ok: boolean }>(`/real/actions/${id}`),
   setRealCash: (cash: number) => http.put<{ ok: boolean }>('/real/cash', { cash }),
   setRealPlan: (code: string, stop_loss: number | null, target_price: number | null) =>
     http.put<{ ok: boolean }>(`/real/plans/${code}`, { stop_loss, target_price }),

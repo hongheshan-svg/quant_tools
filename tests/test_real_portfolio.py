@@ -72,17 +72,17 @@ def test_parse_export(tmp_path):
 
 def test_import_positions_and_pnl(config, tmp_path):
     service = RealPortfolioService(config)
-    assert service.import_file(_write(tmp_path, EXPORT)) == {"added": 4, "duplicate": 0, "skipped": 1, "error": ""}
-    assert service.import_file(_write(tmp_path, EXPORT))["duplicate"] == 4       # 重复导入不会记两次
+    assert service.import_file(_write(tmp_path, EXPORT)) == {"added": 4, "duplicate": 0, "skipped": 0, "actions_added": 1, "error": ""}
+    assert service.import_file(_write(tmp_path, EXPORT))["duplicate"] == 5       # 重复导入不会记两次
 
     positions = {p["code"]: p for p in service.positions()}
     moutai = positions["600519"]
-    # 成本 = (150000 + 6.5 + 140000 + 6.4) / 200 = 1450.0645；卖出 100 股后剩 100 股，均价不变
-    assert moutai["quantity"] == 100 and moutai["avg_cost"] == pytest.approx(1450.0645)
-    assert moutai["market_price"] == 1550.0 and moutai["unrealized_pnl"] == pytest.approx((1550 - 1450.0645) * 100)
-    assert moutai["stop_loss"] == pytest.approx(1377.56) and moutai["target_price"] == pytest.approx(1667.57)
+    # 成本 = (150000 + 6.5 + 140000 + 6.4) / 200 = 1450.0645，9-23 红利入账 300 元摊薄为 1448.5645；卖出 100 股后剩 100 股，均价不变
+    assert moutai["quantity"] == 100 and moutai["avg_cost"] == pytest.approx(1448.5645)
+    assert moutai["market_price"] == 1550.0 and moutai["unrealized_pnl"] == pytest.approx((1550 - 1448.5645) * 100)
+    assert moutai["stop_loss"] == pytest.approx(1376.14) and moutai["target_price"] == pytest.approx(1665.85)
     snapshot = service.snapshot()
-    assert snapshot["account"]["realized_pnl"] == pytest.approx((1600 - 1450.0645) * 100 - 86.6, abs=0.01)
+    assert snapshot["account"]["realized_pnl"] == pytest.approx((1600 - 1448.5645) * 100 - 86.6, abs=0.01)
     assert snapshot["account"]["cash_known"] is False and "还没有设置可用资金" in snapshot["warnings"][0]
 
     service.set_plan("600519", 1480.0, None)
@@ -151,4 +151,4 @@ def test_chat_position_tool_includes_real(config, tmp_path, monkeypatch):
     RealPortfolioService(config).import_file(_write(tmp_path, EXPORT))
     monkeypatch.setattr(exec_mod.ExecutionService, "get_trading_snapshot", lambda self, order_limit=1: {"positions": []})
     text = ChatTools(config).call("position", {})
-    assert text.startswith("模拟盘持仓：无\n实盘持仓：贵州茅台(600519) 100股 成本1450.06")
+    assert text.startswith("模拟盘持仓：无\n实盘持仓：贵州茅台(600519) 100股 成本1448.56")
