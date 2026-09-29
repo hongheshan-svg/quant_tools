@@ -1,7 +1,7 @@
 // 设置：AI 模型（主/备）、推送渠道与路由、聊天机器人、登录安全；在桌面端里多一个「桌面端」页
 import { useEffect, useState } from 'react'
 import { api } from '@/api/endpoints'
-import type { AuthStatus, SchedulerJob, SchedulerStatus, SettingsImportResult, BotSettings, LLMRole, LLMSettings, NotifierDiagnosis, NotifierField, NotifierSettings, SearchTestResult } from '@/api/types'
+import type { AuthStatus, BotSettings, CollectRssResult, IntelligenceSource, IntelligenceTestResult, LLMRole, LLMSettings, NotifierDiagnosis, NotifierField, NotifierSettings, SchedulerJob, SchedulerStatus, SearchTestResult, SettingsImportResult } from '@/api/types'
 import { DataTable } from '@/components/DataTable'
 import { Button, Card, ErrorBox, Field, Input, PageHeader, Select, Spinner, Tabs, Textarea } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
@@ -9,7 +9,7 @@ import { useTask } from '@/hooks/useTask'
 import { toast } from '@/stores/toast'
 import { getDesktop, type DesktopInfo, type QuantDesktop } from '@/utils/desktop'
 
-type TabKey = 'llm' | 'notifier' | 'bot' | 'search' | 'scheduler' | 'backup' | 'security' | 'desktop'
+type TabKey = 'llm' | 'notifier' | 'bot' | 'search' | 'intelligence' | 'scheduler' | 'backup' | 'security' | 'desktop'
 
 export function SettingsPage() {
   const [tab, setTab] = useState<TabKey>('llm')
@@ -19,6 +19,7 @@ export function SettingsPage() {
     { key: 'notifier', label: '推送' },
     { key: 'bot', label: '聊天机器人' },
     { key: 'search', label: '联网搜索' },
+    { key: 'intelligence', label: '资讯源' },
     { key: 'scheduler', label: '定时任务' },
     { key: 'backup', label: '备份与恢复' },
     { key: 'security', label: '登录安全' },
@@ -33,6 +34,7 @@ export function SettingsPage() {
         {tab === 'notifier' && <NotifierForm />}
         {tab === 'bot' && <BotForm />}
         {tab === 'search' && <SearchForm />}
+        {tab === 'intelligence' && <IntelligenceForm />}
         {tab === 'scheduler' && <SchedulerPanel />}
         {tab === 'backup' && <BackupPanel />}
         {tab === 'security' && <SecurityForm />}
@@ -628,6 +630,120 @@ function BackupPanel() {
           </div>
         )}
       </section>
+    </div>
+  )
+}
+
+function IntelligenceForm() {
+  const { data, error, loading, reload } = useApi(api.intelligenceSettings)
+  const [enabled, setEnabled] = useState(true)
+  const [interval, setIntervalMinutes] = useState('30')
+  const [maxItems, setMaxItems] = useState('30')
+  const [sources, setSources] = useState<IntelligenceSource[]>([])
+  const [draft, setDraft] = useState({ name: '', url: '' })
+  const [tests, setTests] = useState<Record<number, IntelligenceTestResult | 'loading'>>({})
+  const [saving, setSaving] = useState(false)
+  const collect = useTask<CollectRssResult>()
+
+  useEffect(() => {
+    if (!data) return
+    const s = data.intelligence
+    setEnabled(!!s.enabled)
+    setIntervalMinutes(String(s.interval_minutes ?? 30))
+    setMaxItems(String(s.max_items_per_source ?? 30))
+    setSources(s.sources ?? [])
+    setTests({})
+  }, [data])
+
+  if (loading && !data) return <Spinner />
+  if (error || !data) return <ErrorBox message={error || '加载失败'} onRetry={reload} />
+
+  const update = (i: number, patch: Partial<IntelligenceSource>) => setSources(sources.map((s, j) => (j === i ? { ...s, ...patch } : s)))
+  const test = async (i: number) => {
+    setTests((t) => ({ ...t, [i]: 'loading' }))
+    try {
+      const r = await api.testIntelligenceSource(sources[i].url)
+      setTests((t) => ({ ...t, [i]: r }))
+    } catch (e) {
+      setTests((t) => ({ ...t, [i]: { ok: false, title: '', count: 0, samples: [], error: e instanceof Error ? e.message : String(e) } }))
+    }
+  }
+  const add = () => {
+    const name = draft.name.trim()
+    const url = draft.url.trim()
+    if (!name || !url) return toast.error('请填写名称和地址')
+    setSources([...sources, { name, url, enabled: true }])
+    setDraft({ name: '', url: '' })
+  }
+  const save = async () => {
+    setSaving(true)
+    try {
+      await api.saveIntelligence({
+        enabled,
+        interval_minutes: Number(interval) || 30,
+        max_items_per_source: Number(maxItems) || 30,
+        sources,
+      })
+      toast.success('已保存')
+      void reload()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="max-w-3xl space-y-4">
+      <p className="text-xs text-muted">
+        订阅 RSS / Atom 地址，采集到的文章会进入实时资讯流和舆情分析。可用 RSSHub 等工具为财经媒体生成 RSS 地址；与交易日无关，全天按间隔采集。
+      </p>
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> 启用资讯源采集
+      </label>
+      <div className="grid gap-3 md:grid-cols-2">
+        <Field label="采集间隔（分钟，最少 5）"><Input type="number" value={interval} onChange={(e) => setIntervalMinutes(e.target.value)} /></Field>
+        <Field label="每源每次最多条数（1~200）"><Input type="number" value={maxItems} onChange={(e) => setMaxItems(e.target.value)} /></Field>
+      </div>
+      <div className="space-y-2">
+        {sources.length === 0 && <p className="text-sm text-muted">还没有资讯源，在下面添加</p>}
+        {sources.map((s, i) => {
+          const t = tests[i]
+          return (
+            <div key={i} className="space-y-1 rounded border border-line p-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-1 text-sm">
+                  <input type="checkbox" aria-label={`${s.name}-启用`} checked={s.enabled} onChange={(e) => update(i, { enabled: e.target.checked })} /> 启用
+                </label>
+                <Input className="w-32" aria-label="名称" value={s.name} onChange={(e) => update(i, { name: e.target.value })} />
+                <Input className="min-w-0 flex-1" aria-label="地址" value={s.url} onChange={(e) => update(i, { url: e.target.value })} />
+                <Button onClick={() => void test(i)} loading={t === 'loading'}>测试</Button>
+                <Button variant="danger" onClick={() => { setSources(sources.filter((_, j) => j !== i)); setTests({}) }}>删除</Button>
+              </div>
+              {t && t !== 'loading' && (
+                <p className="text-xs">
+                  <span className={t.ok ? 'text-down' : 'text-up'}>{t.ok ? '成功' : '失败'}</span>
+                  {t.ok ? `：${t.title || '（无标题）'}，${t.count} 条，如「${t.samples.join('」「')}」` : `：${t.error}`}
+                </p>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <Field label="名称"><Input className="w-32" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
+        <Field label="RSS 地址"><Input className="w-72" placeholder="https://example.com/feed.xml" value={draft.url} onChange={(e) => setDraft({ ...draft, url: e.target.value })} /></Field>
+        <Button onClick={add}>添加</Button>
+      </div>
+      <div className="flex gap-2">
+        <Button variant="primary" loading={saving} onClick={() => void save()}>保存</Button>
+        <Button
+          loading={collect.running}
+          onClick={() => void collect.run(() => api.collectRss(), { success: (r) => `采集完成，新增 ${r.inserted} 条（抓到 ${r.fetched} 条）` }).catch(() => undefined)}
+        >
+          立即采集
+        </Button>
+      </div>
     </div>
   )
 }

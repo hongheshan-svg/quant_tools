@@ -516,6 +516,7 @@ class DataQueryService:
                 records: list[FinanceNews] = []
                 source_limits = {
                     "cailianshe": 150,
+                    "rss": 100,  # 用户订阅的 RSS 资讯源（level 字段为源名称）
                     # jiuyan 已移到「研报热点」Tab 独立显示
                 }
                 for src, limit_n in source_limits.items():
@@ -602,6 +603,8 @@ class DataQueryService:
                     if not title:
                         continue
                     src_cn = {"cailianshe": "财联社", "jiuyan": "韭研公社"}.get(r.source, r.source)
+                    if r.source == "rss":  # 来源显示为「RSS·源名称」
+                        src_cn = f"RSS·{r.category}" if r.category else "RSS"
                     level = r.category or ""
                     pin = 0
                     if r.source == "cailianshe":

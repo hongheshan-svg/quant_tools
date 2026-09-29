@@ -252,6 +252,22 @@ class SentimentAnalyzer:
                 )
                 lines.extend(f"[财联社] {r.title}" for r in cls_normal)
 
+                # RSS 资讯源（用户自定义订阅）
+                rss_news = (
+                    session.query(FinanceNews)
+                    .filter(
+                        FinanceNews.source == "rss",
+                        FinanceNews.collected_at >= cutoff,
+                    )
+                    .order_by(FinanceNews.id.desc())
+                    .limit(20)
+                    .all()
+                )
+                lines.extend(
+                    f"[RSS·{r.category or ''}] {(r.title[:200] if r.title else '')}"
+                    for r in rss_news
+                )
+
         except Exception as e:
             logger.error(f"获取新闻上下文失败: {e}")
         text = "\n".join(lines) if lines else "暂无新闻数据"

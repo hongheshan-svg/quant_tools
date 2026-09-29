@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
@@ -284,6 +284,98 @@ def test_search_settings(body: SearchTestBody, config: dict = Depends(get_config
 
     merged = {**config, "search": _merge_search(config.get("search") or {}, body.search)}
     return {"results": news_search.test_providers(merged, body.query.strip() or "贵州茅台")}
+
+
+# ---------- RSS 资讯源设置 ----------
+
+INTELLIGENCE_DEFAULTS: dict[str, Any] = {
+    "enabled": True, "interval_minutes": 30, "max_items_per_source": 30, "keep_days": 7, "sources": [],
+}
+
+
+class IntelligenceSettingsBody(BaseModel):
+    intelligence: dict[str, Any]
+
+
+class IntelligenceTestBody(BaseModel):
+    url: str
+
+
+def _intelligence_with_defaults(section: dict[str, Any] | None) -> dict[str, Any]:
+    merged = {**INTELLIGENCE_DEFAULTS, **(section or {})}
+    merged["sources"] = [
+        {"name": str(s.get("name") or ""), "url": str(s.get("url") or ""), "enabled": s.get("enabled", True) is not False}
+        for s in (merged.get("sources") or []) if isinstance(s, dict)
+    ]
+    return merged
+
+
+def _int_in_range(value: Any, label: str, low: int, high: int | None = None) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise HTTPException(status_code=422, detail=f"{label}必须是整数")
+    if value < low or (high is not None and value > high):
+        raise HTTPException(status_code=422, detail=f"{label}必须在 {low}~{high} 之间" if high else f"{label}不能小于 {low}")
+    return value
+
+
+def _validate_intelligence(incoming: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    """校验并补齐资讯源设置，非法时抛 422（中文说明）"""
+    merged = {**_intelligence_with_defaults(current), **{k: v for k, v in incoming.items() if k != "sources"}}
+    if not isinstance(merged["enabled"], bool):
+        raise HTTPException(status_code=422, detail="enabled 必须是布尔值")
+    merged["interval_minutes"] = _int_in_range(merged["interval_minutes"], "采集间隔", 5)
+    merged["max_items_per_source"] = _int_in_range(merged["max_items_per_source"], "每源条数", 1, 200)
+    merged["keep_days"] = _int_in_range(merged["keep_days"], "去重回看天数", 1)
+    raw_sources = incoming.get("sources", merged["sources"])
+    if not isinstance(raw_sources, list):
+        raise HTTPException(status_code=422, detail="sources 必须是列表")
+    sources, names = [], set()
+    for i, s in enumerate(raw_sources, 1):
+        if not isinstance(s, dict):
+            raise HTTPException(status_code=422, detail=f"第 {i} 个资讯源格式不正确")
+        name, url = str(s.get("name") or "").strip(), str(s.get("url") or "").strip()
+        enabled = s.get("enabled", True)
+        if not name:
+            raise HTTPException(status_code=422, detail=f"第 {i} 个资讯源的名称不能为空")
+        if name in names:
+            raise HTTPException(status_code=422, detail=f"资讯源名称重复：{name}")
+        if not url.startswith(("http://", "https://")):
+            raise HTTPException(status_code=422, detail=f"资讯源「{name}」的地址必须以 http:// 或 https:// 开头")
+        if not isinstance(enabled, bool):
+            raise HTTPException(status_code=422, detail=f"资讯源「{name}」的 enabled 必须是布尔值")
+        names.add(name)
+        sources.append({"name": name, "url": url, "enabled": enabled})
+    merged["sources"] = sources
+    return merged
+
+
+@router.get("/settings/intelligence")
+def get_intelligence_settings(config: dict = Depends(get_config)) -> dict[str, Any]:
+    from src.settings_store import read_settings
+
+    # 以 settings.yaml 里已保存的为准（内存配置可能是保存前的缓存）
+    saved = read_settings().get("intelligence")
+    return {"intelligence": _intelligence_with_defaults(saved if isinstance(saved, dict) else config.get("intelligence"))}
+
+
+@router.put("/settings/intelligence")
+def save_intelligence_settings(body: IntelligenceSettingsBody, request: Request, config: dict = Depends(get_config)) -> dict[str, Any]:
+    from src.config_loader import reload_config
+    from src.settings_store import read_settings, save_section
+
+    from api.app import apply_config
+
+    save_section("intelligence", _validate_intelligence(body.intelligence, config.get("intelligence") or {}))
+    new_config = reload_config()
+    apply_config(request.app, new_config)
+    return {"intelligence": _intelligence_with_defaults(read_settings().get("intelligence"))}
+
+
+@router.post("/settings/intelligence/test")
+def test_intelligence_source(body: IntelligenceTestBody, config: dict = Depends(get_config)) -> dict[str, Any]:
+    from src.collectors import rss
+
+    return rss.test_feed(body.url, config)
 
 
 # ---------- 推送设置 ----------

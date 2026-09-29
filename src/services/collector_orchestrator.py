@@ -52,6 +52,7 @@ class CollectorOrchestrator:
             "weibo": 0,
             "douyin": 0,
             "toutiao": 0,
+            "rss": 0,
         }
         tasks = {
             "cailianshe": self._collect_cailianshe,
@@ -61,20 +62,41 @@ class CollectorOrchestrator:
             "weibo": self._collect_weibo_hot_search,
             "douyin": self._collect_douyin_hot_search,
             "toutiao": self._collect_toutiao_hot_search,
+            "rss": self.collect_rss,  # 可选组，不在 required_news_sources 里
         }
-        with ThreadPoolExecutor(max_workers=max(self.news_workers, 7), thread_name_prefix="news") as executor:
+        with ThreadPoolExecutor(max_workers=max(self.news_workers, 8), thread_name_prefix="news") as executor:
             future_map = {executor.submit(func): name for name, func in tasks.items()}
             for future in as_completed(future_map):
                 name = future_map[future]
                 try:
                     results[name] = int(future.result())
-                    source_health.record("资讯采集", name, results[name] > 0)
+                    if name != "rss":  # RSS 新增 0 条属正常（去重），健康记录由采集器按源记录
+                        source_health.record("资讯采集", name, results[name] > 0)
                 except Exception as e:
                     logger.error(f"[{name}] 采集异常: {e}")
                     results[name] = 0
                     source_health.record("资讯采集", name, False, str(e))
         logger.info(f"新闻并发采集完成: {results}")
         return results
+
+    def collect_rss(self) -> int:
+        """采集 RSS 资讯源并写库（非必需组：未配置或未启用时直接返回 0，失败只记日志）。"""
+        cfg = self.config.get("intelligence") or {}
+        if not cfg.get("enabled", True):
+            return 0
+        from src.collectors.rss import RSSCollector, _enabled_sources, save_items
+
+        if not _enabled_sources(self.config):
+            return 0
+        collector = RSSCollector(self.config)
+        try:
+            added = save_items(collector.safe_collect(), self.db_path, int(cfg.get("keep_days", 7)))
+            return added
+        except Exception as e:
+            logger.error(f"[rss] 采集异常: {e}")
+            return 0
+        finally:
+            collector.close()
 
     def collect_market_parallel(self) -> dict[str, Any]:
         """

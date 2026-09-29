@@ -84,6 +84,27 @@ def _run_cailianshe_collection(config: dict):
         logger.error(f"财联社采集任务异常: {e}")
 
 
+def _run_rss_collection(config: dict):
+    """执行 RSS/Atom 资讯源采集（与交易日无关）"""
+    cfg = config.get("intelligence") or {}
+    if not cfg.get("enabled", True):
+        return
+    from src.collectors.rss import RSSCollector, _enabled_sources, save_items
+
+    if not _enabled_sources(config):
+        return
+    collector = RSSCollector(config)
+    try:
+        items = collector.safe_collect()
+        added = save_items(items, config.get("database", {}).get("sqlite_path", "data/quant.db"),
+                           int(cfg.get("keep_days", 7)))
+        logger.info(f"RSS 资讯入库 {added} 条（抓到 {len(items)} 条）")
+    except Exception as e:
+        logger.error(f"RSS 采集任务异常: {e}")
+    finally:
+        collector.close()
+
+
 def _run_stock_data_collection(config: dict):
     """执行行情数据采集任务"""
     if _skip_non_trade_day(config, "行情数据采集"):
@@ -354,6 +375,19 @@ def build_scheduler(config: dict, scheduler=None):
         name=JOBS["cailianshe"][0],
     )
 
+    # RSS/Atom 资讯源（默认每30分钟，最少5分钟）
+    intel_cfg = config.get("intelligence") or {}
+    from src.collectors.rss import _enabled_sources
+
+    if intel_cfg.get("enabled", True) and _enabled_sources(config):
+        scheduler.add_job(
+            _run_rss_collection,
+            trigger=IntervalTrigger(minutes=max(5, int(intel_cfg.get("interval_minutes", 30) or 30))),
+            args=[config],
+            id="rss",
+            name="RSS 资讯源采集",
+        )
+
     # 行情数据采集（每15分钟，交易时间内）
     interval = sched_cfg.get("stock_data_interval", 15)
     scheduler.add_job(
@@ -439,7 +473,7 @@ def build_scheduler(config: dict, scheduler=None):
 # 一次性运行（GitHub Actions、Docker 或系统定时任务在收盘后调用）：按定时任务的先后顺序执行
 ONCE_STEPS: dict[str, tuple[str, tuple]] = {
     "collect": ("数据采集", (_run_hot_search_collection, _run_cailianshe_collection,
-                             _run_stock_data_collection, _run_global_data_collection)),
+                             _run_rss_collection, _run_stock_data_collection, _run_global_data_collection)),
     "analysis": ("每日综合分析", (_run_daily_analysis,)),
     "signals": ("交易信号", (_run_signal_generation,)),
     "report": ("大盘复盘与日报", (_run_daily_report,)),

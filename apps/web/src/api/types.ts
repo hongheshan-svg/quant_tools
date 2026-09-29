@@ -734,6 +734,35 @@ export interface SearchTestResult {
   samples: string[]
 }
 
+export interface IntelligenceSource {
+  name: string
+  url: string
+  enabled: boolean
+}
+
+export interface IntelligenceSettings {
+  intelligence: {
+    enabled: boolean
+    interval_minutes: number
+    max_items_per_source: number
+    keep_days?: number
+    sources: IntelligenceSource[]
+  }
+}
+
+export interface IntelligenceTestResult {
+  ok: boolean
+  title: string
+  count: number
+  samples: string[]
+  error: string
+}
+
+export interface CollectRssResult {
+  fetched: number
+  inserted: number
+}
+
 export interface BotSettings {
   bot: Dict<any>
   running: string[]

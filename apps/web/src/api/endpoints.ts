@@ -26,6 +26,7 @@ export const api = {
   themes: (dimension: 'concept' | 'industry') => http.get<T.Theme[]>('/market/themes', { dimension }),
   refreshOverview: () => http.post<T.Task>('/market/overview/refresh'),
   collect: () => http.post<T.Task>('/pipeline/collect'),
+  collectRss: () => http.post<T.Task<T.CollectRssResult>>('/pipeline/collect-rss'),
   predict: () => http.post<T.Task>('/pipeline/predict'),
   runFull: () => http.post<T.Task>('/pipeline/run-full'),
   pushDailyReport: () => http.post<T.Task>('/pipeline/daily-report'),
@@ -113,6 +114,10 @@ export const api = {
   saveSearch: (search: Record<string, unknown>) => http.put<{ search: T.SearchSettings['search'] }>('/settings/search', { search }),
   testSearch: (search: Record<string, unknown>, query: string) =>
     http.post<{ results: T.SearchTestResult[] }>('/settings/search/test', { search, query }),
+  intelligenceSettings: () => http.get<T.IntelligenceSettings>('/settings/intelligence'),
+  saveIntelligence: (intelligence: Record<string, unknown>) =>
+    http.put<T.IntelligenceSettings>('/settings/intelligence', { intelligence }),
+  testIntelligenceSource: (url: string) => http.post<T.IntelligenceTestResult>('/settings/intelligence/test', { url }),
   botSettings: () => http.get<T.BotSettings>('/settings/bot'),
   saveBot: (bot: Record<string, unknown>) => http.put<T.BotSaveResult>('/settings/bot', { bot }),
   notifierSettings: () => http.get<T.NotifierSettings>('/settings/notifier'),

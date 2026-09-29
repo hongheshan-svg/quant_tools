@@ -71,6 +71,25 @@ def collect(tasks: TaskManager = Depends(get_tasks), pipeline: PipelineService =
     return tasks.submit("collect", pipeline.collect, dedupe_key="collect", label="采集全部数据")
 
 
+def _collect_rss(config: dict) -> dict[str, int]:
+    """立即采集 RSS 资讯源并入库"""
+    from src.collectors.rss import RSSCollector, save_items
+
+    cfg = config.get("intelligence") or {}
+    collector = RSSCollector(config)
+    try:
+        items = collector.collect()
+    finally:
+        collector.close()
+    inserted = save_items(items, config.get("database", {}).get("sqlite_path", "data/quant.db"), int(cfg.get("keep_days", 7)))
+    return {"fetched": len(items), "inserted": inserted}
+
+
+@router.post("/pipeline/collect-rss")
+def collect_rss(tasks: TaskManager = Depends(get_tasks), config: dict = Depends(get_config)) -> dict[str, Any]:
+    return tasks.submit("collect_rss", _collect_rss, config, dedupe_key="collect_rss", label="采集 RSS 资讯")
+
+
 @router.post("/pipeline/predict")
 def predict(tasks: TaskManager = Depends(get_tasks), pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
     return tasks.submit("predict", pipeline.premarket_predict, dedupe_key="predict", label="AI 涨停预测")

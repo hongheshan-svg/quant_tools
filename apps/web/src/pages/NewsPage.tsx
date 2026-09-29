@@ -1,11 +1,18 @@
 import { api } from '@/api/endpoints'
+import type { NewsItem } from '@/api/types'
 import { Badge, Button, Card, ErrorBox, PageHeader, Spinner } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
 import { cn } from '@/utils/cn'
 
 const SOURCE_LABELS: Record<string, string> = {
   cailianshe: '财联社', cailianshe_global: '财联社国际', jiuyan: '韭研公社', eastmoney: '东方财富', eastmoney_global: '东财全球',
-  eastmoney_us_earnings: '美股财报', wallstreetcn: '华尔街见闻', wallstreetcn_us: '华尔街见闻', jin10: '金十数据', akshare: 'AKShare',
+  eastmoney_us_earnings: '美股财报', wallstreetcn: '华尔街见闻', wallstreetcn_us: '华尔街见闻', jin10: '金十数据', akshare: 'AKShare', rss: 'RSS',
+}
+
+// RSS 条目的 level 字段是订阅源名称，显示为「RSS·源名称」
+function sourceLabel(n: NewsItem): string {
+  const label = SOURCE_LABELS[n.source] ?? n.source
+  return label === 'RSS' && n.level ? `RSS·${n.level}` : label
 }
 
 export function NewsPage() {
@@ -30,7 +37,7 @@ export function NewsPage() {
                   {n.title}
                 </a>
                 <div className="mt-1 flex flex-wrap gap-1">
-                  <Badge>{SOURCE_LABELS[n.source] ?? n.source}</Badge>
+                  <Badge>{sourceLabel(n)}</Badge>
                   {(n.tags ?? []).slice(0, 4).map((t) => <Badge key={t} tone="accent">{t}</Badge>)}
                 </div>
               </div>

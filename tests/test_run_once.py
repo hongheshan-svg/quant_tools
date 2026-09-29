@@ -16,7 +16,7 @@ def calls(monkeypatch):
 
 def test_run_once_runs_all_steps_in_schedule_order(calls):
     results = scheduler.run_once({})
-    assert calls == ["collect0", "collect1", "collect2", "collect3", "analysis0", "signals0", "report0", "learn0", "watchlist0"]
+    assert calls == ["collect0", "collect1", "collect2", "collect3", "collect4", "analysis0", "signals0", "report0", "learn0", "watchlist0"]
     assert [r["step"] for r in results] == ["collect", "analysis", "signals", "report", "learn", "watchlist"]
     assert all(r["seconds"] >= 0 for r in results)
 
