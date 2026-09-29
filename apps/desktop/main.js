@@ -14,6 +14,7 @@ const {
   stopBackend,
   waitForHealth,
 } = require('./src/backend')
+const { canAutoInstall, readPrefs, releasePageUrl, shouldAutoCheck, writePrefs } = require('./src/updater')
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..')
 const LOADING_PAGE = path.join(__dirname, 'renderer', 'loading.html')
@@ -23,6 +24,8 @@ let backend = null
 let backendPort = 0
 let backendOrigin = ''
 let quitting = false
+let updateChecked = false
+let updateBusy = false // 正在下载或弹窗中，避免重复检查
 
 function dataDir() {
   if (process.env.QUANT_HOME) return process.env.QUANT_HOME
@@ -110,6 +113,10 @@ function buildMenu() {
         { role: 'togglefullscreen', label: '全屏' },
       ],
     },
+    {
+      label: '帮助',
+      submenu: [{ label: '检查更新…', click: () => void manualCheckUpdate() }],
+    },
   ]
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
@@ -154,6 +161,10 @@ async function loadApp() {
   try {
     const url = backend && !exitReason(backend) ? backendUrl(backendPort) : await launchBackend()
     await mainWindow.loadURL(url)
+    if (!updateChecked) {
+      updateChecked = true
+      scheduleAutoCheck()
+    }
   } catch (error) {
     log(`[startup] ${error.stack ?? error}`)
     showError(error)
@@ -167,6 +178,137 @@ async function stopCurrentBackend() {
   await stopBackend(child)
   if (backend === child) backend = null
 }
+
+// ---- 自动更新 ----
+function prefsFile() {
+  return path.join(dataDir(), 'desktop-prefs.json')
+}
+
+function getAutoUpdater() {
+  const { autoUpdater } = require('electron-updater')
+  if (!autoUpdater.__quantInit) {
+    autoUpdater.__quantInit = true
+    autoUpdater.autoDownload = false
+    autoUpdater.logger = { info: (m) => log(`[updater] ${m}`), warn: (m) => log(`[updater] ${m}`), error: (m) => log(`[updater] ${m}`), debug: () => {} }
+    autoUpdater.on('download-progress', (p) => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar((p.percent || 0) / 100)
+    })
+  }
+  return autoUpdater
+}
+
+function touchLastCheck() {
+  const file = prefsFile()
+  writePrefs(file, { ...readPrefs(file), lastCheck: Date.now() })
+}
+
+// 检查更新：返回 { status, version?, message }；不弹窗
+async function checkUpdate() {
+  if (!app.isPackaged) return { status: 'unsupported', message: '开发模式不支持检查更新' }
+  try {
+    const result = await getAutoUpdater().checkForUpdates()
+    touchLastCheck()
+    const version = result?.updateInfo?.version
+    if (result?.isUpdateAvailable && version) return { status: 'available', version, message: `发现新版本 ${version}` }
+    return { status: 'latest', version: app.getVersion(), message: '已是最新版本' }
+  } catch (error) {
+    log(`[updater] 检查失败：${error.stack ?? error}`)
+    return { status: 'error', message: String(error?.message ?? error) }
+  }
+}
+
+async function promptAndInstall(version) {
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined
+  if (!canAutoInstall(process.platform, app.isPackaged)) {
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'info',
+      title: '发现新版本',
+      message: `发现新版本 ${version}，是否前往下载？`,
+      detail: '当前系统暂不支持自动安装，请下载安装包后手动安装。',
+      buttons: ['前往下载', '稍后'],
+      defaultId: 0,
+      cancelId: 1,
+    })
+    if (response === 0) void shell.openExternal(releasePageUrl(version))
+    return
+  }
+  const ask = await dialog.showMessageBox(win, {
+    type: 'info',
+    title: '发现新版本',
+    message: `发现新版本 ${version}，是否下载？`,
+    buttons: ['下载', '稍后'],
+    defaultId: 0,
+    cancelId: 1,
+  })
+  if (ask.response !== 0) return
+  const updater = getAutoUpdater()
+  try {
+    await updater.downloadUpdate()
+  } catch (error) {
+    log(`[updater] 下载失败：${error.stack ?? error}`)
+    dialog.showErrorBox('更新失败', String(error?.message ?? error))
+    return
+  } finally {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setProgressBar(-1)
+  }
+  const done = await dialog.showMessageBox(win, {
+    type: 'info',
+    title: '更新已就绪',
+    message: '新版本已下载，重启后安装',
+    buttons: ['立即重启', '稍后'],
+    defaultId: 0,
+    cancelId: 1,
+  })
+  if (done.response !== 0) return
+  quitting = true
+  try {
+    await stopCurrentBackend()
+  } catch (error) {
+    log(`[backend] 停止失败：${error.message}`)
+  }
+  updater.quitAndInstall()
+}
+
+async function manualCheckUpdate() {
+  if (updateBusy) return
+  updateBusy = true
+  try {
+    const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined
+    const r = await checkUpdate()
+    if (r.status === 'available') await promptAndInstall(r.version)
+    else if (r.status === 'latest') await dialog.showMessageBox(win, { type: 'info', title: '检查更新', message: '已是最新版本', detail: `当前版本 ${app.getVersion()}` })
+    else if (r.status === 'unsupported') await dialog.showMessageBox(win, { type: 'info', title: '检查更新', message: r.message })
+    else await dialog.showMessageBox(win, { type: 'error', title: '检查更新失败', message: '检查更新失败', detail: r.message })
+  } finally {
+    updateBusy = false
+  }
+}
+
+// 后台服务就绪后延迟检查一次（打包运行、开启自动检查且距上次超过 6 小时）
+function scheduleAutoCheck() {
+  if (!app.isPackaged || !shouldAutoCheck(readPrefs(prefsFile()))) return
+  setTimeout(async () => {
+    if (updateBusy || quitting) return
+    updateBusy = true
+    try {
+      const r = await checkUpdate()
+      log(`[updater] 自动检查：${r.status} ${r.version ?? r.message}`)
+      if (r.status === 'available') await promptAndInstall(r.version)
+    } finally {
+      updateBusy = false
+    }
+  }, 10000)
+}
+
+ipcMain.handle('desktop:check-update', () => checkUpdate())
+ipcMain.handle('desktop:get-prefs', () => ({ autoCheckUpdates: true, ...readPrefs(prefsFile()) }))
+ipcMain.handle('desktop:set-prefs', (_event, prefs) => {
+  const file = prefsFile()
+  const next = { ...readPrefs(file) }
+  if (prefs && typeof prefs.autoCheckUpdates === 'boolean') next.autoCheckUpdates = prefs.autoCheckUpdates
+  writePrefs(file, next)
+  return { autoCheckUpdates: true, ...next }
+})
 
 ipcMain.handle('desktop:retry', async () => {
   await stopCurrentBackend()

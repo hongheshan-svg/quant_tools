@@ -55,6 +55,28 @@ function DesktopPanel({ desktop }: { desktop: QuantDesktop }) {
   useEffect(() => {
     desktop.info().then(setInfo).catch(() => setInfo(null))
   }, [desktop])
+  const [autoCheck, setAutoCheck] = useState(true)
+  const [checking, setChecking] = useState(false)
+  const [updateText, setUpdateText] = useState('')
+  useEffect(() => {
+    desktop.getPrefs?.().then((p) => setAutoCheck(p?.autoCheckUpdates !== false)).catch(() => undefined)
+  }, [desktop])
+  const checkUpdate = async () => {
+    if (!desktop.checkForUpdates) return
+    setChecking(true)
+    try {
+      const r = await desktop.checkForUpdates()
+      setUpdateText(r.status === 'available' ? `发现新版本 ${r.version ?? ''}` : r.message)
+    } catch (e) {
+      setUpdateText(e instanceof Error ? e.message : String(e))
+    } finally {
+      setChecking(false)
+    }
+  }
+  const toggleAuto = (value: boolean) => {
+    setAutoCheck(value)
+    void desktop.setPrefs?.({ autoCheckUpdates: value })
+  }
   return (
     <div className="max-w-xl space-y-3 text-sm">
       <p>桌面端版本：<span className="num">{info?.version || desktop.version || '--'}</span>{info && !info.packaged && <span className="ml-2 text-xs text-muted">（开发模式）</span>}</p>
@@ -64,6 +86,18 @@ function DesktopPanel({ desktop }: { desktop: QuantDesktop }) {
         <Button onClick={() => void desktop.openDataDir()}>打开数据目录</Button>
         <Button onClick={() => void desktop.openLogDir()}>打开日志目录</Button>
       </div>
+      {desktop.checkForUpdates && (
+        <div className="flex items-center gap-3">
+          <Button onClick={() => void checkUpdate()} disabled={checking}>{checking ? '检查中…' : '检查更新'}</Button>
+          {updateText && <span className="text-xs text-muted">{updateText}</span>}
+        </div>
+      )}
+      {desktop.setPrefs && (
+        <label className="flex items-center gap-2">
+          <input type="checkbox" checked={autoCheck} onChange={(e) => toggleAuto(e.target.checked)} />
+          启动时自动检查更新
+        </label>
+      )}
     </div>
   )
 }

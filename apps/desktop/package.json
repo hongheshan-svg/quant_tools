@@ -26,6 +26,13 @@
       "src/**/*",
       "renderer/**/*"
     ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "hongheshan-svg",
+        "repo": "quant_tools"
+      }
+    ],
     "extraResources": [
       {
         "from": "../../dist/backend/quant_server",
@@ -52,5 +59,8 @@
       "target": "AppImage",
       "artifactName": "AStockQuant-${version}-linux-${arch}.${ext}"
     }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

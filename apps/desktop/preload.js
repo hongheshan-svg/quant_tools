@@ -15,6 +15,9 @@ function createBridge({ version = readVersion(), renderer = ipcRenderer } = {}) 
     openDataDir: () => renderer.invoke('desktop:open-path', 'data'),
     openLogDir: () => renderer.invoke('desktop:open-path', 'logs'),
     retry: () => renderer.invoke('desktop:retry'),
+    checkForUpdates: () => renderer.invoke('desktop:check-update'),
+    getPrefs: () => renderer.invoke('desktop:get-prefs'),
+    setPrefs: (prefs) => renderer.invoke('desktop:set-prefs', prefs),
   }
 }
 

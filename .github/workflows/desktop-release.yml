@@ -1,6 +1,8 @@
 name: 桌面端发布
 
 # 推送 v* 标签时打包 Windows 安装包和 macOS dmg（scripts/build_desktop.py），上传到对应的 GitHub Release。
+# 自动更新（electron-updater）依赖 Release 里的 latest.yml（Windows）、latest-mac.yml 和 .blockmap，
+# 因此构建产物与 Release 都要包含 apps/desktop/dist 下的 latest*.yml、*.blockmap（不含 builder-debug.yml：两个系统同名，合并时会互相覆盖），缺失则客户端检查不到更新。
 # 手动运行时只上传为构建产物，不创建 Release。
 
 on:
@@ -55,6 +57,8 @@ jobs:
           path: |
             apps/desktop/dist/*.exe
             apps/desktop/dist/*.dmg
+            apps/desktop/dist/latest*.yml
+            apps/desktop/dist/*.blockmap
           if-no-files-found: error
 
   release:
