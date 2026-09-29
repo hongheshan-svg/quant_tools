@@ -335,6 +335,21 @@ def _run_self_learning(config: dict):
         _report_error(config, "每日自学习", e)
 
 
+def _run_signal_lifecycle(config: dict):
+    """决策信号评估：更新有效期、止损止盈和后验收益。"""
+    if _skip_non_trade_day(config, "决策信号评估"):
+        return
+    from src.services.decision_signals import DecisionSignalService
+
+    logger.info("===== 开始决策信号评估 =====")
+    try:
+        result = DecisionSignalService(config).evaluate()
+        logger.info(f"===== 决策信号评估完成: {result} =====")
+    except Exception as e:
+        logger.error(f"决策信号评估异常: {e}")
+        _report_error(config, "决策信号评估", e)
+
+
 # 定时任务清单：任务 id -> (中文名, 任务函数)；build_scheduler 注册、Web 定时任务面板和「立即运行」共用
 JOBS: dict[str, tuple[str, Callable[[dict], None]]] = {
     "hot_search": ("热搜数据采集", _run_hot_search_collection),
@@ -347,6 +362,7 @@ JOBS: dict[str, tuple[str, Callable[[dict], None]]] = {
     "daily_report": ("大盘复盘与日报", _run_daily_report),
     "watchlist_report": ("自选股决策仪表盘", _run_watchlist_report),
     "self_learning": ("每日自学习", _run_self_learning),
+    "signal_lifecycle": ("决策信号评估", _run_signal_lifecycle),
     "alert_digest": ("盘中提醒日报", _run_alert_digest),   # 仅 alerts.daily_digest 为真时注册
 }
 
@@ -506,6 +522,16 @@ def build_scheduler(config: dict, scheduler=None):
         name=JOBS["self_learning"][0],
     )
 
+    # 决策信号评估（16:25，自学习之后）
+    hour, minute = str(sched_cfg.get("signal_lifecycle_time") or "16:25").split(":")
+    scheduler.add_job(
+        _run_signal_lifecycle,
+        trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
+        args=[config],
+        id="signal_lifecycle",
+        name=JOBS["signal_lifecycle"][0],
+    )
+
     # 盘中提醒日报（可选，默认 15:10）
     alerts_cfg = config.get("alerts") or {}
     if alerts_cfg.get("daily_digest", False):
@@ -531,7 +557,7 @@ ONCE_STEPS: dict[str, tuple[str, tuple]] = {
     "analysis": ("每日综合分析", (_run_daily_analysis,)),
     "signals": ("交易信号", (_run_signal_generation,)),
     "report": ("大盘复盘与日报", (_run_daily_report,)),
-    "learn": ("自学习", (_run_self_learning,)),
+    "learn": ("自学习", (_run_self_learning, _run_signal_lifecycle)),
     "watchlist": ("自选股仪表盘", (_run_watchlist_report,)),
 }
 

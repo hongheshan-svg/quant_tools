@@ -60,6 +60,16 @@ export const api = {
     return res.text()
   },
 
+  // 决策信号
+  signals: (params: { status?: string; action?: string; code?: string; days?: number; limit?: number; offset?: number }) =>
+    http.get<T.DecisionSignalPage>('/signals', params),
+  signalStats: (days = 90) => http.get<T.DecisionSignalStats>('/signals/stats', { days }),
+  signalReview: (code: string) => http.get<T.SignalReview>(`/signals/review/${code}`),
+  signal: (id: number) => http.get<T.DecisionSignal>(`/signals/${id}`),
+  signalFeedback: (id: number, feedback: 'useful' | 'not_useful' | null, note = '') =>
+    http.put<T.DecisionSignal>(`/signals/${id}/feedback`, { feedback, note }),
+  evaluateSignals: () => http.post<T.Task<Record<string, number>>>('/signals/evaluate'),
+
   // 策略选股
   screening: () => http.get<T.ScreeningLatest>('/screening'),
   runScreening: () => http.post<T.Task<T.ScreenResult>>('/screening/run'),

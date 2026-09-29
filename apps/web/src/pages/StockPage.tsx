@@ -3,7 +3,7 @@ import { Star } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '@/api/endpoints'
-import type { DailyBar, Diagnosis, StockNews } from '@/api/types'
+import type { DailyBar, Diagnosis, SignalReview, StockNews } from '@/api/types'
 import { CandlestickChart, toCandles, type Period } from '@/components/CandlestickChart'
 import { DataTable, type Column } from '@/components/DataTable'
 import { DiagnosisView } from '@/components/DiagnosisView'
@@ -169,6 +169,7 @@ function DiagnosisTab({ code, isFund }: { code: string; isFund: boolean }) {
   const { data, loading, setData } = useApi<Diagnosis | null>(() => api.latestDiagnosis(code), [code])
   const task = useTask<Diagnosis>()
   const run = () => task.run(() => api.diagnose(code)).then(setData).catch(() => {})
+  const { data: review } = useApi<SignalReview>(() => api.signalReview(code), [code, data?.created_at])
   return (
     <div>
       <div className="mb-3 flex items-center justify-between gap-2">
@@ -176,6 +177,13 @@ function DiagnosisTab({ code, isFund }: { code: string; isFund: boolean }) {
         <Link to={`/history?code=${code}`} className="ml-auto text-xs text-accent hover:underline">历史诊断</Link>
         <Button variant="primary" loading={task.running} onClick={run}>{task.running ? `诊断中 ${progressText(task.progress)}` : data ? '重新诊断' : '开始诊断'}</Button>
       </div>
+      {review && (
+        <p className={review.samples >= 3 ? 'mb-3 text-sm' : 'mb-3 text-xs text-muted'}>
+          <span className="text-muted">历史信号复盘：</span>{review.text}
+          {review.samples >= 3 && review.bias && review.bias !== '正常' && <Badge tone="warn" className="ml-1">{review.bias}</Badge>}
+          <Link to={`/signals?code=${code}`} className="ml-2 text-xs text-accent hover:underline">决策信号</Link>
+        </p>
+      )}
       {loading && !data ? <Spinner /> : data ? <DiagnosisView d={data} /> : <p className="text-sm text-muted">还没有诊断记录</p>}
     </div>
   )

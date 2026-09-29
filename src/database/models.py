@@ -365,6 +365,44 @@ class StockDiagnosis(Base):
     )
 
 
+class DecisionSignal(Base):
+    """决策信号：由个股/ETF/指数诊断的方向性建议生成，带有效期、失效条件和后验评估"""
+    __tablename__ = "decision_signal"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    diagnosis_id = Column(Integer, comment="来源诊断 stock_diagnosis.id")
+    code = Column(String(10), nullable=False, comment="规范代码（个股6位、指数带前缀）")
+    name = Column(String(20), comment="名称")
+    action = Column(String(10), comment="操作建议 buy/add/reduce/sell/avoid")
+    score = Column(Float, comment="诊断评分")
+    confidence = Column(String(10), comment="信心 高/中/低")
+    entry_low = Column(Float, comment="买入区间下沿")
+    entry_high = Column(Float, comment="买入区间上沿")
+    stop_loss = Column(Float, comment="止损价")
+    target_price = Column(Float, comment="目标价")
+    horizon_days = Column(Integer, default=5, comment="观察期（交易日）")
+    invalidation = Column(Text, comment="失效条件")
+    trade_date = Column(String(10), comment="诊断所用行情日")
+    status = Column(String(15), default="active", comment="active/invalidated/replaced/expired/hit_target/hit_stop")
+    status_reason = Column(String(100), comment="状态原因")
+    expires_on = Column(String(10), comment="观察期结束的交易日")
+    ret_1d = Column(Float, comment="1日收益 %")
+    ret_3d = Column(Float, comment="3日收益 %")
+    ret_5d = Column(Float, comment="5日收益 %")
+    max_adverse_pct = Column(Float, comment="观察期最大不利波动 %")
+    max_favorable_pct = Column(Float, comment="观察期最大有利波动 %")
+    evaluated_at = Column(DateTime, comment="最近评估时间")
+    feedback = Column(String(12), comment="用户反馈 useful/not_useful")
+    feedback_note = Column(Text, comment="反馈备注")
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        Index("idx_decision_signal_code", "code", "created_at"),
+        Index("idx_decision_signal_status", "status"),
+    )
+
+
 class TradeCalendar(Base):
     """A股交易日历（来自新浪交易日历）"""
     __tablename__ = "trade_calendar"

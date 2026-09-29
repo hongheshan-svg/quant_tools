@@ -64,6 +64,8 @@ FUND_SYSTEM_PROMPT = """你是一位 A 股 ETF / 指数分析师，负责对单�
   "catalysts": ["利好1", "利好2"],
   "risks": ["风险1", "风险2"],
   "checklist": [{"item": "检查项（如趋势/均线/量能/大盘环境/主线/消息面）", "status": "pass/warn/fail", "note": "说明"}],
+  "invalidation": "失效条件：出现什么情况说明判断错了（如跌破某价、放量滞涨，40字以内）",
+  "horizon_days": 观察期，1到20的整数（交易日数，通常 3-5）,
   "analysis": "综合分析（100字以内）"
 }"""
 
@@ -101,7 +103,8 @@ class FundDiagnosisService(StockDiagnosisService):
         context = {**context, "opinions": opinions, "disagreement": conflict, "calibration": {}}
         result = self._apply_guardrails(raw, context, previous)
         result["kind"] = info["kind"]
-        self._save(result)
+        diagnosis_id = self._save(result)
+        self._record_signal(result, diagnosis_id)
         return result
 
     def latest(self, code: str, max_age_minutes: int | None = None) -> dict[str, Any] | None:
@@ -213,6 +216,9 @@ class FundDiagnosisService(StockDiagnosisService):
             f"【数据完整度】{data_quality['score']}%" + (f"（缺少：{'、'.join(data_quality['missing'])}）" if data_quality["missing"] else ""),
             f"说明：这是{KIND_LABELS[kind]}，没有涨跌停、资金流、筹码、业绩和公告数据，请只基于以上数据判断。",
         ]
+        review_section = self._signal_review_section(code)
+        if review_section:
+            sections.append(review_section)
         return {
             "code": code, "name": name, "kind": kind, "quote": quote, "tech": tech, "role": {}, "regime": regime,
             "position": None, "real_position": None, "text": "\n".join(sections), "data_quality": data_quality,

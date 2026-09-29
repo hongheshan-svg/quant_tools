@@ -14,6 +14,8 @@
 - 历史校准（diagnosis.calibration）：近 90 天诊断的事后准确率写进提示词；看多诊断的 3 日准确率低于 45%
   （至少 10 次）时，买入建议的信心下调一档
 - 价格计划按最新价和涨跌幅限制校验
+- 决策信号（diagnosis.signal_review）：买入/加仓/减仓/卖出/回避的诊断保存后生成决策信号（见 decision_signals），
+  该代码历史信号复盘（样本 ≥ 3）写进提示词，判断偏乐观/偏悲观时要相应调整信心
 结果写入 stock_diagnosis 表，同一只股票 30 分钟内重复诊断直接返回上次结果。
 """
 
@@ -52,6 +54,9 @@ STABILITY_DAYS = 3
 STABILITY_SCORE_DELTA = 15
 MIN_CALIBRATION_SAMPLES = 10       # 历史校准：看多诊断至少验证过 10 次才生效
 LOW_CALIBRATION_ACCURACY = 45.0    # 看多诊断 3 日准确率低于该值时下调买入信心
+DEFAULT_HORIZON = 5
+MAX_HORIZON = 20
+MAX_INVALIDATION_LEN = 200
 BEARISH_ACTIONS = frozenset({"reduce", "sell", "avoid"})
 # 数据完整度各块权重（合计 100）
 DATA_QUALITY_WEIGHTS = {"行情": 20, "日线": 15, "技术面": 10, "资金流": 15, "筹码": 10, "大盘": 15, "资讯": 10, "业绩": 5}
@@ -79,6 +84,8 @@ SYSTEM_PROMPT = """你是一位专注 A 股短线（涨停板、连板接力、�
   "catalysts": ["利好1", "利好2"],
   "risks": ["风险1", "风险2"],
   "checklist": [{"item": "检查项（如主线地位/封板质量/技术形态/大盘环境/消息面）", "status": "pass/warn/fail", "note": "说明"}],
+  "invalidation": "失效条件：出现什么情况说明判断错了（如跌破某价、放量滞涨，40字以内）",
+  "horizon_days": 观察期，1到20的整数（交易日数，通常 3-5）,
   "analysis": "综合分析（100字以内）"
 }"""
 
@@ -91,6 +98,15 @@ def valuation_text(pe: float | None, pb: float | None) -> str:
     if pb:
         parts.append(f"市净率 {pb:.2f}")
     return "，".join(parts)
+
+
+def _horizon(value: Any) -> int:
+    """观察期（交易日）限制在 1~20，缺失或非法为 5。"""
+    try:
+        days = int(float(value))
+    except (TypeError, ValueError):
+        return DEFAULT_HORIZON
+    return days if 1 <= days <= MAX_HORIZON else DEFAULT_HORIZON
 
 
 def _as_list(value: Any) -> list[str]:
@@ -144,8 +160,33 @@ class StockDiagnosisService:
         previous = self.latest(code, max_age_minutes=STABILITY_DAYS * 24 * 60)
         context = {**context, "opinions": opinions, "disagreement": conflict, "calibration": calibration}
         result = self._apply_guardrails(raw, context, previous)
-        self._save(result)
+        diagnosis_id = self._save(result)
+        self._record_signal(result, diagnosis_id)
         return result
+
+    def _record_signal(self, result: dict[str, Any], diagnosis_id: int | None) -> None:
+        """诊断保存后生成决策信号；异常只记日志，不影响诊断。"""
+        try:
+            from src.services.decision_signals import DecisionSignalService
+
+            DecisionSignalService(self.config).record_from_diagnosis(result, diagnosis_id)
+        except Exception as e:
+            logger.warning(f"生成决策信号失败 [{result.get('code')}]: {e}")
+
+    def _signal_review_section(self, code: str) -> str:
+        """历史信号复盘段落；关闭、样本不足或出错时返回空串。"""
+        if not (self.config.get("diagnosis") or {}).get("signal_review", True):
+            return ""
+        try:
+            from src.services.decision_signals import DecisionSignalService
+
+            review = DecisionSignalService(self.config).review(code)
+        except Exception as e:
+            logger.debug(f"读取历史信号复盘失败 [{code}]: {e}")
+            return ""
+        if review.get("samples", 0) < 3:
+            return ""
+        return f"【历史信号复盘】{review['text']}（历史判断偏乐观/偏悲观时，请相应调整信心）"
 
     def latest(self, code: str, max_age_minutes: int | None = None) -> dict[str, Any] | None:
         with get_db_session(self.db_path) as session:
@@ -330,6 +371,9 @@ class StockDiagnosisService:
             ) or "未持仓"),
             f"【数据完整度】{data_quality['score']}%" + (f"（缺少：{'、'.join(data_quality['missing'])}）" if data_quality["missing"] else ""),
         ]
+        review_section = self._signal_review_section(code)
+        if review_section:
+            sections.append(review_section)
         return {
             "code": code, "name": name, "quote": quote, "tech": tech, "role": role, "regime": regime,
             "position": position, "real_position": real_position, "text": "\n".join(sections), "data_quality": data_quality,
@@ -472,14 +516,20 @@ class StockDiagnosisService:
             "agents": context.get("opinions") or [],
             "disagreement": context.get("disagreement", ""),
             "calibration": self._calibration_line(context.get("calibration") or {}, context["code"]),
+            "invalidation": str(raw.get("invalidation") or "")[:MAX_INVALIDATION_LEN].strip(),
+            "horizon_days": _horizon(raw.get("horizon_days")),
         }
 
-    def _save(self, result: dict[str, Any]) -> None:
+    def _save(self, result: dict[str, Any]) -> int | None:
+        """保存诊断，返回记录 id。"""
         with get_db_session(self.db_path) as session:
-            session.add(StockDiagnosis(
+            row = StockDiagnosis(
                 code=result["code"], name=result["name"], trade_date=result["trade_date"], action=result["action"],
                 score=result["score"], result_json=json.dumps(result, ensure_ascii=False),
-            ))
+            )
+            session.add(row)
+            session.flush()
+            return row.id
 
 
 def render_markdown(result: dict[str, Any]) -> str:

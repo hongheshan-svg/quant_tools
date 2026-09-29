@@ -94,6 +94,8 @@ scheduler:
   daily_report_time: "16:10"
   # 自选股决策仪表盘（逐只 AI 诊断后推送，见 watchlist）
   watchlist_report_time: "16:30"
+  # 决策信号评估时间 (HH:MM)：更新信号有效期、止损止盈和后验收益
+  signal_lifecycle_time: "16:25"
 
 # --- 交易时间配置 ---
 trading:
@@ -399,6 +401,8 @@ diagnosis:
   mode: standard
   # 把近 90 天诊断的事后准确率写进提示词；看多诊断 3 日准确率低于 45%（至少 10 次）时下调买入信心
   calibration: true
+  # 把该股历史决策信号的复盘（命中率、平均最大回撤、偏乐观/偏悲观）写进提示词（至少 3 条已评估信号）
+  signal_review: true
 
 # --- 自选股 ---
 # 在桌面端【自选股】页增删、批量导入（粘贴文本或 CSV/Excel）；盘中提醒也会关注自选股

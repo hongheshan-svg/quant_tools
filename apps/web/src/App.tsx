@@ -17,6 +17,7 @@ import { RealPage } from './pages/RealPage'
 import { ReviewPage } from './pages/ReviewPage'
 import { ScreeningPage } from './pages/ScreeningPage'
 import { SettingsPage } from './pages/SettingsPage'
+import { SignalsPage } from './pages/SignalsPage'
 import { SourcesPage } from './pages/SourcesPage'
 import { StockPage } from './pages/StockPage'
 import { ThemesPage } from './pages/ThemesPage'
@@ -42,6 +43,7 @@ export function AppRoutes({ authEnabled }: { authEnabled: boolean }) {
         <Route path="screening" element={<ScreeningPage />} />
         <Route path="performance" element={<PerformancePage />} />
         <Route path="history" element={<HistoryPage />} />
+        <Route path="signals" element={<SignalsPage />} />
         <Route path="alerts" element={<AlertsPage />} />
         <Route path="sources" element={<SourcesPage />} />
         <Route path="usage" element={<UsagePage />} />

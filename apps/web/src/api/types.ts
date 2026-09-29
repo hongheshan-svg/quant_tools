@@ -390,6 +390,63 @@ export interface SignalPerformance {
   details: SignalDetail[]
 }
 
+// ---------- 决策信号 ----------
+export interface DecisionSignal {
+  id: number
+  diagnosis_id: number | null
+  code: string
+  name: string
+  action: string
+  action_label?: string
+  score: number | null
+  confidence: string | null
+  entry_low: number | null
+  entry_high: number | null
+  stop_loss: number | null
+  target_price: number | null
+  horizon_days: number
+  invalidation: string | null
+  trade_date: string
+  status: string
+  status_label?: string
+  status_reason: string | null
+  expires_on: string | null
+  ret_1d: number | null
+  ret_3d: number | null
+  ret_5d: number | null
+  max_adverse_pct: number | null
+  max_favorable_pct: number | null
+  evaluated_at?: string | null
+  feedback: string | null
+  feedback_note: string | null
+  created_at?: string
+  hit?: boolean | null
+}
+
+export interface DecisionSignalPage {
+  total: number
+  items: DecisionSignal[]
+}
+
+export interface DecisionSignalStats {
+  total: number
+  by_status: Record<string, number>
+  by_action: Record<string, { count: number; hits: number; hit_rate: number | null; avg_ret_5d: number | null; avg_adverse: number | null }>
+  hit_rate: number | null
+  avg_ret_5d?: number | null
+  avg_adverse?: number | null
+}
+
+export interface SignalReview {
+  samples: number
+  hits: number
+  hit_rate: number | null
+  avg_ret: number | null
+  avg_adverse: number | null
+  bias: string
+  text: string
+}
+
 export interface DiagnosisOutcomeRow {
   dimension: string
   group: string
