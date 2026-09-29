@@ -154,6 +154,14 @@ def data_sources(pipeline: PipelineService = Depends(get_pipeline)) -> list[dict
     return pipeline.data_source_status()
 
 
+@router.get("/system/capabilities")
+def data_capabilities(config: dict = Depends(get_config)) -> list[dict[str, Any]]:
+    """各数据集的回退顺序、配置情况与健康状态"""
+    from src.services.data_capabilities import capabilities
+
+    return capabilities(config)
+
+
 # ---------- AI 设置 ----------
 
 def _mask(llm: dict[str, Any]) -> dict[str, Any]:

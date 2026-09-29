@@ -641,6 +641,26 @@ export interface SourceStatus {
   last_elapsed: number | null
 }
 
+export interface CapabilitySource {
+  name: string
+  label: string
+  configured: boolean
+  note: string
+  health: {
+    status: 'ok' | 'failing' | 'open' | 'unknown'
+    last_success: string | null
+    last_failure: string | null
+    consecutive_failures: number
+    last_error: string
+  }
+}
+
+export interface DataCapability {
+  dataset: string
+  label: string
+  sources: CapabilitySource[]
+}
+
 export interface UsageRow {
   key: string
   calls: number
