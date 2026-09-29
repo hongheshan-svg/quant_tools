@@ -188,12 +188,17 @@ def test_llm(body: LLMSettingsBody, config: dict = Depends(get_config)) -> dict[
 
 @router.get("/settings/notifier")
 def get_notifier_settings(config: dict = Depends(get_config)) -> dict[str, Any]:
-    from src.notifier import CHANNEL_LABELS, MESSAGE_KINDS
+    from src.notifier import CHANNEL_FIELDS, CHANNEL_LABELS, MESSAGE_KINDS, secret_fields
 
     notifier = copy.deepcopy(config.get("notifier") or {})
-    if (notifier.get("email") or {}).get("password"):
-        notifier["email"]["password"] = MASK
-    return {"notifier": notifier, "channels": CHANNEL_LABELS, "kinds": MESSAGE_KINDS}
+    for name in CHANNEL_LABELS:
+        section = notifier.get(name)
+        if not isinstance(section, dict):
+            continue
+        for key in secret_fields(name):
+            if section.get(key):
+                section[key] = MASK
+    return {"notifier": notifier, "channels": CHANNEL_LABELS, "kinds": MESSAGE_KINDS, "fields": CHANNEL_FIELDS}
 
 
 class NotifierBody(BaseModel):
@@ -201,10 +206,18 @@ class NotifierBody(BaseModel):
 
 
 def _merge_notifier(current: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    from src.notifier import CHANNEL_LABELS, secret_fields
+
     merged = {**current, **incoming}
-    email = incoming.get("email")
-    if isinstance(email, dict) and email.get("password") == MASK:
-        merged["email"] = {**email, "password": (current.get("email") or {}).get("password", "")}
+    for name in CHANNEL_LABELS:
+        section = incoming.get(name)
+        if not isinstance(section, dict):
+            continue
+        restored = dict(section)
+        for key in secret_fields(name):
+            if section.get(key) == MASK:
+                restored[key] = (current.get(name) or {}).get(key, "")
+        merged[name] = restored
     return merged
 
 

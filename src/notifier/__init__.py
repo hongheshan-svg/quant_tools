@@ -1,6 +1,6 @@
 """消息推送模块
 
-- 渠道：企业微信、钉钉、飞书机器人和邮件（SMTP）
+- 渠道：企业微信、钉钉、飞书机器人、邮件（SMTP），以及 Telegram、Discord、Slack、PushPlus、Server酱、ntfy、Gotify、Pushover、Bark 和自定义 Webhook
 - 路由：notifier.routes 按消息类型（daily_report 每日报告、alert 盘中提醒、watchlist 自选股仪表盘、chat AI 问股）
   指定推送到哪些渠道；没写或为空的类型推送到全部已启用渠道
 - 配置检查：diagnose() 逐个渠道检查缺项和占位符；test_channel() 发一条测试消息
@@ -8,26 +8,112 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 from typing import Any
 from urllib.parse import urlparse
 
 from loguru import logger
 
+from src.notifier.bark import BarkNotifier
 from src.notifier.dingtalk import DingTalkNotifier
+from src.notifier.discord import DiscordNotifier
 from src.notifier.feishu import FeishuNotifier
+from src.notifier.gotify import GotifyNotifier
 from src.notifier.mail import EmailNotifier, recipients
+from src.notifier.ntfy import NtfyNotifier
+from src.notifier.pushover import PushoverNotifier
+from src.notifier.pushplus import PushPlusNotifier
+from src.notifier.serverchan import ServerChanNotifier
+from src.notifier.slack import SlackNotifier
+from src.notifier.telegram import TelegramNotifier
 from src.notifier.wechat import WeChatNotifier
+from src.notifier.webhook import WebhookNotifier
 
 NOTIFIERS = {
     "wechat": WeChatNotifier,
     "dingtalk": DingTalkNotifier,
     "feishu": FeishuNotifier,
     "email": EmailNotifier,
+    "telegram": TelegramNotifier,
+    "discord": DiscordNotifier,
+    "slack": SlackNotifier,
+    "pushplus": PushPlusNotifier,
+    "serverchan": ServerChanNotifier,
+    "ntfy": NtfyNotifier,
+    "gotify": GotifyNotifier,
+    "pushover": PushoverNotifier,
+    "bark": BarkNotifier,
+    "webhook": WebhookNotifier,
 }
-CHANNEL_LABELS = {"wechat": "企业微信", "dingtalk": "钉钉", "feishu": "飞书", "email": "邮件"}
+CHANNEL_LABELS = {
+    "wechat": "企业微信", "dingtalk": "钉钉", "feishu": "飞书", "email": "邮件",
+    "telegram": "Telegram", "discord": "Discord", "slack": "Slack", "pushplus": "PushPlus", "serverchan": "Server酱",
+    "ntfy": "ntfy", "gotify": "Gotify", "pushover": "Pushover", "bark": "Bark", "webhook": "自定义 Webhook",
+}
 MESSAGE_KINDS = {"daily_report": "每日报告", "alert": "盘中提醒", "watchlist": "自选股仪表盘", "chat": "AI 问股"}
 WEBHOOK_HOSTS = {"wechat": ("qyapi.weixin.qq.com",), "dingtalk": ("oapi.dingtalk.com",), "feishu": ("open.feishu.cn", "open.larksuite.com")}
+
+
+def _f(key: str, label: str, required: bool = False, secret: bool = False, placeholder: str = "",
+       type: str = "text", default: Any = None) -> dict:
+    field = {"key": key, "label": label, "required": required, "secret": secret, "placeholder": placeholder, "type": type}
+    if default is not None:
+        field["default"] = default
+    return field
+
+
+# 新渠道的配置字段，Web 设置页据此通用渲染；旧渠道（企业微信、钉钉、飞书、邮件）有专用表单
+CHANNEL_FIELDS: dict[str, list[dict]] = {
+    "telegram": [
+        _f("bot_token", "Bot Token", True, True, "123456:ABC-DEF..."),
+        _f("chat_id", "Chat ID", True, placeholder="用户、群组 ID 或 @频道名"),
+        _f("api_base", "API 地址（可填反代）", placeholder="https://api.telegram.org", default="https://api.telegram.org"),
+        _f("message_thread_id", "话题 ID（可空）", placeholder="超级群组的话题 message_thread_id"),
+    ],
+    "discord": [_f("webhook_url", "Webhook 地址", True, True, "https://discord.com/api/webhooks/...")],
+    "slack": [_f("webhook_url", "Incoming Webhook 地址", True, True, "https://hooks.slack.com/services/...")],
+    "pushplus": [
+        _f("token", "Token", True, True),
+        _f("topic", "群组编码（可空）", placeholder="一对多推送时填写"),
+    ],
+    "serverchan": [_f("sendkey", "SendKey", True, True, "SCT... 或 sctp123t...")],
+    "ntfy": [
+        _f("server", "服务器", placeholder="https://ntfy.sh", default="https://ntfy.sh"),
+        _f("topic", "主题", True),
+        _f("token", "访问令牌（可空）", secret=True, placeholder="私有主题需要"),
+    ],
+    "gotify": [
+        _f("server", "服务器地址", True, placeholder="https://gotify.example.com"),
+        _f("token", "应用 Token", True, True),
+        _f("priority", "优先级", type="number", default=5),
+    ],
+    "pushover": [
+        _f("user_key", "User Key", True, True),
+        _f("api_token", "API Token", True, True),
+    ],
+    "bark": [
+        _f("server", "服务器", placeholder="https://api.day.app", default="https://api.day.app"),
+        _f("device_key", "Device Key", True, True),
+        _f("group", "分组（可空）"),
+    ],
+    "webhook": [
+        _f("url", "请求地址", True, True, "https://example.com/hook"),
+        _f("method", "请求方法", placeholder="POST", default="POST"),
+        _f("headers", "请求头（可空，JSON）", placeholder='{"Authorization": "Bearer xxx"}', type="textarea"),
+        _f("body_template", "请求体模板（可空）", placeholder='{"text": $content_json}；可用 $title $content $title_json $content_json', type="textarea"),
+    ],
+}
+URL_KEYS = ("api_base", "server", "url", "webhook_url")
+# 有固定域名的 Webhook：必须 https 且域名匹配
+STRICT_HOSTS = {"discord": ("discord.com", "discordapp.com"), "slack": ("hooks.slack.com",)}
+
+
+def secret_fields(name: str) -> list[str]:
+    """渠道里需要在接口中掩码的密钥字段。"""
+    if name == "email":
+        return ["password"]
+    return [f["key"] for f in CHANNEL_FIELDS.get(name, []) if f["secret"]]
 
 
 def _channel_cfg(config: dict, name: str) -> dict:
@@ -39,6 +125,9 @@ def is_configured(config: dict, name: str) -> bool:
     cfg = _channel_cfg(config, name)
     if name == "email":
         return EmailNotifier.is_configured(cfg)
+    if name in CHANNEL_FIELDS:
+        return all(str(cfg.get(f["key"]) or "").strip() and "your-" not in str(cfg.get(f["key"]))
+                   for f in CHANNEL_FIELDS[name] if f["required"])
     url = str(cfg.get("webhook_url") or "")
     return bool(url) and "your-" not in url
 
@@ -52,6 +141,9 @@ def enabled_channels(config: dict, kind: str | None = None) -> list[str]:
 
 def broadcast(config: dict, title: str, content: str, kind: str | None = None) -> dict[str, bool]:
     """推送到消息类型对应的已启用渠道，返回 {渠道: 是否成功}；单个渠道失败不影响其他渠道。"""
+    if os.environ.get("QUANT_NO_NOTIFY"):
+        logger.info(f"已设置 QUANT_NO_NOTIFY，不推送: {title}")
+        return {}
     results = {}
     for name in enabled_channels(config, kind):
         try:
@@ -60,6 +152,26 @@ def broadcast(config: dict, title: str, content: str, kind: str | None = None) -
             logger.error(f"[{name}] 推送异常: {e}")
             results[name] = False
     return results
+
+
+def _diagnose_fields(name: str, cfg: dict) -> list[str]:
+    issues: list[str] = []
+    for f in CHANNEL_FIELDS[name]:
+        value = str(cfg.get(f["key"]) or "").strip()
+        if not value:
+            if f["required"]:
+                issues.append(f"缺少 {f['label']}")
+            continue
+        if "your-" in value:
+            issues.append(f"{f['label']} 还是示例占位符")
+        elif f["key"] in URL_KEYS:
+            parsed = urlparse(value)
+            if name in STRICT_HOSTS:
+                if parsed.scheme != "https" or parsed.hostname not in STRICT_HOSTS[name]:
+                    issues.append(f"{f['label']} 必须是 https 且域名为 {'/'.join(STRICT_HOSTS[name])}")
+            elif parsed.scheme not in ("http", "https"):
+                issues.append(f"{f['label']} 应以 http:// 或 https:// 开头")
+    return issues
 
 
 def diagnose(config: dict) -> dict[str, Any]:
@@ -79,6 +191,8 @@ def diagnose(config: dict) -> dict[str, Any]:
                 int(cfg.get("smtp_port") or 465)
             except (TypeError, ValueError):
                 issues.append("端口不是数字")
+        elif name in CHANNEL_FIELDS:
+            issues.extend(_diagnose_fields(name, cfg))
         else:
             url = str(cfg.get("webhook_url") or "").strip()
             parsed = urlparse(url)

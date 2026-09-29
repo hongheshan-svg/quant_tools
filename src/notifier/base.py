@@ -40,6 +40,46 @@ def paged_titles(title: str, count: int) -> list[str]:
     return [f"{title}（{i}/{count}）" for i in range(1, count + 1)]
 
 
+def markdown_to_text(content: str) -> str:
+    """去掉标题、粗体、引用、分隔线、代码等 markdown 标记，给不支持 markdown 的渠道发纯文本。"""
+    import re
+
+    lines = []
+    for raw in content.split("\n"):
+        line = raw.rstrip()
+        stripped = line.strip()
+        if re.fullmatch(r"[-*_]{3,}", stripped):
+            continue
+        line = re.sub(r"^\s*#{1,6}\s*", "", line)
+        line = re.sub(r"^\s*>\s?", "", line)
+        line = re.sub(r"^(\s*)[*+]\s+", r"\1- ", line)
+        line = re.sub(r"\*\*(.+?)\*\*", r"\1", line)
+        line = re.sub(r"__(.+?)__", r"\1", line)
+        line = line.replace("`", "")
+        lines.append(line)
+    return "\n".join(lines).strip()
+
+
+def markdown_to_slack(content: str) -> str:
+    """转成 Slack mrkdwn：**粗体** 变 *粗体*，标题变 *标题*，分隔线去掉。"""
+    import re
+
+    lines = []
+    for raw in content.split("\n"):
+        if re.fullmatch(r"\s*[-*_]{3,}\s*", raw):
+            continue
+        line = re.sub(r"^\s*#{1,6}\s*(.+?)\s*$", r"*\1*", raw)
+        line = re.sub(r"\*\*(.+?)\*\*", r"*\1*", line)
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def send_paged(title: str, content: str, max_bytes: int, send_one) -> bool:
+    """拆分后逐段调用 send_one(标题, 内容)，某段失败不影响后续，全部成功才返回 True。"""
+    chunks = split_by_bytes(content, max_bytes)
+    return all([send_one(t, c) for t, c in zip(paged_titles(title, len(chunks)), chunks)])
+
+
 def markdown_to_html(content: str) -> str:
     """把推送用的简单 markdown（标题、列表、引用、粗体、分隔线）转成邮件 HTML。"""
     import html

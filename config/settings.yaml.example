@@ -232,7 +232,62 @@ notifier:
     password: ""
     sender: ""               # 为空时使用 username
     to: []                   # 收件人，如 ["me@example.com"]
-  # 按消息类型指定推送渠道（wechat/dingtalk/feishu/email），不写或为空的类型推送到全部已启用渠道
+  # Telegram：@BotFather 创建机器人拿 bot_token；chat_id 可给机器人发消息后访问 getUpdates 查看
+  telegram:
+    enabled: false
+    bot_token: ""
+    chat_id: ""
+    api_base: "https://api.telegram.org"   # 国内网络可填自己的反向代理地址
+    message_thread_id: ""                  # 超级群组的话题 ID，可空
+  # Discord：频道设置 → 集成 → Webhooks → 新建 Webhook 并复制地址
+  discord:
+    enabled: false
+    webhook_url: ""
+  # Slack：api.slack.com/apps 创建应用并启用 Incoming Webhooks，复制 Webhook 地址
+  slack:
+    enabled: false
+    webhook_url: ""
+  # PushPlus：pushplus.plus 微信扫码登录后在「个人中心」获取 token；topic 填群组编码可一对多推送
+  pushplus:
+    enabled: false
+    token: ""
+    topic: ""
+  # Server酱：sct.ftqq.com 获取 SendKey（Turbo 版 SCT 开头，Server酱³ 为 sctp{数字}t 开头）
+  serverchan:
+    enabled: false
+    sendkey: ""
+  # ntfy：ntfy.sh 或自建服务，订阅一个不易猜的主题；私有主题填 token
+  ntfy:
+    enabled: false
+    server: "https://ntfy.sh"
+    topic: ""
+    token: ""
+  # Gotify：自建服务，在「应用」里创建应用获取 token
+  gotify:
+    enabled: false
+    server: ""               # 如 https://gotify.example.com
+    token: ""
+    priority: 5
+  # Pushover：pushover.net 的 User Key，再在 Your Applications 里创建应用获取 API Token
+  pushover:
+    enabled: false
+    user_key: ""
+    api_token: ""
+  # Bark（iOS）：App 内查看 device_key；自建服务时修改 server
+  bark:
+    enabled: false
+    server: "https://api.day.app"
+    device_key: ""
+    group: ""
+  # 自定义 Webhook：body_template 可用 $title $content（原文）和 $title_json $content_json（JSON 字符串，已带引号）
+  # 例：body_template: '{"msgtype": "text", "text": $content_json}'；为空时发送 {"title": ..., "content": ...}
+  webhook:
+    enabled: false
+    url: ""
+    method: "POST"
+    headers: ""              # JSON 文本，如 {"Authorization": "Bearer xxx"}
+    body_template: ""
+  # 按消息类型指定推送渠道（渠道名见上面各段，如 wechat、telegram），不写或为空的类型推送到全部已启用渠道
   # 桌面端【推送设置】可以直接修改、检查配置和发送测试消息
   routes:
     daily_report: []         # 每日报告

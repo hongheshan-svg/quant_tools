@@ -591,10 +591,21 @@ export interface LLMSettings {
   platforms: Dict<{ name: string; base_url: string; models: string[]; default_model: string }>
 }
 
+export interface NotifierField {
+  key: string
+  label: string
+  required: boolean
+  secret: boolean
+  placeholder: string
+  type: 'text' | 'number' | 'textarea'
+  default?: string | number
+}
+
 export interface NotifierSettings {
   notifier: Dict<any>
   channels: Dict<string>
   kinds: Dict<string>
+  fields: Dict<NotifierField[]>
 }
 
 export interface BotSettings {

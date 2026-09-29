@@ -1,7 +1,7 @@
 // 设置：AI 模型（主/备）、推送渠道与路由、聊天机器人、登录安全；在桌面端里多一个「桌面端」页
 import { useEffect, useState } from 'react'
 import { api } from '@/api/endpoints'
-import type { AuthStatus, BotSettings, LLMRole, LLMSettings, NotifierDiagnosis, NotifierSettings } from '@/api/types'
+import type { AuthStatus, BotSettings, LLMRole, LLMSettings, NotifierDiagnosis, NotifierField, NotifierSettings } from '@/api/types'
 import { Button, Card, ErrorBox, Field, Input, PageHeader, Select, Spinner, Tabs } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
 import { toast } from '@/stores/toast'
@@ -267,6 +267,22 @@ function NotifierForm() {
     setForm((f) => ({ ...f, routes: { ...(f.routes ?? {}), [kind]: [...next] } }))
   }
   const email = form.email ?? {}
+  const extraChannels = Object.keys(data.fields ?? {})
+  const renderField = (ch: string, f: NotifierField) => {
+    const value = form[ch]?.[f.key] ?? f.default ?? ''
+    const common = { 'aria-label': `${data.channels[ch]}-${f.label}`, placeholder: f.placeholder }
+    return (
+      <Field key={f.key} label={`${f.label}${f.required ? ' *' : ''}`}>
+        {f.type === 'textarea' ? (
+          <textarea {...common} rows={3} className="w-full rounded-md border border-line bg-transparent px-2 py-1 text-sm" value={typeof value === 'string' ? value : JSON.stringify(value)} onChange={(e) => set(ch, f.key, e.target.value)} />
+        ) : f.type === 'number' ? (
+          <Input {...common} type="number" value={value} onChange={(e) => set(ch, f.key, e.target.value === '' ? '' : Number(e.target.value))} />
+        ) : (
+          <Input {...common} type={f.secret ? 'password' : 'text'} value={value} onChange={(e) => set(ch, f.key, e.target.value)} />
+        )}
+      </Field>
+    )
+  }
 
   return (
     <div className="space-y-4">
@@ -309,6 +325,21 @@ function NotifierForm() {
           </div>
         </div>
       </fieldset>
+      <div className="grid gap-3 lg:grid-cols-3">
+        {extraChannels.map((ch) => (
+          <fieldset key={ch} className="space-y-2 rounded-md border border-line p-3">
+            <legend className="px-1 text-sm text-accent">{data.channels[ch]}</legend>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" aria-label={`${data.channels[ch]}-启用`} checked={!!form[ch]?.enabled} onChange={(e) => set(ch, 'enabled', e.target.checked)} /> 启用</label>
+            {data.fields[ch].map((f) => renderField(ch, f))}
+            <Button loading={busy === ch} onClick={async () => {
+              setBusy(ch)
+              const r = await api.testNotifier(ch, payload()).finally(() => setBusy(''))
+              if (r.ok) toast.success(`${data.channels[ch]}测试消息已发送`)
+              else toast.error(`${data.channels[ch]}发送失败：${r.error}`)
+            }}>发送测试消息</Button>
+          </fieldset>
+        ))}
+      </div>
       <fieldset className="rounded-md border border-line p-3">
         <legend className="px-1 text-sm text-accent">推送路由（都不勾选 = 推送到全部已启用渠道）</legend>
         <table className="text-sm">
