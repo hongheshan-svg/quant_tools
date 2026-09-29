@@ -216,6 +216,33 @@ export interface AgentOpinion {
   error?: string
 }
 
+export interface DiagnosisHistoryItem {
+  id: number
+  code: string
+  name: string
+  trade_date: string
+  action: string
+  score: number | null
+  summary: string
+  created_at: string
+}
+
+export interface DiagnosisHistoryPage {
+  total: number
+  items: DiagnosisHistoryItem[]
+}
+
+export interface DiagnosisRecord {
+  id: number
+  code: string
+  name: string
+  trade_date: string
+  action: string
+  score: number | null
+  created_at: string
+  result: Diagnosis
+}
+
 export interface Diagnosis {
   code: string
   name: string

@@ -63,6 +63,82 @@ class DataQueryService:
                 })
         return result
 
+    @staticmethod
+    def _diagnosis_detail(row: StockDiagnosis) -> dict:
+        """解析诊断记录里的 result_json，坏数据按空字典处理。"""
+        import json
+
+        try:
+            detail = json.loads(row.result_json or "{}")
+        except ValueError:
+            detail = {}
+        return detail if isinstance(detail, dict) else {}
+
+    def list_diagnoses(self, code: str | None = None, action: str | None = None, days: int = 30,
+                       limit: int = 50, offset: int = 0) -> dict:
+        """诊断历史分页列表（新的在前）；days<=0 不限时间，action 按归一化后的操作建议过滤。"""
+        from src.analyzers.decision import normalize_action
+
+        with get_db_session(self.db_path) as session:
+            query = session.query(StockDiagnosis)
+            if code:
+                raw = code.strip()
+                if raw[-3:-2] == "." and raw[-2:].lower() in ("sh", "sz", "bj"):
+                    raw = raw[:-3]  # 兼容 600519.SH 写法
+                query = query.filter(StockDiagnosis.code == bare_code(raw))
+            if action:
+                query = query.filter(StockDiagnosis.action == (normalize_action(action) or action))
+            if days and days > 0:
+                query = query.filter(StockDiagnosis.created_at >= datetime.now() - timedelta(days=days))
+            total = query.count()
+            rows = (
+                query.order_by(StockDiagnosis.created_at.desc(), StockDiagnosis.id.desc())
+                .offset(max(offset, 0)).limit(max(limit, 0)).all()
+            )
+            items = []
+            for r in rows:
+                detail = self._diagnosis_detail(r)
+                items.append({
+                    "id": r.id,
+                    "code": r.code,
+                    "name": r.name or "",
+                    "trade_date": r.trade_date or "",
+                    "action": normalize_action(r.action) or normalize_action(detail.get("action_label")) or "",
+                    "score": r.score,
+                    "summary": str(detail.get("one_sentence") or ""),
+                    "created_at": r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "",
+                })
+        return {"total": total, "items": items}
+
+    def get_diagnosis(self, diagnosis_id: int) -> dict | None:
+        """单条诊断详情（含完整结果）；不存在返回 None。"""
+        from src.analyzers.decision import normalize_action
+
+        with get_db_session(self.db_path) as session:
+            r = session.get(StockDiagnosis, diagnosis_id)
+            if r is None:
+                return None
+            detail = self._diagnosis_detail(r)
+            return {
+                "id": r.id,
+                "code": r.code,
+                "name": r.name or "",
+                "trade_date": r.trade_date or "",
+                "action": normalize_action(r.action) or normalize_action(detail.get("action_label")) or "",
+                "score": r.score,
+                "created_at": r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "",
+                "result": detail,
+            }
+
+    def delete_diagnosis(self, diagnosis_id: int) -> bool:
+        """删除一条诊断记录；不存在返回 False。"""
+        with get_db_session(self.db_path) as session:
+            r = session.get(StockDiagnosis, diagnosis_id)
+            if r is None:
+                return False
+            session.delete(r)
+        return True
+
     def get_dashboard_snapshot(self, for_date: str | None = None) -> dict:
         """获取桌面首页所需的完整数据快照。"""
         target_date = for_date or date.today().strftime("%Y-%m-%d")

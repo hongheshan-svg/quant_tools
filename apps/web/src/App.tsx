@@ -8,6 +8,7 @@ import { Spinner } from './components/ui'
 import { AlertsPage } from './pages/AlertsPage'
 import { ChatPage } from './pages/ChatPage'
 import { DashboardPage } from './pages/DashboardPage'
+import { HistoryPage } from './pages/HistoryPage'
 import { LoginPage } from './pages/LoginPage'
 import { NewsPage } from './pages/NewsPage'
 import { NotFoundPage } from './pages/NotFoundPage'
@@ -40,6 +41,7 @@ export function AppRoutes({ authEnabled }: { authEnabled: boolean }) {
         <Route path="themes" element={<ThemesPage />} />
         <Route path="screening" element={<ScreeningPage />} />
         <Route path="performance" element={<PerformancePage />} />
+        <Route path="history" element={<HistoryPage />} />
         <Route path="alerts" element={<AlertsPage />} />
         <Route path="sources" element={<SourcesPage />} />
         <Route path="usage" element={<UsagePage />} />

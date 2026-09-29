@@ -222,6 +222,25 @@ class PipelineService:
 
         return DataQueryService(self.db_path).diagnosis_history(code, limit)
 
+    def list_diagnoses(self, code: str | None = None, action: str | None = None, days: int = 30,
+                       limit: int = 50, offset: int = 0) -> dict[str, Any]:
+        """诊断历史分页列表。"""
+        from src.services.data_query_service import DataQueryService
+
+        return DataQueryService(self.db_path).list_diagnoses(code, action, days, limit, offset)
+
+    def get_diagnosis(self, diagnosis_id: int) -> dict[str, Any] | None:
+        """单条诊断详情。"""
+        from src.services.data_query_service import DataQueryService
+
+        return DataQueryService(self.db_path).get_diagnosis(diagnosis_id)
+
+    def delete_diagnosis(self, diagnosis_id: int) -> bool:
+        """删除一条诊断记录。"""
+        from src.services.data_query_service import DataQueryService
+
+        return DataQueryService(self.db_path).delete_diagnosis(diagnosis_id)
+
     def main_themes(self, dimension: str = "concept") -> list[dict[str, Any]]:
         """近 5 日涨停池量化的主线（阶段、热度、梯队、龙头）；dimension 为 concept（题材）或 industry（行业）。"""
         from src.analyzers.theme_tracker import ThemeTracker

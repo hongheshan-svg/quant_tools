@@ -1,7 +1,7 @@
 // 个股详情：K 线（日/周/月）、日线数据、新闻公告、AI 诊断、加入自选
 import { Star } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router-dom'
 import { api } from '@/api/endpoints'
 import type { DailyBar, Diagnosis, StockNews } from '@/api/types'
 import { CandlestickChart, toCandles, type Period } from '@/components/CandlestickChart'
@@ -164,6 +164,7 @@ function DiagnosisTab({ code }: { code: string }) {
     <div>
       <div className="mb-3 flex items-center justify-between gap-2">
         <p className="text-xs text-muted">结合技术面、资金、筹码、业绩、新闻公告、主线和大盘，由技术面/情报分析员与决策员给出结论（约 20~60 秒）</p>
+        <Link to={`/history?code=${code}`} className="ml-auto text-xs text-accent hover:underline">历史诊断</Link>
         <Button variant="primary" loading={task.running} onClick={run}>{task.running ? `诊断中 ${progressText(task.progress)}` : data ? '重新诊断' : '开始诊断'}</Button>
       </div>
       {loading && !data ? <Spinner /> : data ? <DiagnosisView d={data} /> : <p className="text-sm text-muted">还没有诊断记录</p>}

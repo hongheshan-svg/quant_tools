@@ -1,5 +1,5 @@
 // 各页面用到的接口，一个函数对应一个后端路由
-import { http } from './client'
+import { API_BASE, http } from './client'
 import type * as T from './types'
 
 export const api = {
@@ -44,6 +44,17 @@ export const api = {
   stockNews: (code: string, refresh = false) => http.get<T.StockNews>(`/stocks/${code}/news`, { refresh }),
   latestDiagnosis: (code: string) => http.get<T.Diagnosis | null>(`/stocks/${code}/diagnosis`),
   diagnose: (code: string) => http.post<T.Task<T.Diagnosis>>(`/stocks/${code}/diagnosis`),
+  diagnosisHistoryList: (params: { code?: string; action?: string; days?: number; limit?: number; offset?: number }) =>
+    http.get<T.DiagnosisHistoryPage>('/stocks/diagnoses', params),
+  diagnosisRecord: (id: number) => http.get<T.DiagnosisRecord>(`/stocks/diagnoses/${id}`),
+  deleteDiagnosis: (id: number) => http.del<{ ok: boolean }>(`/stocks/diagnoses/${id}`),
+  diagnosisMarkdownUrl: (id: number) => `${API_BASE}/stocks/diagnoses/${id}/markdown`,
+  diagnosisImageUrl: (id: number) => `${API_BASE}/stocks/diagnoses/${id}/image`,
+  diagnosisMarkdownText: async (id: number) => {
+    const res = await fetch(`${API_BASE}/stocks/diagnoses/${id}/markdown`, { credentials: 'include' })
+    if (!res.ok) throw new Error(`请求失败（${res.status}）`)
+    return res.text()
+  },
 
   // 策略选股
   screening: () => http.get<T.ScreeningLatest>('/screening'),
