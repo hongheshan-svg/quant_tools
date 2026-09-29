@@ -400,6 +400,9 @@ alerts:
   #   - {code: "600519", type: kdj_cross, direction: golden}                # KDJ 金叉/死叉
   #   - {code: "600519", type: rsi, period: 6, direction: above, value: 80} # RSI 上穿/下穿阈值
   # 技术指标用日线计算（当天的行即最新价），本地日线不足时先联网补齐；指标交叉每条规则每天只提醒一次
+  # 每条规则还可以带 enabled（默认 true，false 时停用且不监控该股票）和 note（备注）：
+  #   - {code: "600519", type: price_cross, direction: above, price: 1800, enabled: true, note: "突破前高"}
+  # 一般在 Web【盘中提醒】页的「提醒规则」里管理（保存时会重写这一段），可以先点「测试」看当前是否触发
   rules: []
   near_stop_pct: 2         # 持仓现价距止损价不到该百分比时提醒「接近止损」（每只每天一次）
   market_regime: true      # 大盘环境比前一交易日降档（如均衡→防守）时提醒，冰点为紧急提醒

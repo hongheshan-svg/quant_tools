@@ -31,6 +31,11 @@ export const api = {
   diagnosisOutcomes: (days = 60) => http.get<T.DiagnosisOutcomes>('/performance/diagnosis', { days }),
   alerts: () => http.get<T.AlertRow[]>('/alerts'),
   checkAlerts: () => http.post<T.Task>('/alerts/check'),
+  alertRules: () => http.get<T.AlertRules>('/alerts/rules'),
+  saveAlertRules: (rules: T.AlertRule[]) => http.put<{ rules: T.AlertRule[] }>('/alerts/rules', { rules }),
+  testAlertRule: (rule: T.AlertRule) => http.post<T.AlertRuleTest>('/alerts/rules/test', { rule }),
+  alertSettings: () => http.get<T.AlertSettings>('/alerts/settings'),
+  saveAlertSettings: (settings: Partial<T.AlertSettings>) => http.put<T.AlertSettings>('/alerts/settings', settings),
 
   // 个股
   searchStocks: (q: string, limit = 12) => http.get<T.StockRef[]>('/stocks/search', { q, limit }),

@@ -554,6 +554,48 @@ export interface AlertRow {
   reason: string
 }
 
+export interface AlertRuleField {
+  key: string
+  label: string
+  type: 'number' | 'select'
+  options?: [string, string][]
+  default?: string | number | null
+}
+
+export interface AlertRuleType {
+  label: string
+  fields: AlertRuleField[]
+}
+
+export interface AlertRule {
+  code: string
+  type: string
+  enabled?: boolean
+  note?: string
+  [field: string]: string | number | boolean | undefined
+}
+
+export interface AlertRules {
+  rules: AlertRule[]
+  types: Record<string, AlertRuleType>
+}
+
+export interface AlertRuleTest {
+  triggered: boolean
+  message: string
+  quote: { price: number; change_pct: number } | null
+}
+
+export interface AlertSettings {
+  enabled: boolean
+  cooldown_minutes: number
+  big_drop_pct: number
+  near_stop_pct: number
+  market_regime: boolean
+  regime_score_drop: number
+  watchlist: string[]
+}
+
 export interface SourceStatus {
   dataset: string
   source: string

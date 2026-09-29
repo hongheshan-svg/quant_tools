@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
-from api.deps import get_pipeline, get_tasks
+from api.deps import get_config, get_pipeline, get_tasks
 from api.tasks import TaskManager
 from src.services.pipeline_service import PipelineService
 
@@ -106,3 +106,107 @@ def alerts(limit: int = Query(200, ge=1, le=1000), pipeline: PipelineService = D
 @router.post("/alerts/check")
 def check_alerts(tasks: TaskManager = Depends(get_tasks), pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
     return tasks.submit("check_alerts", pipeline.check_alerts, dedupe_key="check_alerts", label="检查盘中提醒")
+
+
+ALERT_SETTING_KEYS = ("enabled", "cooldown_minutes", "big_drop_pct", "near_stop_pct", "market_regime", "regime_score_drop", "watchlist")
+ALERT_SETTING_DEFAULTS: dict[str, Any] = {
+    "enabled": True, "cooldown_minutes": 30, "big_drop_pct": -7, "near_stop_pct": 2,
+    "market_regime": True, "regime_score_drop": 15, "watchlist": [],
+}
+ALERT_SETTING_LABELS = {
+    "cooldown_minutes": "冷却时间", "big_drop_pct": "大跌阈值", "near_stop_pct": "接近止损距离", "regime_score_drop": "大盘评分下降",
+}
+
+
+def _apply_saved_config(request: Request, values: dict[str, Any]) -> None:
+    """保存 alerts 段后清掉配置缓存，并把新值同步给应用内的服务（其余配置沿用运行中的，不整体重读文件）。"""
+    from api.app import apply_config
+    from src.config_loader import reload_config
+
+    reload_config()
+    current = request.app.state.pipeline.config
+    apply_config(request.app, {**current, "alerts": {**(current.get("alerts") or {}), **values}})
+
+
+@router.get("/alerts/rules")
+def alert_rules(config: dict[str, Any] = Depends(get_config)) -> dict[str, Any]:
+    """当前的自定义提醒规则和可用的规则类型（供 Web 动态渲染表单）。"""
+    from src.services.alert_service import RULE_TYPES
+
+    return {"rules": (config.get("alerts") or {}).get("rules") or [], "types": RULE_TYPES}
+
+
+@router.put("/alerts/rules")
+def save_alert_rules(request: Request, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """整体保存自定义提醒规则：逐条校验，第一条错误返回 422。"""
+    from src.services.alert_service import validate_rule
+    from src.settings_store import save_section
+
+    raw = body.get("rules")
+    if not isinstance(raw, list):
+        raise HTTPException(status_code=422, detail="rules 必须是列表")
+    rules = []
+    for i, rule in enumerate(raw, 1):
+        try:
+            rules.append(validate_rule(rule))
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=f"第 {i} 条：{e}") from None
+    save_section("alerts", {"rules": rules}, merge=True)
+    _apply_saved_config(request, {"rules": rules})
+    return {"rules": rules}
+
+
+@router.post("/alerts/rules/test")
+def test_alert_rule(body: dict[str, Any] = Body(...), config: dict[str, Any] = Depends(get_config)) -> dict[str, Any]:
+    """试算一条规则（不写记录、不推送）。"""
+    from src.services.alert_service import AlertService, validate_rule
+
+    rule = body.get("rule")
+    if not isinstance(rule, dict):
+        raise HTTPException(status_code=422, detail="缺少 rule")
+    try:
+        return AlertService(config).test_rule(validate_rule(rule))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from None
+
+
+@router.get("/alerts/settings")
+def alert_settings(config: dict[str, Any] = Depends(get_config)) -> dict[str, Any]:
+    cfg = config.get("alerts") or {}
+    return {k: cfg.get(k, ALERT_SETTING_DEFAULTS[k]) for k in ALERT_SETTING_KEYS}
+
+
+@router.put("/alerts/settings")
+def save_alert_settings(request: Request, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """保存提醒的标量设置（只写这些键，不覆盖 rules）。"""
+    from src.settings_store import save_section
+    from src.services.alert_service import normalize_code
+
+    values: dict[str, Any] = {}
+    for key in ALERT_SETTING_KEYS:
+        if key not in body:
+            continue
+        v = body[key]
+        if key in ("enabled", "market_regime"):
+            if not isinstance(v, bool):
+                raise HTTPException(status_code=422, detail=f"{key} 必须是布尔值")
+        elif key == "watchlist":
+            if not isinstance(v, list):
+                raise HTTPException(status_code=422, detail="关注股票必须是代码列表")
+            codes = [normalize_code(c) for c in v]
+            bad = [c for c in codes if not (len(c) == 6 and c.isdigit())]
+            if bad:
+                raise HTTPException(status_code=422, detail=f"股票代码不正确：{'、'.join(bad)}")
+            v = list(dict.fromkeys(codes))
+        else:
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v:
+                raise HTTPException(status_code=422, detail=f"{ALERT_SETTING_LABELS.get(key, key)}必须是数字")
+            if key in ("cooldown_minutes", "near_stop_pct", "regime_score_drop") and v < 0:
+                raise HTTPException(status_code=422, detail=f"{ALERT_SETTING_LABELS[key]}不能为负数")
+            if key == "big_drop_pct" and v >= 0:
+                raise HTTPException(status_code=422, detail="大跌阈值必须是负数，如 -7")
+        values[key] = v
+    if values:
+        save_section("alerts", values, merge=True)
+        _apply_saved_config(request, values)
+    return alert_settings(request.app.state.pipeline.config)
