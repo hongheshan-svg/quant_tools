@@ -3,7 +3,7 @@ import { Download, Plus, Send, Share2, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api } from '@/api/endpoints'
-import type { ChatSession, ChatTurn } from '@/api/types'
+import type { ChatSession, ChatSkill, ChatTurn } from '@/api/types'
 import { Markdown } from '@/components/Markdown'
 import { Button, Card, PageHeader, Select, Spinner, Textarea } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
@@ -29,16 +29,30 @@ function TurnView({ turn }: { turn: ChatTurn }) {
   )
 }
 
+const CATEGORY_LABELS: Record<string, string> = {
+  trend: '趋势', pattern: '形态', reversal: '反转', emotion: '情绪', framework: '框架', fundamental: '基本面',
+}
+
+// 按分类分组，分组顺序固定，组内保持接口返回的优先级顺序
+function groupSkills(list: ChatSkill[]): [string, ChatSkill[]][] {
+  const order = Object.keys(CATEGORY_LABELS)
+  const map = new Map<string, ChatSkill[]>()
+  for (const s of list) map.set(s.category, [...(map.get(s.category) ?? []), s])
+  return [...map.entries()].sort(([a], [b]) => (order.indexOf(a) + 99) % 99 - (order.indexOf(b) + 99) % 99)
+}
+
 export function ChatPage() {
   const { sessionId } = useParams()
   const navigate = useNavigate()
   const sessions = useApi(api.chatSessions)
-  const perspectives = useApi(api.perspectives)
+  const skills = useApi(api.skills)
   const [session, setSession] = useState<ChatSession | null>(null)
   const [perspective, setPerspective] = useState('综合')
   const [question, setQuestion] = useState('')
   const [pending, setPending] = useState('')
   const ask = useTask<ChatTurn>()
+  const groups = groupSkills(skills.data ?? [])
+  const current = (skills.data ?? []).find((s) => s.display_name === perspective)
   const bottom = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -136,9 +150,17 @@ export function ChatPage() {
             <div ref={bottom} />
           </div>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
-            <Select value={perspective} onChange={(e) => setPerspective(e.target.value)} aria-label="分析视角" title={perspectives.data?.[perspective]}>
-              {Object.keys(perspectives.data ?? { 综合: '' }).map((p) => <option key={p} value={p}>视角：{p}</option>)}
-            </Select>
+            <div className="flex flex-col gap-1">
+              <Select value={perspective} onChange={(e) => setPerspective(e.target.value)} aria-label="分析视角" title={current?.description}>
+                {groups.length === 0 && <option value="综合">综合</option>}
+                {groups.map(([category, list]) => (
+                  <optgroup key={category} label={CATEGORY_LABELS[category] ?? category}>
+                    {list.map((s) => <option key={s.name} value={s.display_name} title={s.description}>{s.display_name}</option>)}
+                  </optgroup>
+                ))}
+              </Select>
+              {current?.description && <p className="max-w-56 text-xs text-muted">{current.description}</p>}
+            </div>
             <Textarea
               className="min-h-10 flex-1"
               rows={2}

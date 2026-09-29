@@ -68,6 +68,8 @@ def pyinstaller_args() -> list[str]:
         "--add-data", f"{ROOT / 'config' / 'settings.yaml.example'}{sep}config",
         "--add-data", f"{ROOT / 'config' / 'stock_pool.yaml'}{sep}config",
         "--add-data", f"{web_dist}{sep}web",
+        # 内置问股策略（strategy_skills.BUILTIN_DIR = Path(__file__).parent / "skills"）
+        "--add-data", f"{ROOT / 'src' / 'services' / 'skills'}{sep}src/services/skills",
     ]
     for name in HIDDEN_IMPORTS:
         args += ["--hidden-import", name]

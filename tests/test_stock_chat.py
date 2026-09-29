@@ -57,7 +57,7 @@ def test_ask_runs_tools_then_answers():
     assert [c[0] for c in tools.calls] == ["resolve_stock", "quote", "technical"]
     assert [t["label"] for t in turn.tools] == ["查找股票", "最新行情", "技术面"]
     assert progress == ["正在查询：查找股票", "正在查询：最新行情、技术面"]
-    assert "【分析视角】龙回头：按龙回头的标准看" in llm.prompts[0] and "【已查询的数据】" not in llm.prompts[0]
+    assert "【分析视角】龙回头：" in llm.prompts[0] and "【已查询的数据】" not in llm.prompts[0]
     assert "- resolve_stock(query=gzmt)：贵州茅台(600519)" in llm.prompts[1]
     assert "- quote(code=600519)：贵州茅台(600519) 收盘 1500（+1.00%）" in llm.prompts[2]
 

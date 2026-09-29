@@ -31,9 +31,18 @@ class AskBody(BaseModel):
 
 @router.get("/perspectives")
 def perspectives() -> dict[str, str]:
-    from src.services.stock_chat import PERSPECTIVES
+    """display_name → 一句话说明（兼容旧接口，新界面用 /chat/skills）。"""
+    from src.services.stock_chat import perspectives as load_perspectives
 
-    return PERSPECTIVES
+    return load_perspectives()
+
+
+@router.get("/skills")
+def skills() -> list[dict[str, Any]]:
+    """全部问股策略（内置 + config/strategies 自定义），按优先级排序。"""
+    from src.services.strategy_skills import load_skills
+
+    return [s.to_dict() for s in load_skills()]
 
 
 @router.get("/sessions")
@@ -43,7 +52,9 @@ def sessions(store: ChatSessionStore = Depends(get_store)) -> list[dict[str, Any
 
 @router.post("/sessions")
 def create(body: NewSessionBody, store: ChatSessionStore = Depends(get_store)) -> dict[str, Any]:
-    return store.create(body.perspective)
+    from src.services.stock_chat import normalize_perspective
+
+    return store.create(normalize_perspective(body.perspective))
 
 
 @router.get("/sessions/{session_id}")
@@ -64,7 +75,10 @@ def ask(session_id: str, body: AskBody, store: ChatSessionStore = Depends(get_st
         tasks: TaskManager = Depends(get_tasks)) -> dict[str, Any]:
     if store.get(session_id) is None:
         raise not_found("会话不存在")
-    return tasks.submit("chat", store.ask, session_id, body.question, body.perspective, label="AI 问股")
+    from src.services.stock_chat import normalize_perspective
+
+    perspective = normalize_perspective(body.perspective) if body.perspective else None  # 支持英文名和别名
+    return tasks.submit("chat", store.ask, session_id, body.question, perspective, label="AI 问股")
 
 
 @router.get("/sessions/{session_id}/export", response_class=PlainTextResponse)

@@ -1,0 +1,16 @@
+name: general
+display_name: 综合
+description: 综合技术面、资金、题材和大盘给出判断，不预设单一战法。
+category: framework
+aliases: [默认, 通用, 全面, default]
+market_regimes: []
+priority: 1
+instructions: |
+  按综合分析的框架回答，不预设单一战法：
+  1. 先看大盘（market）：环境为冰点不建议开新仓，防守时控制仓位。
+  2. 再看个股趋势与量价：quote、daily_bars、technical，判断均线结构、MACD、RSI、乖离率、量比是否支持当前位置。
+  3. 看资金与筹码：fund_flow 主力净流入是否与涨跌方向一致，chips 获利盘和成本区间判断抛压。
+  4. 看题材与消息：theme 判断是否属于主线及龙头/跟风地位，news 检查公告风险（立案、减持、退市风险直接否决买入），earnings 看业绩预期。
+  5. 持仓相关问题再用 position 查成本和止损位。
+  结论必须给出：看多/观望/看空、买点区间、止损位（一般 -5%~-8% 或跌破关键均线）、目标位和建议仓位；
+  技术、资金、题材三者方向不一致时降为观望并说明分歧。

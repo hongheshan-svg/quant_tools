@@ -17,22 +17,34 @@ from loguru import logger
 
 from src.config_loader import load_config
 from src.services.chat_tools import TOOL_LABELS, ChatTools, tools_prompt
+from src.services.strategy_skills import DEFAULT_SKILL, get_skill, load_skills
 
 MAX_TOOL_ROUNDS = 3
 MAX_CALLS_PER_ROUND = 6
 HISTORY_TURNS = 6          # 带给 AI 的最近几轮对话
 HISTORY_CHARS = 800        # 每条历史消息最多带多少字
 
-PERSPECTIVES: dict[str, str] = {
-    "综合": "综合技术面、资金、题材和大盘给出判断。",
-    "打板接力": "按打板接力的标准看：封板时间与炸板次数、连板高度与晋级率、所属主线的阶段和龙头地位、次日溢价预期；高位分歧和亏钱效应扩散时回避。",
-    "龙回头": "按龙回头的标准看：前期是否为多次涨停的龙头、回调幅度（8%~25% 较理想）、是否缩量回踩 MA10/MA20、主线是否仍在；放量破位则放弃。",
-    "主线补涨": "按主线补涨的标准看：所属主线是否仍在启动/加速/发酵阶段、该股在主线中的辨识度、龙头是否仍强、补涨空间和位置。",
-    "放量突破": "按放量突破的标准看：是否突破 20 日平台或前高、量能是否放大到 2 倍以上、收盘是否强势、突破后乖离是否过大。",
-    "缩量回踩": "按趋势回踩的标准看：均线是否多头排列、回踩 MA10/MA20 时是否缩量、中期涨幅是否过大、支撑位和止损位。",
-    "超跌反弹": "按超跌反弹的标准看：前期跌幅、是否放量企稳、有无利空未出尽（公告、业绩）、反弹目标和止损。",
-    "事件驱动": "按事件驱动的标准看：新闻和公告中的催化事件、事件的持续性和市场认可度、是否已经被充分反映在股价中。",
-}
+
+
+def perspectives() -> dict[str, str]:
+    """display_name → 一句话说明（内置 + 自定义策略，按优先级排序）。"""
+    return {s.display_name: s.description for s in load_skills()}
+
+
+# 兼容旧代码（桌面端下拉框、测试）：导入时的快照；需要包含新改的自定义策略时用 perspectives()
+PERSPECTIVES: dict[str, str] = perspectives()
+
+
+def normalize_perspective(value: str | None) -> str:
+    """策略名、中文名或别名 → 中文名；空值返回「综合」，未知值回退到「综合」并记 warning。"""
+    if not value or not str(value).strip():
+        return DEFAULT_SKILL
+    skill = get_skill(value)
+    if skill is None:
+        logger.warning(f"未知的问股策略「{value}」，已改用「{DEFAULT_SKILL}」")
+        return DEFAULT_SKILL
+    return skill.display_name
+
 
 SYSTEM_PROMPT = """你是 A 股短线投研助手，通过调用工具获取数据来回答用户关于个股、板块和大盘的问题。
 
@@ -82,7 +94,7 @@ class StockChatSession:
 
     def ask(self, question: str, perspective: str = "综合", progress: Callable[[str], None] | None = None) -> ChatTurn:
         """回答一个问题（会带上之前的对话）；progress(提示文字) 用于界面显示正在调用的工具。"""
-        turn = ChatTurn(question=question.strip(), perspective=perspective if perspective in PERSPECTIVES else "综合")
+        turn = ChatTurn(question=question.strip(), perspective=normalize_perspective(perspective))
         system = SYSTEM_PROMPT.format(tools=tools_prompt())
         for round_no in range(1, MAX_TOOL_ROUNDS + 2):
             final = round_no > MAX_TOOL_ROUNDS
@@ -106,8 +118,19 @@ class StockChatSession:
         self.turns.append(turn)
         return turn
 
+    @staticmethod
+    def _perspective_text(perspective: str) -> str:
+        skill = get_skill(perspective)
+        if skill is None:
+            return f"【分析视角】{perspective}"
+        text = f"【分析视角】{skill.display_name}：{skill.description}\n{skill.instructions}"
+        if skill.market_regimes:
+            text += (f"\n该策略适配的大盘环境：{'、'.join(skill.market_regimes)}。"
+                     "若当前大盘环境（用 market 工具确认）不在其中，回答时要明确提示环境不匹配的风险。")
+        return text
+
     def _user_message(self, turn: ChatTurn, final: bool) -> str:
-        parts = [f"当前时间：{datetime.now():%Y-%m-%d %H:%M}", f"【分析视角】{turn.perspective}：{PERSPECTIVES[turn.perspective]}"]
+        parts = [f"当前时间：{datetime.now():%Y-%m-%d %H:%M}", self._perspective_text(turn.perspective)]
         history = [t for t in self.turns if t.answer][-HISTORY_TURNS:]
         if history:
             parts.append("【之前的对话】\n" + "\n".join(

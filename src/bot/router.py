@@ -22,11 +22,17 @@ from src.bot.models import BotMessage
 SESSION_IDLE_SECONDS = 30 * 60
 MAX_SESSIONS = 200
 MAX_LIST_ROWS = 20
+MAX_BATCH = 5
+HISTORY_ROWS = 5
+_SPLIT = re.compile(r"[\s,，、;；]+")
 _FILLER = re.compile(r"^(一下|下|看看|看下|帮我|请)+|[\s，,。.！!？?]+$")
 
 HELP_TEXT = """**A股量化助手**
 
 - **诊断 茅台**：个股 AI 诊断（也可用 分析、/analyze；代码、名称、拼音首字母都行）
+- **批量 茅台 宁德时代**：批量诊断，最多 5 只（空格、逗号、顿号分隔）
+- **历史 茅台**：最近 5 次诊断记录
+- **策略**：列出全部问股策略；**策略 龙回头 宁德时代能买吗**：按指定策略提问
 - **大盘**：最近一次大盘复盘和次日姿态
 - **预测**：今日 AI 涨停预测
 - **自选**：自选股和最近诊断；**自选 加 茅台** / **自选 删 茅台**
@@ -41,7 +47,8 @@ HELP_TEXT = """**A股量化助手**
 @dataclass
 class Command:
     names: tuple[str, ...]
-    handler: Callable[[BotMessage, str, Callable[[str], None]], str]
+    # 返回 None 表示「参数无法处理」，整句交给 AI 问股
+    handler: Callable[[BotMessage, str, Callable[[str], None]], str | None]
     takes_args: bool = False
 
 
@@ -65,6 +72,9 @@ class CommandRouter:
         self.commands = [
             Command(("帮助", "help", "?", "？", "菜单"), self._help),
             Command(("诊断", "分析", "analyze", "diagnose"), self._diagnose, takes_args=True),
+            Command(("批量诊断", "批量", "batch"), self._batch, takes_args=True),
+            Command(("历史", "history"), self._history, takes_args=True),
+            Command(("策略", "strategies", "skills"), self._strategy, takes_args=True),
             Command(("大盘", "复盘", "market"), self._market),
             Command(("预测", "涨停预测", "predict"), self._predict),
             Command(("自选股", "自选", "watchlist"), self._watchlist, takes_args=True),
@@ -94,7 +104,9 @@ class CommandRouter:
         command, args = self.match(text)
         try:
             if command:
-                return command.handler(message, args, progress)
+                reply = command.handler(message, args, progress)
+                if reply is not None:
+                    return reply
             return self._chat(message, text, progress)
         except Exception as e:
             logger.exception(f"机器人处理消息失败: {e}")
@@ -141,6 +153,70 @@ class CommandRouter:
         if result.get("error"):
             return f"诊断 {name}({code}) 失败：{result['error']}"
         return render_markdown(result)
+
+    def _batch(self, message: BotMessage, args: str, progress) -> str | None:
+        tokens = [t for t in _SPLIT.split(args.strip()) if t]
+        if not tokens:
+            return None
+        resolved: list[tuple[str, str]] = []
+        failed: list[str] = []
+        for token in tokens[:MAX_BATCH]:
+            found = self._resolve(token)
+            if found and found not in resolved:
+                resolved.append(found)
+            elif not found:
+                failed.append(f"{token}：找不到这只股票")
+        if not resolved:
+            return None  # 一只都解析不出来，说明不是批量诊断（如「批量处理是什么意思」），交给问股
+        progress(f"开始诊断 {len(resolved)} 只，大约需要 {len(resolved) // 2 + 1} 分钟…")
+        from src.analyzers.decision import ACTION_LABELS
+
+        lines = [f"### 批量诊断（{len(resolved)} 只）", ""]
+        for code, name in resolved:
+            result = self.pipeline.diagnose_stock(code)
+            if result.get("error"):
+                failed.append(f"{name}({code})：{result['error']}")
+                continue
+            label = result.get("action_label") or ACTION_LABELS.get(result.get("action"), "")
+            lines.append(f"- {name}({code})：{label} {_num(result.get('score'), 0)}分｜{result.get('one_sentence') or '无结论'}")
+        if failed:
+            lines += ["", "**未完成：**", *[f"- {f}" for f in failed]]
+        if len(tokens) > MAX_BATCH:
+            lines += ["", f"一次最多诊断 {MAX_BATCH} 只，已忽略后面的 {len(tokens) - MAX_BATCH} 个。"]
+        lines += ["", "发「诊断 名称」查看单只完整报告。"]
+        return "\n".join(lines)
+
+    def _history(self, message: BotMessage, args: str, progress) -> str | None:
+        resolved = self._resolve(args) if args.strip() else None
+        if not resolved:
+            return None  # 「历史上茅台涨过几次停」这类不是查诊断记录，交给问股
+        from src.analyzers.decision import ACTION_LABELS
+
+        code, name = resolved
+        rows = self.pipeline.diagnosis_history(code, HISTORY_ROWS)
+        if not rows:
+            return f"{name}({code}) 还没有诊断记录，发「诊断 {name}」先诊断一次。"
+        lines = [f"### {name}({code}) 最近 {len(rows)} 次诊断", ""]
+        for r in rows:
+            label = ACTION_LABELS.get(r.get("action") or "", r.get("action") or "-")
+            lines.append(f"- {r.get('created_at', '')} {label} {_num(r.get('score'), 0)}分｜{r.get('summary') or '无结论'}")
+        return "\n".join(lines)
+
+    def _strategy(self, message: BotMessage, args: str, progress) -> str | None:
+        from src.services.strategy_skills import load_skills, match_prefix
+
+        if not args.strip():
+            lines = ["### 问股策略", "", "发「策略 龙回头 宁德时代能买吗」按指定策略提问。", ""]
+            lines += [f"- **{s.display_name}**：{s.description}" for s in load_skills()]
+            return "\n".join(lines)
+        matched = match_prefix(args)
+        if matched is None:
+            return None  # 「策略选股今天选了什么」这类不是指定策略，交给问股
+        skill, question = matched
+        if not question:
+            regimes = f"\n适配大盘环境：{'、'.join(skill.market_regimes)}" if skill.market_regimes else ""
+            return f"### {skill.display_name}\n\n{skill.description}{regimes}\n\n用法：策略 {skill.display_name} 宁德时代能买吗"
+        return self._chat(message, question, progress, perspective=skill.display_name)
 
     def _market(self, message: BotMessage, args: str, progress) -> str:
         from src.services.market_review import render_markdown
@@ -254,7 +330,7 @@ class CommandRouter:
 
         return StockChatSession(self.config)
 
-    def _chat(self, message: BotMessage, question: str, progress) -> str:
+    def _chat(self, message: BotMessage, question: str, progress, perspective: str | None = None) -> str:
         session = self._session(message.session_key)
         notified: list[str] = []
 
@@ -264,7 +340,10 @@ class CommandRouter:
                 progress(text + "…")
 
         with session.lock:  # 同一会话的问题排队回答，保证上下文顺序
-            turn = session.chat.ask(question, progress=notify_once)
+            if perspective:
+                turn = session.chat.ask(question, perspective, progress=notify_once)
+            else:
+                turn = session.chat.ask(question, progress=notify_once)
         if turn.error:
             return turn.error
         return turn.answer

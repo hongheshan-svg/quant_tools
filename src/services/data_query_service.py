@@ -16,10 +16,11 @@ from src.database.models import (
     LimitUpStock,
     SentimentAnalysis,
     StockDaily,
+    StockDiagnosis,
     StockScore,
     TradeSignal,
 )
-from src.utils.stock_code import prefixed_code
+from src.utils.stock_code import bare_code, prefixed_code
 
 HIGH_IMPORTANCE_THRESHOLD = 7
 MEDIUM_IMPORTANCE_THRESHOLD = 4
@@ -35,6 +36,32 @@ class DataQueryService:
     def __init__(self, db_path: str | None = None):
         config = load_config()
         self.db_path = db_path or config.get("database", {}).get("sqlite_path", "data/quant.db")
+
+    def diagnosis_history(self, code: str, limit: int = 5) -> list[dict]:
+        """某只股票最近几次 AI 诊断（新的在前）：时间、行情日、操作建议、评分、一句话结论。"""
+        import json
+
+        from src.analyzers.decision import normalize_action
+
+        with get_db_session(self.db_path) as session:
+            rows = (
+                session.query(StockDiagnosis).filter(StockDiagnosis.code == bare_code(code))
+                .order_by(StockDiagnosis.created_at.desc(), StockDiagnosis.id.desc()).limit(limit).all()
+            )
+            result = []
+            for r in rows:
+                try:
+                    detail = json.loads(r.result_json or "{}")
+                except ValueError:
+                    detail = {}
+                result.append({
+                    "created_at": r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "",
+                    "trade_date": r.trade_date or "",
+                    "action": normalize_action(r.action) or normalize_action(detail.get("action_label")) or "",
+                    "score": r.score,
+                    "summary": str(detail.get("one_sentence") or ""),
+                })
+        return result
 
     def get_dashboard_snapshot(self, for_date: str | None = None) -> dict:
         """获取桌面首页所需的完整数据快照。"""

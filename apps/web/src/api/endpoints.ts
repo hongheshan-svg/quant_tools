@@ -46,6 +46,7 @@ export const api = {
   backtest: (days = 60) => http.post<T.Task<T.BacktestReport>>(`/screening/backtest?days=${days}`),
 
   // 问股
+  skills: () => http.get<T.ChatSkill[]>('/chat/skills'),
   perspectives: () => http.get<Record<string, string>>('/chat/perspectives'),
   chatSessions: () => http.get<T.ChatSessionSummary[]>('/chat/sessions'),
   createChat: (perspective: string) => http.post<T.ChatSession>('/chat/sessions', { perspective }),

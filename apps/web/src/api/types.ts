@@ -399,6 +399,17 @@ export interface DiagnosisOutcomes {
 
 // ---------- 问股 ----------
 
+export interface ChatSkill {
+  name: string
+  display_name: string
+  description: string
+  category: string
+  aliases: string[]
+  market_regimes: string[]
+  source: string
+  instructions: string
+}
+
 export interface ChatTurn {
   question: string
   answer: string

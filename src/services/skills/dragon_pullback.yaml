@@ -1,0 +1,15 @@
+name: dragon_pullback
+display_name: 龙回头
+description: 前期多板龙头回调后缩量企稳，二次启动时介入。
+category: pattern
+aliases: [龙回头战法, 强势回调]
+market_regimes: [均衡, 进攻]
+priority: 20
+instructions: |
+  按龙回头的标准判断：
+  - 判断标准：limit_up_history 确认前期有 3 板以上或多次涨停的龙头身份；daily_bars 看回调幅度（8%~25% 较理想，
+    超过 35% 说明龙头地位已破）；technical 看是否缩量回踩 MA10/MA20 并企稳；theme 看原主线是否仍在（退潮则放弃）。
+  - 入场条件：回踩到 MA10/MA20 附近缩量止跌，出现放量阳线或再度涨停的转强信号时介入；fund_flow 主力转为净流入更佳。
+  - 出场条件：再创新高附近分批止盈；止损：放量跌破 MA20 或回调低点，一般 -6% 以内。
+  - 回避：主线已退潮、回调过程中放量下跌、公告有重大利空（news）、大盘冰点。
+  - 对结论的影响：龙头身份、缩量企稳、主线延续三者同时满足才看多；缺主线延续降为观望。

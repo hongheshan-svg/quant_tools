@@ -216,6 +216,12 @@ class PipelineService:
 
         return StockDiagnosisService(self.config).latest(code)
 
+    def diagnosis_history(self, code: str, limit: int = 5) -> list[dict[str, Any]]:
+        """某只股票最近几次 AI 诊断（新的在前）。"""
+        from src.services.data_query_service import DataQueryService
+
+        return DataQueryService(self.db_path).diagnosis_history(code, limit)
+
     def main_themes(self, dimension: str = "concept") -> list[dict[str, Any]]:
         """近 5 日涨停池量化的主线（阶段、热度、梯队、龙头）；dimension 为 concept（题材）或 industry（行业）。"""
         from src.analyzers.theme_tracker import ThemeTracker
