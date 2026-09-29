@@ -23,6 +23,16 @@ def _skip_non_trade_day(config: dict, job_name: str) -> bool:
     return True
 
 
+def _report_error(config: dict, source: str, error: Exception) -> None:
+    """任务出错时推送系统错误通知（限频；推送失败不影响任务）。"""
+    try:
+        from src.services.system_alerts import report_error
+
+        report_error(config, source, error)
+    except Exception as e:
+        logger.error(f"系统错误推送异常: {e}")
+
+
 def _run_hot_search_collection(config: dict):
     """执行热搜采集任务"""
     from src.collectors.douyin import DouyinCollector
@@ -55,6 +65,7 @@ def _run_hot_search_collection(config: dict):
                 bulk_insert(records, config.get("database", {}).get("sqlite_path", "data/quant.db"))
         except Exception as e:
             logger.error(f"热搜采集任务异常 [{collector.SOURCE_NAME}]: {e}")
+            _report_error(config, "热搜数据采集", e)
 
 
 def _run_cailianshe_collection(config: dict):
@@ -82,6 +93,7 @@ def _run_cailianshe_collection(config: dict):
             bulk_insert(records, config.get("database", {}).get("sqlite_path", "data/quant.db"))
     except Exception as e:
         logger.error(f"财联社采集任务异常: {e}")
+        _report_error(config, "财联社快讯采集", e)
 
 
 def _run_rss_collection(config: dict):
@@ -101,6 +113,7 @@ def _run_rss_collection(config: dict):
         logger.info(f"RSS 资讯入库 {added} 条（抓到 {len(items)} 条）")
     except Exception as e:
         logger.error(f"RSS 采集任务异常: {e}")
+        _report_error(config, "RSS 资讯源采集", e)
     finally:
         collector.close()
 
@@ -115,6 +128,7 @@ def _run_stock_data_collection(config: dict):
         collector.safe_collect()
     except Exception as e:
         logger.error(f"行情数据采集任务异常: {e}")
+        _report_error(config, "行情数据采集", e)
         return
 
     # 行情更新后检查模拟盘持仓的止损止盈
@@ -126,6 +140,7 @@ def _run_stock_data_collection(config: dict):
             execution.generate_exit_orders()
     except Exception as e:
         logger.error(f"止损止盈检查异常: {e}")
+        _report_error(config, "止损止盈检查", e)
 
     # 盘中提醒（封板/炸板/跌破止损/大跌/自定义规则）
     try:
@@ -134,6 +149,7 @@ def _run_stock_data_collection(config: dict):
         AlertService(config).run()
     except Exception as e:
         logger.error(f"盘中提醒检查异常: {e}")
+        _report_error(config, "盘中提醒检查", e)
 
 
 def _run_global_data_collection(config: dict):
@@ -147,6 +163,7 @@ def _run_global_data_collection(config: dict):
             collector.safe_collect()
         except Exception as e:
             logger.error(f"国际数据采集异常 [{CollectorClass.__name__}]: {e}")
+            _report_error(config, "国际数据采集", e)
 
 
 def _run_daily_analysis(config: dict):
@@ -180,6 +197,7 @@ def _run_daily_analysis(config: dict):
         logger.info(f"===== 每日分析完成, Top{len(top_stocks)}选股已生成 =====")
     except Exception as e:
         logger.error(f"每日分析任务异常: {e}")
+        _report_error(config, "每日综合分析", e)
 
     # 5. 全市场策略选股（结果供 AI 涨停预测参考，并统计各策略的次日表现）
     screening = config.get("screening", {})
@@ -193,10 +211,12 @@ def _run_daily_analysis(config: dict):
                 _run_strategy_backtest_if_due(config, interval)
             except Exception as e:
                 logger.error(f"策略回测任务异常: {e}")
+                _report_error(config, "策略回测", e)
         try:
             StrategyScreener(config).run()
         except Exception as e:
             logger.error(f"策略选股任务异常: {e}")
+            _report_error(config, "策略选股", e)
 
 
 def _run_strategy_backtest_if_due(config: dict, interval_days: int) -> bool:
@@ -223,6 +243,7 @@ def _run_signal_generation(config: dict):
         logger.info("===== 交易信号生成完成 =====")
     except Exception as e:
         logger.error(f"信号生成任务异常: {e}")
+        _report_error(config, "每日信号生成", e)
         return
 
     # AI 研判：给 Top 评分股写入 买入/观望/回避，观望和回避的信号不会生成订单
@@ -233,6 +254,7 @@ def _run_signal_generation(config: dict):
             TradeAdvisor(config).advise_top_stocks(date.today().strftime("%Y-%m-%d"))
         except Exception as e:
             logger.error(f"AI 研判任务异常: {e}")
+            _report_error(config, "AI 研判", e)
 
     # 信号 → 待确认订单（开启 trading.auto_confirm 时直接在模拟盘成交）
     try:
@@ -243,6 +265,7 @@ def _run_signal_generation(config: dict):
             execution.execute_signals(signal_date=date.today().strftime("%Y-%m-%d"))
     except Exception as e:
         logger.error(f"交易执行任务异常: {e}")
+        _report_error(config, "交易执行", e)
 
 
 def _run_daily_report(config: dict):
@@ -256,6 +279,7 @@ def _run_daily_report(config: dict):
             MarketReviewService(config).generate()
         except Exception as e:
             logger.error(f"大盘复盘任务异常: {e}")
+            _report_error(config, "大盘复盘", e)
     if not config.get("notifier", {}).get("daily_report_enabled", True):
         return
     from src.services.daily_report import DailyReportService
@@ -264,6 +288,7 @@ def _run_daily_report(config: dict):
         DailyReportService(config).push()
     except Exception as e:
         logger.error(f"每日报告推送异常: {e}")
+        _report_error(config, "每日报告推送", e)
 
 
 def _run_watchlist_report(config: dict):
@@ -278,6 +303,20 @@ def _run_watchlist_report(config: dict):
         WatchlistReportService(config).run()
     except Exception as e:
         logger.error(f"自选股决策仪表盘任务异常: {e}")
+        _report_error(config, "自选股决策仪表盘", e)
+
+
+def _run_alert_digest(config: dict):
+    """盘中提醒日报：汇总当天的提醒记录并推送。"""
+    if _skip_non_trade_day(config, "盘中提醒日报"):
+        return
+    try:
+        from src.services.alert_service import AlertService
+
+        AlertService(config).digest()
+    except Exception as e:
+        logger.error(f"盘中提醒日报异常: {e}")
+        _report_error(config, "盘中提醒日报", e)
 
 
 def _run_self_learning(config: dict):
@@ -293,6 +332,7 @@ def _run_self_learning(config: dict):
         logger.info(f"===== 系统自学习完成: {result} =====")
     except Exception as e:
         logger.error(f"自学习任务异常: {e}")
+        _report_error(config, "每日自学习", e)
 
 
 # 定时任务清单：任务 id -> (中文名, 任务函数)；build_scheduler 注册、Web 定时任务面板和「立即运行」共用
@@ -307,6 +347,7 @@ JOBS: dict[str, tuple[str, Callable[[dict], None]]] = {
     "daily_report": ("大盘复盘与日报", _run_daily_report),
     "watchlist_report": ("自选股决策仪表盘", _run_watchlist_report),
     "self_learning": ("每日自学习", _run_self_learning),
+    "alert_digest": ("盘中提醒日报", _run_alert_digest),   # 仅 alerts.daily_digest 为真时注册
 }
 
 _WEEKDAYS = {"mon-fri": "工作日", "*": "每天"}
@@ -464,6 +505,18 @@ def build_scheduler(config: dict, scheduler=None):
         id="self_learning",
         name=JOBS["self_learning"][0],
     )
+
+    # 盘中提醒日报（可选，默认 15:10）
+    alerts_cfg = config.get("alerts") or {}
+    if alerts_cfg.get("daily_digest", False):
+        hour, minute = str(alerts_cfg.get("digest_time") or "15:10").split(":")
+        scheduler.add_job(
+            _run_alert_digest,
+            trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
+            args=[config],
+            id="alert_digest",
+            name=JOBS["alert_digest"][0],
+        )
 
     logger.info(f"调度器已配置 {len(scheduler.get_jobs())} 个任务:")
     for job in scheduler.get_jobs():

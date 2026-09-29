@@ -51,7 +51,10 @@ CHANNEL_LABELS = {
     "telegram": "Telegram", "discord": "Discord", "slack": "Slack", "pushplus": "PushPlus", "serverchan": "Server酱",
     "ntfy": "ntfy", "gotify": "Gotify", "pushover": "Pushover", "bark": "Bark", "webhook": "自定义 Webhook",
 }
-MESSAGE_KINDS = {"daily_report": "每日报告", "alert": "盘中提醒", "watchlist": "自选股仪表盘", "chat": "AI 问股"}
+MESSAGE_KINDS = {"daily_report": "每日报告", "alert": "盘中提醒", "watchlist": "自选股仪表盘", "chat": "AI 问股",
+                 "system_error": "系统错误"}
+# 支持发送图片（send_image）的渠道；notifier.image.channels 只有其中的渠道生效
+IMAGE_CHANNELS = {"wechat", "telegram", "email", "discord", "ntfy"}
 WEBHOOK_HOSTS = {"wechat": ("qyapi.weixin.qq.com",), "dingtalk": ("oapi.dingtalk.com",), "feishu": ("open.feishu.cn", "open.larksuite.com")}
 
 
@@ -139,6 +142,36 @@ def enabled_channels(config: dict, kind: str | None = None) -> list[str]:
     return [c for c in channels if c in route] if route else channels
 
 
+def _use_image(config: dict, name: str, kind: str | None, content: str) -> bool:
+    """该渠道这条消息是否应发分享图：渠道、消息类型都在 notifier.image 里，且字数不超过 max_chars。"""
+    if name not in IMAGE_CHANNELS:
+        return False
+    cfg = (config.get("notifier", {}) or {}).get("image") or {}
+    if name not in (cfg.get("channels") or []):
+        return False
+    if kind not in (cfg.get("kinds") if cfg.get("kinds") is not None else ["daily_report", "watchlist"]):
+        return False
+    try:
+        limit = int(cfg.get("max_chars") or 8000)
+    except (TypeError, ValueError):
+        limit = 8000
+    return len(content) <= limit
+
+
+def _send_as_image(notifier: Any, name: str, title: str, content: str) -> bool:
+    """渲染分享图并发送；渲染失败或发送失败返回 False，由调用方回退成文字。"""
+    try:
+        from src.services.report_image import render_markdown_image
+
+        png = render_markdown_image(title, content)
+        if notifier.send_image(title, png):
+            return True
+        logger.warning(f"[{name}] 图片推送失败，回退为文字: {title}")
+    except Exception as e:
+        logger.warning(f"[{name}] 生成分享图失败，回退为文字: {e}")
+    return False
+
+
 def broadcast(config: dict, title: str, content: str, kind: str | None = None) -> dict[str, bool]:
     """推送到消息类型对应的已启用渠道，返回 {渠道: 是否成功}；单个渠道失败不影响其他渠道。"""
     if os.environ.get("QUANT_NO_NOTIFY"):
@@ -147,7 +180,11 @@ def broadcast(config: dict, title: str, content: str, kind: str | None = None) -
     results = {}
     for name in enabled_channels(config, kind):
         try:
-            results[name] = NOTIFIERS[name](config).send(title, content)
+            notifier = NOTIFIERS[name](config)
+            if _use_image(config, name, kind, content) and _send_as_image(notifier, name, title, content):
+                results[name] = True
+                continue
+            results[name] = notifier.send(title, content)
         except Exception as e:
             logger.error(f"[{name}] 推送异常: {e}")
             results[name] = False

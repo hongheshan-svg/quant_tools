@@ -9,6 +9,7 @@ from src.notifier.base import markdown_to_text, send_paged
 
 # 单条上限 4096 字符，按字节取保守值
 MAX_CONTENT_BYTES = 3800
+MAX_IMAGE_BYTES = 10 * 1024 * 1024   # sendPhoto 上限 10MB
 
 
 class TelegramNotifier:
@@ -31,6 +32,28 @@ class TelegramNotifier:
             logger.warning("Telegram配置不完整")
             return False
         return send_paged(title, content, MAX_CONTENT_BYTES, self._send_one)
+
+    def send_image(self, title: str, png: bytes) -> bool:
+        """sendPhoto 发送图片（multipart，caption 为标题）；超过 10MB、未配置或失败返回 False，不抛异常。"""
+        if not self.enabled or not (self.bot_token and self.chat_id):
+            return False
+        if len(png) > MAX_IMAGE_BYTES:
+            logger.warning("Telegram图片超过 10MB，改发文字: {}", title)
+            return False
+        try:
+            data = {"chat_id": self.chat_id, "caption": title[:1024]}
+            if self.thread_id.isdigit():
+                data["message_thread_id"] = self.thread_id
+            resp = httpx.post(f"{self.api_base}/bot{self.bot_token}/sendPhoto", data=data,
+                              files={"photo": ("report.png", png, "image/png")}, timeout=30)
+            if resp.json().get("ok") is True:
+                logger.info("Telegram图片推送成功: {}", title)
+                return True
+            logger.error("Telegram图片推送失败: {} {}", resp.status_code, resp.text[:200])
+            return False
+        except Exception as e:
+            logger.error("Telegram图片推送异常: {}", e)
+            return False
 
     def _send_one(self, title: str, content: str) -> bool:
         try:

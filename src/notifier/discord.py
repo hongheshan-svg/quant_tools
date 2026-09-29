@@ -29,6 +29,22 @@ class DiscordNotifier:
             return False
         return send_paged(title, content, MAX_CONTENT_BYTES, self._send_one)
 
+    def send_image(self, title: str, png: bytes) -> bool:
+        """Webhook 上传图片文件（multipart，content 为标题）；失败返回 False，不抛异常。"""
+        if not self.enabled or not self.webhook_url:
+            return False
+        try:
+            resp = httpx.post(self.webhook_url, data={"content": f"**{title}**"},
+                              files={"file": ("report.png", png, "image/png")}, timeout=30)
+            if 200 <= resp.status_code < 300:
+                logger.info("Discord图片推送成功: {}", title)
+                return True
+            logger.error("Discord图片推送失败: {} {}", resp.status_code, resp.text[:200])
+            return False
+        except Exception as e:
+            logger.error("Discord图片推送异常: {}", e)
+            return False
+
     def _send_one(self, title: str, content: str) -> bool:
         try:
             resp = httpx.post(self.webhook_url, json={"content": f"**{title}**\n\n{content}"}, timeout=10)

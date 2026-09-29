@@ -430,7 +430,7 @@ def test_intelligence_source(body: IntelligenceTestBody, config: dict = Depends(
 
 @router.get("/settings/notifier")
 def get_notifier_settings(config: dict = Depends(get_config)) -> dict[str, Any]:
-    from src.notifier import CHANNEL_FIELDS, CHANNEL_LABELS, MESSAGE_KINDS, secret_fields
+    from src.notifier import CHANNEL_FIELDS, CHANNEL_LABELS, IMAGE_CHANNELS, MESSAGE_KINDS, secret_fields
 
     notifier = copy.deepcopy(config.get("notifier") or {})
     for name in CHANNEL_LABELS:
@@ -440,7 +440,8 @@ def get_notifier_settings(config: dict = Depends(get_config)) -> dict[str, Any]:
         for key in secret_fields(name):
             if section.get(key):
                 section[key] = MASK
-    return {"notifier": notifier, "channels": CHANNEL_LABELS, "kinds": MESSAGE_KINDS, "fields": CHANNEL_FIELDS}
+    return {"notifier": notifier, "channels": CHANNEL_LABELS, "kinds": MESSAGE_KINDS, "fields": CHANNEL_FIELDS,
+            "image_channels": sorted(IMAGE_CHANNELS)}
 
 
 class NotifierBody(BaseModel):

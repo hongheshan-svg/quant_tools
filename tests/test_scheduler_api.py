@@ -14,7 +14,7 @@ def test_jobs_cover_registered_ids():
     built = sched.build_scheduler({}, BackgroundScheduler())
     ids = {j.id for j in built.get_jobs()}
     assert ids <= set(sched.JOBS)
-    assert set(sched.JOBS) - ids == {"rss"}     # 没有启用的资讯源时不注册 rss
+    assert set(sched.JOBS) - ids == {"rss", "alert_digest"}     # 没有启用资讯源、盘中提醒日报时不注册 rss / alert_digest
     for job in built.get_jobs():
         assert job.name == sched.JOBS[job.id][0]
         assert callable(sched.JOBS[job.id][1])
@@ -23,7 +23,7 @@ def test_jobs_cover_registered_ids():
 def test_describe_jobs_with_scheduler():
     built = sched.build_scheduler({}, BackgroundScheduler())
     rows = {r["id"]: r for r in sched.describe_jobs(built)}
-    assert set(rows) == set(sched.JOBS) - {"rss"}
+    assert set(rows) == set(sched.JOBS) - {"rss", "alert_digest"}
     for key in ("hot_search", "cailianshe", "stock_data", "global_data"):
         assert "分钟" in rows[key]["trigger"]
     for key in ("daily_analysis", "signal_generation", "daily_report", "watchlist_report", "self_learning"):
@@ -42,7 +42,7 @@ RSS_CONFIG = {"intelligence": {"enabled": True, "sources": [
 
 def test_rss_job_registered_with_enabled_source():
     built = sched.build_scheduler(RSS_CONFIG, BackgroundScheduler())
-    assert {j.id for j in built.get_jobs()} == set(sched.JOBS)
+    assert {j.id for j in built.get_jobs()} == set(sched.JOBS) - {"alert_digest"}
     rows = {r["id"]: r for r in sched.describe_jobs(built)}
     assert rows["rss"]["name"] == sched.JOBS["rss"][0]
     assert "分钟" in rows["rss"]["trigger"]

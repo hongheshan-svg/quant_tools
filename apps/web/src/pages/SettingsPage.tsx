@@ -320,6 +320,17 @@ function NotifierForm() {
     setForm((f) => ({ ...f, routes: { ...(f.routes ?? {}), [kind]: [...next] } }))
   }
   const email = form.email ?? {}
+  const image = form.image ?? {}
+  const imageKinds = new Set<string>(image.kinds ?? ['daily_report', 'watchlist'])
+  const imageChannels = new Set<string>(image.channels ?? [])
+  const toggleImage = (field: 'channels' | 'kinds', value: string) => {
+    const next = new Set<string>(field === 'channels' ? imageChannels : imageKinds)
+    if (next.has(value)) next.delete(value)
+    else next.add(value)
+    setForm((f) => ({ ...f, image: { ...(f.image ?? {}), [field]: [...next] } }))
+  }
+  const setNested = (section: string, key: string, value: unknown) => setForm((f) => ({ ...f, [section]: { ...(f[section] ?? {}), [key]: value } }))
+  const systemError = form.system_error ?? {}
   const extraChannels = Object.keys(data.fields ?? {})
   const renderField = (ch: string, f: NotifierField) => {
     const value = form[ch]?.[f.key] ?? f.default ?? ''
@@ -416,6 +427,46 @@ function NotifierForm() {
           <Field label="免打扰时段（如 22:00-08:00，期间只推送紧急提醒）">
             <Input value={form.quiet_hours_text ?? (form.quiet_hours ?? []).join('-')} onChange={(e) => setForm((f) => ({ ...f, quiet_hours_text: e.target.value }))} />
           </Field>
+        </div>
+      </fieldset>
+      <fieldset className="space-y-2 rounded-md border border-line p-3">
+        <legend className="px-1 text-sm text-accent">图片推送（把报告渲染成分享图发送，失败时自动改发文字）</legend>
+        <div className="flex flex-wrap items-center gap-4 text-sm">
+          <span className="text-muted">渠道</span>
+          {(data.image_channels ?? []).map((ch) => (
+            <label key={ch} className="flex items-center gap-1">
+              <input type="checkbox" aria-label={`图片渠道-${data.channels[ch] ?? ch}`} checked={imageChannels.has(ch)} onChange={() => toggleImage('channels', ch)} />
+              {data.channels[ch] ?? ch}
+            </label>
+          ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-4 text-sm">
+          <span className="text-muted">消息类型</span>
+          {Object.entries(data.kinds).map(([kind, label]) => (
+            <label key={kind} className="flex items-center gap-1">
+              <input type="checkbox" aria-label={`图片类型-${label}`} checked={imageKinds.has(kind)} onChange={() => toggleImage('kinds', kind)} />
+              {label}
+            </label>
+          ))}
+        </div>
+        <div className="max-w-xs">
+          <Field label="最大字数（超过时仍发文字）">
+            <Input type="number" aria-label="图片最大字数" value={image.max_chars ?? 8000} onChange={(e) => setNested('image', 'max_chars', e.target.value === '' ? '' : Number(e.target.value))} />
+          </Field>
+        </div>
+      </fieldset>
+      <fieldset className="space-y-2 rounded-md border border-line p-3">
+        <legend className="px-1 text-sm text-accent">系统错误通知（定时任务出错时推送，路由见上表「系统错误」）</legend>
+        <div className="flex flex-wrap items-end gap-4">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" aria-label="系统错误通知" checked={systemError.enabled ?? true} onChange={(e) => setNested('system_error', 'enabled', e.target.checked)} />
+            启用
+          </label>
+          <div className="w-40">
+            <Field label="同一来源冷却（分钟）">
+              <Input type="number" aria-label="系统错误冷却分钟" min="0" value={systemError.cooldown_minutes ?? 60} onChange={(e) => setNested('system_error', 'cooldown_minutes', e.target.value === '' ? '' : Number(e.target.value))} />
+            </Field>
+          </div>
         </div>
       </fieldset>
       {check && (

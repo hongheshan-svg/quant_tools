@@ -3,7 +3,7 @@ import { api } from '@/api/endpoints'
 import type { AlertRow, AlertRule, AlertSettings } from '@/api/types'
 import { AlertRuleEditor, describeRule } from '@/components/AlertRuleEditor'
 import { DataTable, type Column } from '@/components/DataTable'
-import { Badge, Button, Card, ErrorBox, Field, Input, PageHeader, Spinner, Tabs } from '@/components/ui'
+import { Badge, Button, Card, ErrorBox, Field, Input, PageHeader, Select, Spinner, Tabs } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
 import { useTask } from '@/hooks/useTask'
 import { toast } from '@/stores/toast'
@@ -235,6 +235,27 @@ function SettingsPanel() {
         {num('big_drop_pct', '大跌阈值（%）', '跌幅达到该值提醒，填负数，如 -7')}
         {num('near_stop_pct', '接近止损（%）', '持仓现价距止损价不到该百分比时提醒')}
         {num('regime_score_drop', '大盘评分下降（分）', '比前一交易日下降该分数以上时提醒')}
+        <Field label="最低推送级别" hint="低于该级别的提醒只记录不推送；紧急提醒永远推送">
+          <Select
+            className="w-full"
+            aria-label="最低推送级别"
+            value={form.min_severity ?? 'info'}
+            onChange={(e) => setForm({ ...form, min_severity: e.target.value as AlertSettings['min_severity'] })}
+          >
+            <option value="info">全部（提示及以上）</option>
+            <option value="warning">警告及以上</option>
+            <option value="critical">仅紧急</option>
+          </Select>
+        </Field>
+        <div className="space-y-2">
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" aria-label="推送盘中提醒日报" checked={!!form.daily_digest} onChange={(e) => setForm({ ...form, daily_digest: e.target.checked })} />
+            推送盘中提醒日报
+          </label>
+          <Field label="日报时间（HH:MM，工作日）" hint="修改后需重启服务生效；当天没有提醒时不推送">
+            <Input aria-label="日报时间" value={form.digest_time ?? '15:10'} onChange={(e) => setForm({ ...form, digest_time: e.target.value })} />
+          </Field>
+        </div>
         <div className="sm:col-span-2">
           <Field label="额外关注的股票代码" hint="逗号分隔，如 600519, 300750；自选股、持仓、今日信号股会自动监控">
             <Input aria-label="额外关注的股票代码" value={watch} onChange={(e) => setWatch(e.target.value)} />

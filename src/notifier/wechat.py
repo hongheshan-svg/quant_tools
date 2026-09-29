@@ -2,6 +2,9 @@
 企业微信机器人推送
 """
 
+import base64
+import hashlib
+
 import httpx
 from loguru import logger
 
@@ -9,6 +12,8 @@ from src.notifier.base import paged_titles, split_by_bytes
 
 # 企业微信 markdown 单条上限 4096 字节，预留标题和页码
 MAX_CONTENT_BYTES = 3800
+# 企业微信图片消息上限 2MB（base64 编码前）
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
 
 
 class WeChatNotifier:
@@ -42,6 +47,26 @@ class WeChatNotifier:
         # 逐条发送，某条失败不影响后续分段
         results = [self._send_one(t, c) for t, c in zip(paged_titles(title, len(chunks)), chunks)]
         return all(results)
+
+    def send_image(self, title: str, png: bytes) -> bool:
+        """发送图片消息（base64 + md5）；图片超过 2MB、未启用或失败返回 False，不抛异常。"""
+        if not self.enabled or not self.webhook_url:
+            return False
+        if len(png) > MAX_IMAGE_BYTES:
+            logger.warning("企业微信图片超过 2MB，改发文字: {}", title)
+            return False
+        payload = {"msgtype": "image", "image": {
+            "base64": base64.b64encode(png).decode("ascii"), "md5": hashlib.md5(png).hexdigest()}}
+        try:
+            data = httpx.post(self.webhook_url, json=payload, timeout=20).json()
+            if data.get("errcode") == 0:
+                logger.info(f"企业微信图片推送成功: {title}")
+                return True
+            logger.error(f"企业微信图片推送失败: {data}")
+            return False
+        except Exception as e:
+            logger.error(f"企业微信图片推送异常: {e}")
+            return False
 
     def _send_one(self, title: str, content: str) -> bool:
         payload = {

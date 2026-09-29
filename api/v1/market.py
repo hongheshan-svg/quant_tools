@@ -127,10 +127,12 @@ def check_alerts(tasks: TaskManager = Depends(get_tasks), pipeline: PipelineServ
     return tasks.submit("check_alerts", pipeline.check_alerts, dedupe_key="check_alerts", label="检查盘中提醒")
 
 
-ALERT_SETTING_KEYS = ("enabled", "cooldown_minutes", "big_drop_pct", "near_stop_pct", "market_regime", "regime_score_drop", "watchlist")
+ALERT_SETTING_KEYS = ("enabled", "cooldown_minutes", "big_drop_pct", "near_stop_pct", "market_regime", "regime_score_drop", "watchlist",
+                      "min_severity", "daily_digest", "digest_time")
 ALERT_SETTING_DEFAULTS: dict[str, Any] = {
     "enabled": True, "cooldown_minutes": 30, "big_drop_pct": -7, "near_stop_pct": 2,
     "market_regime": True, "regime_score_drop": 15, "watchlist": [],
+    "min_severity": "info", "daily_digest": False, "digest_time": "15:10",
 }
 ALERT_SETTING_LABELS = {
     "cooldown_minutes": "冷却时间", "big_drop_pct": "大跌阈值", "near_stop_pct": "接近止损距离", "regime_score_drop": "大盘评分下降",
@@ -206,7 +208,15 @@ def save_alert_settings(request: Request, body: dict[str, Any] = Body(...)) -> d
         if key not in body:
             continue
         v = body[key]
-        if key in ("enabled", "market_regime"):
+        if key == "min_severity":
+            if v not in ("info", "warning", "critical"):
+                raise HTTPException(status_code=422, detail="最低推送级别必须是 info、warning、critical 之一")
+        elif key == "digest_time":
+            import re
+            if not isinstance(v, str) or not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", v.strip()):
+                raise HTTPException(status_code=422, detail="日报时间格式应为 HH:MM，如 15:10")
+            v = v.strip()
+        elif key in ("enabled", "market_regime", "daily_digest"):
             if not isinstance(v, bool):
                 raise HTTPException(status_code=422, detail=f"{key} 必须是布尔值")
         elif key == "watchlist":

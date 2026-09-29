@@ -217,6 +217,16 @@ notifier:
   daily_report_enabled: true
   # 免打扰时段（如 ["22:00", "08:00"]，可跨午夜），期间只推送紧急提醒；为空表示不启用
   quiet_hours: []
+  # 系统错误推送：定时任务出错时推送到「系统错误」类消息的渠道（notifier.routes.system_error 可指定渠道）
+  system_error:
+    enabled: true
+    cooldown_minutes: 60     # 同一来源的错误在冷却期内只推送一次
+  # 分享图推送：下面渠道的指定消息类型渲染成图片发送（渠道可选 wechat/telegram/email/discord/ntfy）；
+  # 图片生成或发送失败、内容超过 max_chars 字时仍发文字
+  image:
+    channels: []
+    kinds: [daily_report, watchlist]
+    max_chars: 8000
   # 企业微信
   wechat:
     enabled: false
@@ -427,6 +437,9 @@ alerts:
   near_stop_pct: 2         # 持仓现价距止损价不到该百分比时提醒「接近止损」（每只每天一次）
   market_regime: true      # 大盘环境比前一交易日降档（如均衡→防守）时提醒，冰点为紧急提醒
   regime_score_drop: 15    # 大盘评分比前一交易日下降该分数以上时提醒
+  min_severity: info       # 最低推送级别 info | warning | critical；低于该级别的提醒只记录不推送（紧急提醒永远推送）
+  daily_digest: false      # 收盘后推送当天的盘中提醒日报（汇总，没有提醒时不推送）
+  digest_time: "15:10"     # 日报推送时间（工作日，非交易日跳过）
 
 # --- 模拟盘组合风险（【模拟交易】页） ---
 portfolio_risk:

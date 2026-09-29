@@ -34,7 +34,7 @@ from src.database.db import get_db_session
 from src.analyzers.indicators import crossed, kdj, macd, rsi, sma
 from src.database.models import AlertRecord, StockDaily, TradeSignal
 from src.notifier import broadcast, enabled_channels
-from src.notifier.noise import NoiseFilter
+from src.notifier.noise import SEVERITY_RANK, NoiseFilter
 from src.utils.stock_code import bare_code, code_candidates, daily_limit_pct
 
 LIMIT_TOLERANCE = 0.2       # 涨幅距涨停幅度 0.2 个百分点以内视为封板
@@ -184,6 +184,8 @@ class AlertService:
         self.near_stop_pct = float(cfg.get("near_stop_pct", 2))
         self.market_alerts = bool(cfg.get("market_regime", True))
         self.regime_score_drop = float(cfg.get("regime_score_drop", 15))
+        min_severity = str(cfg.get("min_severity") or "info")
+        self.min_severity = min_severity if min_severity in VALID_SEVERITIES else "info"
         _noise.cooldown = timedelta(minutes=float(cfg.get("cooldown_minutes", 30)))
         _noise.quiet_hours = (self.config.get("notifier", {}) or {}).get("quiet_hours") or []
 
@@ -201,6 +203,8 @@ class AlertService:
             reason = _noise.check(ev.key, ev.severity, now, cooldown)
             if reason == "冷却中":
                 continue
+            if not reason and SEVERITY_RANK.get(ev.severity, 0) < SEVERITY_RANK[self.min_severity]:
+                reason = "低于推送级别"
             if not reason and not can_push:
                 reason = "未启用推送"
             fresh.append((ev, reason))
@@ -496,6 +500,52 @@ class AlertService:
                     observed=ev.observed, threshold=ev.threshold, notified=pushed and not reason,
                     suppressed_reason=reason or ("" if pushed else "推送失败"), triggered_at=now,
                 ))
+
+    def digest(self, day: str | None = None, push: bool = True) -> dict[str, Any]:
+        """汇总某个交易日（默认今天）的提醒记录；有记录且 push 为真时推送「盘中提醒日报」（kind=alert）。"""
+        day = day or date.today().strftime("%Y-%m-%d")
+        start = datetime.strptime(day, "%Y-%m-%d")
+        with get_db_session(self.db_path) as session:
+            rows = session.query(AlertRecord).filter(
+                AlertRecord.triggered_at >= start, AlertRecord.triggered_at < start + timedelta(days=1),
+            ).order_by(AlertRecord.triggered_at).all()
+            records = [(r.code, r.name, r.alert_type, r.severity, r.message, r.triggered_at) for r in rows]
+        by_type: dict[str, int] = {}
+        by_severity: dict[str, int] = {}
+        stocks: dict[str, dict[str, Any]] = {}
+        critical: list[dict[str, Any]] = []
+        for code, name, kind, severity, message, at in records:
+            label = TYPE_LABELS.get(kind, kind)
+            by_type[label] = by_type.get(label, 0) + 1
+            by_severity[severity] = by_severity.get(severity, 0) + 1
+            if code != MARKET_CODE:
+                entry = stocks.setdefault(code, {"code": code, "name": name or "", "count": 0})
+                entry["count"] += 1
+            if severity == "critical":
+                critical.append({"time": at.strftime("%H:%M"), "code": code, "name": name or "", "type": label, "message": message})
+        top_stocks = sorted(stocks.values(), key=lambda x: (-x["count"], x["code"]))[:5]
+        result: dict[str, Any] = {
+            "day": day, "total": len(records), "by_type": by_type, "by_severity": by_severity,
+            "top_stocks": top_stocks, "critical": critical, "markdown": "", "pushed": False,
+        }
+        if not records:
+            return result
+        lines = [f"## 盘中提醒日报 {day}", "", f"共 {len(records)} 条提醒"]
+        if by_severity:
+            lines.append("- 按级别：" + "、".join(
+                f"{SEVERITY_ICON.get(k, '')}{k} {by_severity[k]}" for k in ("critical", "warning", "info") if k in by_severity))
+        lines.append("- 按类型：" + "、".join(f"{k} {v}" for k, v in sorted(by_type.items(), key=lambda kv: -kv[1])))
+        if top_stocks:
+            lines += ["", "### 提醒最多的股票"]
+            lines += [f"- {x['name']}({x['code']}) {x['count']} 次" for x in top_stocks]
+        if critical:
+            lines += ["", "### 紧急提醒"]
+            lines += [f"- {c['time']} {c['message']}" for c in critical]
+        result["markdown"] = "\n".join(lines)
+        if push and enabled_channels(self.config, "alert"):
+            results = broadcast(self.config, f"盘中提醒日报 {day}", result["markdown"], kind="alert")
+            result["pushed"] = any(results.values())
+        return result
 
     def recent(self, limit: int = 200) -> list[dict[str, Any]]:
         with get_db_session(self.db_path) as session:

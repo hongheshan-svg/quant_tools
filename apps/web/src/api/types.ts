@@ -659,6 +659,9 @@ export interface AlertSettings {
   market_regime: boolean
   regime_score_drop: number
   watchlist: string[]
+  min_severity?: 'info' | 'warning' | 'critical'
+  daily_digest?: boolean
+  digest_time?: string
 }
 
 export interface SourceStatus {
@@ -764,6 +767,7 @@ export interface NotifierSettings {
   channels: Dict<string>
   kinds: Dict<string>
   fields: Dict<NotifierField[]>
+  image_channels?: string[]
 }
 
 export interface SearchSettings {

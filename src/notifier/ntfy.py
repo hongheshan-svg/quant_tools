@@ -31,6 +31,24 @@ class NtfyNotifier:
             return False
         return send_paged(title, content, MAX_CONTENT_BYTES, self._send_one)
 
+    def send_image(self, title: str, png: bytes) -> bool:
+        """POST 二进制图片到 {server}/{topic}，标题走查询参数（避免请求头非 ASCII）；失败返回 False，不抛异常。"""
+        if not self.enabled or not self.topic:
+            return False
+        try:
+            headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
+            headers.update({"Content-Type": "image/png", "Filename": "report.png"})
+            resp = httpx.post(f"{self.server}/{self.topic}", content=png, params={"title": title},
+                              headers=headers, timeout=30)
+            if 200 <= resp.status_code < 300:
+                logger.info("ntfy图片推送成功: {}", title)
+                return True
+            logger.error("ntfy图片推送失败: {} {}", resp.status_code, resp.text[:200])
+            return False
+        except Exception as e:
+            logger.error("ntfy图片推送异常: {}", e)
+            return False
+
     def _send_one(self, title: str, content: str) -> bool:
         try:
             headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
