@@ -7,6 +7,7 @@ llm.backend 设为 openai 时改用 OpenAI SDK 直连（只支持 OpenAI 兼容�
 每次调用（含缓存命中）都记录用量，见 src/analyzers/llm_usage.py。
 """
 
+import base64
 import hashlib
 import json
 import sqlite3
@@ -59,6 +60,7 @@ class LLMClient:
         self.cfg = config or {}
         self.primary_cfg = self.cfg.get("primary", {})
         self.backup_cfg = self.cfg.get("backup", {})
+        self.vision_cfg = self.cfg.get("vision") or {}
 
         # 性能与鲁棒性配置（可在 settings.yaml.llm 下覆盖）
         self.timeout_seconds = int(self.cfg.get("timeout_seconds", 60))
@@ -80,6 +82,7 @@ class LLMClient:
         self.usage_path = self.cfg.get("usage_path", cache_path)
         self.primary_client = self._build_client(self.primary_cfg)
         self.backup_client = self._build_client(self.backup_cfg)
+        self.vision_client = self._build_client(self.vision_cfg)
         self._openai_clients: dict[tuple, Any] = {}
 
     def reload(self, new_config: dict):
@@ -87,6 +90,7 @@ class LLMClient:
         self.cfg = new_config or {}
         self.primary_cfg = self.cfg.get("primary", {})
         self.backup_cfg = self.cfg.get("backup", {})
+        self.vision_cfg = self.cfg.get("vision") or {}
         self.timeout_seconds = int(self.cfg.get("timeout_seconds", 60))
         self.max_retries = int(self.cfg.get("max_retries", 1))
         self.retry_backoff_seconds = float(self.cfg.get("retry_backoff_seconds", 1.5))
@@ -95,6 +99,7 @@ class LLMClient:
         self.pricing = self.cfg.get("pricing") or {}
         self.primary_client = self._build_client(self.primary_cfg)
         self.backup_client = self._build_client(self.backup_cfg)
+        self.vision_client = self._build_client(self.vision_cfg)
         provider = self.primary_cfg.get("provider", "unknown")
         model = self.primary_cfg.get("model", "unknown")
         logger.info(f"LLM 客户端已热重载: provider={provider}, model={model}")
@@ -265,11 +270,48 @@ class LLMClient:
 
         raise RuntimeError("所有LLM模型均调用失败")
 
+    def chat_vision(
+        self,
+        prompt: str,
+        images: "list[tuple[bytes, str]]",
+        system_message: str = "",
+        max_tokens: int | None = None,
+    ) -> str:
+        """图片 + 文字提问（不走响应缓存）。
+
+        路由顺序：llm.vision（已配置时）→ 主模型 → 备用模型，同一路由只试一次。
+        消息用 OpenAI 多段格式，LiteLLM 会转换给 anthropic、gemini。
+        """
+        content: list[dict] = [{"type": "text", "text": prompt}]
+        for data, mime in images:
+            encoded = base64.b64encode(data).decode("ascii")
+            content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}})
+
+        tried: set[tuple] = set()
+        for name, route, cfg in (
+            ("图片识别模型", self.vision_client, self.vision_cfg),
+            ("主力模型", self.primary_client, self.primary_cfg),
+            ("备用模型", self.backup_client, self.backup_cfg),
+        ):
+            if route is None:
+                continue
+            identity = (route.provider, route.model, route.api_base)
+            if identity in tried:
+                continue
+            tried.add(identity)
+            # 图片识别模型没单独配置 token 上限时沿用主力模型的
+            result = self._call(route, {**self.primary_cfg, **cfg} if name == "图片识别模型" else cfg,
+                                content, system_message, None, max_tokens, None)
+            if result is not None:
+                return result
+            logger.warning(f"{name}图片识别失败，尝试下一个模型")
+        raise RuntimeError("图片识别失败：没有可用的模型，或所有模型均调用失败（请确认模型支持图片输入）")
+
     def _call(
         self,
         client: LLMRoute | None,
         cfg: dict,
-        user_message: str,
+        user_message: "str | list",
         system_message: str,
         temperature: float,
         max_tokens: int,

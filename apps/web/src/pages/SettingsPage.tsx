@@ -103,12 +103,14 @@ function LLMSettingsForm() {
   const { data, error, loading, reload } = useApi(api.llmSettings)
   const [primary, setPrimary] = useState<LLMRole>({})
   const [backup, setBackup] = useState<LLMRole>({})
+  const [vision, setVision] = useState<LLMRole>({})
   const [busy, setBusy] = useState('')
 
   useEffect(() => {
     if (data) {
       setPrimary(data.llm.primary ?? {})
       setBackup(data.llm.backup ?? {})
+      setVision(data.llm.vision ?? {})
     }
   }, [data])
 
@@ -130,16 +132,18 @@ function LLMSettingsForm() {
     <div className="space-y-4">
       <RoleEditor title="主力模型" role={primary} platforms={data.platforms} onChange={setPrimary} />
       <RoleEditor title="备用模型（主力失败时切换）" role={backup} platforms={data.platforms} onChange={setBackup} />
+      <RoleEditor title="图片识别模型（可空，留空用主模型）" role={vision} platforms={data.platforms} onChange={setVision} />
       <div className="flex flex-wrap gap-2">
         <Button loading={busy === '主力模型'} onClick={() => test(primary, '主力模型')}>测试主力模型</Button>
         <Button loading={busy === '备用模型'} onClick={() => test(backup, '备用模型')}>测试备用模型</Button>
+        <Button loading={busy === '图片识别模型'} disabled={!vision.model} onClick={() => test(vision, '图片识别模型')}>测试识图连接</Button>
         <Button
           variant="primary"
           loading={busy === 'save'}
           onClick={async () => {
             setBusy('save')
             try {
-              await api.saveLlm({ primary, backup })
+              await api.saveLlm({ primary, backup, vision })
               toast.success('AI 设置已保存')
               void reload()
             } catch (e) {

@@ -24,6 +24,13 @@ llm:
     model: "gpt-4o"
     max_tokens: 4096
     temperature: 0.3
+  # 图片识别模型（截图导入自选股用）：留空时用主模型识别，主模型需支持图片输入，
+  # 如 gpt-4o、Claude、Gemini、qwen-vl、glm-4v；配置后优先使用它，失败再回退主/备用模型
+  vision:
+    provider: ""
+    model: ""
+    api_key: ""
+    base_url: ""
   # 调用方式：litellm（默认，支持 Claude、Gemini、Ollama 本地模型和所有 OpenAI 兼容平台）/ openai（OpenAI SDK 直连）
   backend: litellm
   # 自定义单价（美元/百万 token，[输入, 输出]），用于用量页估算费用；不填时用 LiteLLM 自带的价格表

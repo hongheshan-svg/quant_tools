@@ -490,6 +490,11 @@ export interface ImportResult {
   over_limit: string[]
 }
 
+export interface ImageImportResult {
+  candidates: { code: string; name: string; raw: string }[]
+  unresolved: string[]
+}
+
 // ---------- 交易 ----------
 
 export interface Position {
@@ -667,7 +672,7 @@ export interface LLMRole {
 }
 
 export interface LLMSettings {
-  llm: { primary?: LLMRole; backup?: LLMRole } & Dict
+  llm: { primary?: LLMRole; backup?: LLMRole; vision?: LLMRole } & Dict
   platforms: Dict<{ name: string; base_url: string; models: string[]; default_model: string }>
 }
 

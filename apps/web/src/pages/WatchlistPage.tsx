@@ -1,9 +1,9 @@
 // 自选股：搜索添加、粘贴/文件批量导入、逐只 AI 诊断并推送决策仪表盘
 import { Trash2 } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useRef, useState, type ClipboardEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '@/api/endpoints'
-import type { ImportResult, WatchlistReport, WatchlistRow } from '@/api/types'
+import type { ImageImportResult, ImportResult, WatchlistReport, WatchlistRow } from '@/api/types'
 import { DataTable, type Column } from '@/components/DataTable'
 import { Markdown } from '@/components/Markdown'
 import { StockSearch } from '@/components/StockSearch'
@@ -28,6 +28,11 @@ export function WatchlistPage() {
   const [pasteOpen, setPasteOpen] = useState(false)
   const [pasteText, setPasteText] = useState('')
   const fileInput = useRef<HTMLInputElement>(null)
+  const imageTask = useTask<ImageImportResult>()
+  const [imageResult, setImageResult] = useState<ImageImportResult | null>(null)
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [adding, setAdding] = useState(false)
+  const imageInput = useRef<HTMLInputElement>(null)
   const run = useTask<{ done: number; total: number; pushed: boolean; error?: string }>()
 
   const add = async (code: string) => {
@@ -41,6 +46,37 @@ export function WatchlistPage() {
   const afterImport = (r: ImportResult) => {
     toast.info(importSummary(r))
     void list.reload()
+  }
+
+  const recognize = (file: File) => {
+    imageTask
+      .run(() => api.importImage(file))
+      .then((r) => {
+        setImageResult(r)
+        setPicked(new Set(r.candidates.map((c) => c.code)))
+      })
+      .catch(() => {})
+  }
+
+  const onPaste = (e: ClipboardEvent<HTMLDivElement>) => {
+    const file = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith('image/'))
+    if (file) {
+      e.preventDefault()
+      recognize(file)
+    }
+  }
+
+  const addPicked = async () => {
+    setAdding(true)
+    try {
+      const r = await api.importWatch([...picked].join('\n'))
+      afterImport(r)
+      setImageResult(null)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setAdding(false)
+    }
   }
 
   const columns: Column<WatchlistRow>[] = [
@@ -64,7 +100,7 @@ export function WatchlistPage() {
   ]
 
   return (
-    <div>
+    <div onPaste={onPaste}>
       <PageHeader
         title="自选股"
         description="收盘后（16:30）自动逐只 AI 诊断并推送决策仪表盘；盘中提醒也会关注自选股"
@@ -90,6 +126,21 @@ export function WatchlistPage() {
               <StockSearch className="w-56" placeholder="添加：代码 / 名称 / 拼音" onSelect={(s) => void add(s.code)} />
               <Button onClick={() => setPasteOpen(true)}>粘贴导入</Button>
               <Button onClick={() => fileInput.current?.click()}>文件导入</Button>
+              <Button loading={imageTask.running} onClick={() => imageInput.current?.click()} title="也可以直接在页面上粘贴截图">
+                {imageTask.running ? '识别中…' : '识别截图'}
+              </Button>
+              <input
+                ref={imageInput}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                aria-label="选择截图"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) recognize(file)
+                  e.target.value = ''
+                }}
+              />
               <input
                 ref={fileInput}
                 type="file"
@@ -113,6 +164,46 @@ export function WatchlistPage() {
           {report.data ? <Markdown text={report.data.markdown} /> : <p className="text-sm text-muted">还没有仪表盘，点「分析全部并推送」生成</p>}
         </Card>
       </div>
+      <Modal
+        open={imageResult !== null}
+        title="截图识别结果"
+        onClose={() => setImageResult(null)}
+        footer={
+          <Button variant="primary" loading={adding} disabled={picked.size === 0} onClick={() => void addPicked()}>
+            加入自选（{picked.size}）
+          </Button>
+        }
+      >
+        {imageResult && (
+          <div className="space-y-3">
+            {imageResult.candidates.length === 0 && <p className="text-sm text-muted">没有识别到可用的股票</p>}
+            <ul className="space-y-1">
+              {imageResult.candidates.map((c) => (
+                <li key={c.code}>
+                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={picked.has(c.code)}
+                      aria-label={`选择 ${c.name}`}
+                      onChange={(e) => {
+                        const next = new Set(picked)
+                        if (e.target.checked) next.add(c.code)
+                        else next.delete(c.code)
+                        setPicked(next)
+                      }}
+                    />
+                    <span>{c.name}</span>
+                    <span className="num text-xs text-muted">{c.code}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+            {imageResult.unresolved.length > 0 && (
+              <p className="text-xs text-muted">未识别：{imageResult.unresolved.join('、')}</p>
+            )}
+          </div>
+        )}
+      </Modal>
       <Modal
         open={pasteOpen}
         title="粘贴导入"

@@ -79,6 +79,7 @@ export const api = {
   removeWatch: (code: string) => http.del<{ ok: boolean }>(`/watchlist/${code}`),
   importWatch: (text: string) => http.post<T.ImportResult>('/watchlist/import', { text }),
   importWatchFile: (file: File) => http.upload<T.ImportResult>('/watchlist/import-file', file),
+  importImage: (file: File) => http.upload<T.Task>('/watchlist/import-image', file),
   watchlistReport: () => http.get<T.WatchlistReport | null>('/watchlist/report'),
   runWatchlistReport: (push = true) => http.post<T.Task>(`/watchlist/report?push=${push}`),
 

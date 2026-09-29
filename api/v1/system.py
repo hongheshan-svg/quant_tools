@@ -130,7 +130,7 @@ def data_sources(pipeline: PipelineService = Depends(get_pipeline)) -> list[dict
 
 def _mask(llm: dict[str, Any]) -> dict[str, Any]:
     masked = copy.deepcopy(llm)
-    for role in ("primary", "backup"):
+    for role in ("primary", "backup", "vision"):
         key = str((masked.get(role) or {}).get("api_key") or "")
         if key and not key.startswith("your-"):
             masked[role]["api_key"] = MASK + key[-4:]
@@ -151,7 +151,7 @@ class LLMSettingsBody(BaseModel):
 def _merge_llm(current: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
     """前端回传的 api_key 仍是掩码时保留原值。"""
     merged = {**current, **incoming}
-    for role in ("primary", "backup"):
+    for role in ("primary", "backup", "vision"):
         if role in incoming:
             new, old = dict(incoming[role] or {}), current.get(role) or {}
             if str(new.get("api_key", "")).startswith(MASK):

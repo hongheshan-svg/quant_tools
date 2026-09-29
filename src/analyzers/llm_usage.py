@@ -28,6 +28,7 @@ FEATURE_LABELS = {
     "src.analyzers.topic_extractor": "题材提取",
     "src.analyzers.global_impact": "国际因子",
     "src.analyzers.limit_up": "涨停分析",
+    "src.services.image_import": "图片识别",
     "api.v1.system": "连接测试",
 }
 SKIP_MODULES = ("src.analyzers.llm_client", "src.analyzers.llm_usage")

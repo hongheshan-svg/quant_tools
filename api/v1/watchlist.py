@@ -9,8 +9,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, File, UploadFile
 from pydantic import BaseModel, Field
 
-from api.deps import bad_request, get_pipeline, get_tasks
+from api.deps import bad_request, get_config, get_pipeline, get_tasks
 from api.tasks import TaskManager
+from src.services import image_import
 from src.services.pipeline_service import PipelineService
 
 router = APIRouter(prefix="/watchlist", tags=["watchlist"])
@@ -66,6 +67,26 @@ async def import_file(file: UploadFile = File(...), pipeline: PipelineService = 
         return pipeline.watchlist_import(path=str(path))
     finally:
         path.unlink(missing_ok=True)
+
+
+@router.post("/import-image")
+async def import_image(
+    file: UploadFile = File(...),
+    tasks: TaskManager = Depends(get_tasks),
+    config: dict = Depends(get_config),
+) -> dict[str, Any]:
+    """截图识别股票：校验后提交后台任务，任务结果为候选列表，确认后再调用添加接口。"""
+    mime = (file.content_type or "").lower().split(";")[0].strip()
+    if mime == "image/jpg":
+        mime = "image/jpeg"
+    if mime not in image_import.ALLOWED_TYPES:
+        raise bad_request("只支持 PNG、JPEG、WebP、GIF 图片")
+    data = await file.read(image_import.MAX_BYTES + 1)
+    if not data:
+        raise bad_request("图片内容为空")
+    if len(data) > image_import.MAX_BYTES:
+        raise bad_request("图片不能超过 5MB")
+    return tasks.submit("image_import", image_import.extract_stocks, data, mime, config, label="识别截图中的股票")
 
 
 @router.get("/report")
