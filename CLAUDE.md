@@ -26,6 +26,10 @@ SQLite 数据库会自动创建在 `data/quant.db`，LLM 响应缓存在 `data/l
 python server.py                            # Web 界面 + API（默认 127.0.0.1:8000）+ 定时任务 + 聊天机器人；--no-scheduler 只提供接口
 python main.py                              # 无界面 APScheduler 定时循环（含聊天机器人）
 python main.py --once [--steps collect,analysis]   # 按顺序执行一遍收盘后任务后退出（GitHub Actions、Docker 用）
+python main.py --stocks 600519,000858       # 只诊断指定股票并推送决策仪表盘
+python main.py --no-notify                  # 运行任务但不推送消息
+python main.py --check-notify               # 检查推送配置后退出（退出码 0 为可用，1 为失败）
+python main.py --debug                      # 打印详细日志
 cd apps/web && npm run dev                  # 前端开发服务器 :5173，/api 代理到 8000（API_TARGET 可改）
 cd apps/desktop && npm run dev              # Electron 开发模式：在空闲端口启动仓库里的 server.py
 docker compose -f docker/docker-compose.yml up -d
@@ -57,7 +61,8 @@ python -m pytest -q tests/test_ths_client.py::test_request_json_cookie_fallback 
 - 只有 `test_basic.py` 和 `test_self_learning.py` 能当普通脚本直接运行（`python tests/test_basic.py`）。
 - `.gitignore` 忽略了 `tests/` 以外所有位置的 `test_*.py`，新测试必须放在 `tests/` 下。
 - 涉及数据库的测试要先重置引擎单例（可照搬 `tests/test_self_learning.py` 里的 `_reset_db_engine()`）。
-- 测试必须能离线运行，GitHub CI（`.github/workflows/ci.yml`，Python 3.12）会在每次推送 main 时跑全部测试。会联网的地方（交易日历、上市日期、采集器）要 monkeypatch 掉；交易日历可以直接用 `trading_calendar._set_days({...})` 指定。
+- 测试必须能离线运行，GitHub CI（`.github/workflows/ci.yml`，Python 3.12）会在每次推送 main 时跑全部测试。会联网的地方（交易日历、上市日期、采集器、新闻搜索）要 monkeypatch 掉；交易日历可以直接用 `trading_calendar._set_days({...})` 指定；新闻搜索要 monkeypatch `src/collectors/news_search.search()` 或 monkeypatch httpx 的请求。测试前后调用 `news_search.reset_state()` 清空缓存和冷却。
+- 调用 `main()` 函数的测试会写 `os.environ`（如 `QUANT_NO_NOTIFY`），要先 `monkeypatch.setenv("QUANT_NO_NOTIFY", "")` 保证测试结束后环境变量还原，避免影响其他推送测试。
 - CI 机器没有 libEGL，`import PyQt6` 抛的是 `ImportError` 而不是 `ModuleNotFoundError`（`pytest.importorskip` 挡不住）。测试不要导入 Qt 模块；需要测的逻辑放到不依赖 Qt 的模块里（如 `src/desktop/markdown_render.py`）。
 - API 测试用 `tests/test_api.py` 的 `env` fixture（临时库 + `TestClient` + 临时 `settings.yaml`）；后台任务用 `_wait()` 轮询到结束。
 
@@ -73,7 +78,8 @@ cd apps/desktop && npm test                                 # node --test，不�
 
 ## 打包
 
-- **桌面端安装包：** `python scripts/build_desktop.py`（`--backend-only`、`--skip-web`、`--dir`）。依次构建前端 → 用 PyInstaller 把 `server.py` 打成 onedir 的 `dist/backend/quant_server`（内置 `settings.yaml.example`、`stock_pool.yaml` 和前端，排除 PyQt6）→ electron-builder 打包（Windows NSIS、macOS dmg，产物在 `apps/desktop/dist/`）。只能打包当前系统的安装包；推送 `v*` 标签时 `desktop-release.yml` 在 Windows 和 macOS 上打包并上传到 Release。
+- **桌面端安装包：** `python scripts/build_desktop.py`（`--backend-only`、`--skip-web`、`--dir`）。依次构建前端 → 用 PyInstaller 把 `server.py` 打成 onedir 的 `dist/backend/quant_server`（内置 `settings.yaml.example`、`stock_pool.yaml`、策略技能（`src/services/skills`）和前端，排除 PyQt6）→ electron-builder 打包（Windows NSIS、macOS dmg，产物在 `apps/desktop/dist/`）。只能打包当前系统的安装包；推送 `v*` 标签时 `desktop-release.yml` 在 Windows 和 macOS 上打包并上传到 Release。
+  - 打包时用 `build_desktop.py` 的 `--add-data` 把 `src/services/skills` 内置，用户自定义策略放在 `config/strategies/` 目录（数据目录）。
   - 运行时按字符串导入或带数据文件、原生库的包要加到脚本里的 `HIDDEN_IMPORTS`、`COLLECT_DATA`、`COLLECT_SUBMODULES`、`COLLECT_ALL`（例如 litellm 的价格表、akshare 的数据文件、py_mini_racer 的动态库）。打包后记得实际运行 `quant_server` 冒烟，缺文件只有运行到那段代码才会报错。
   - 打包的后台服务用 `--workdir` 指定数据目录，启动时把内置的示例配置复制进去（每次覆盖），股票池规则只在缺失时复制；没传 `--workdir` 时用可执行文件所在目录。它还会在后台执行 `playwright install chromium`。
 - **旧版 PyQt6 EXE：** `powershell .\scripts\build_exe.ps1`，需要不在仓库里的 `AStockQuantQt6.spec`（`*.spec` 被 git 忽略）。运行时 `run_dashboard.py` 切换到 EXE 所在目录。
@@ -137,7 +143,15 @@ cd apps/desktop && npm test                                 # node --test，不�
 
 ### 聊天机器人（`src/bot/`）
 
-- `router.CommandRouter`：与平台无关的命令分发，返回 Markdown。不带参数的命令（大盘、持仓…）要整句匹配，带参数的（诊断、自选）按前缀匹配，其余交给 AI 问股（按 `平台:会话:用户` 保存 `StockChatSession`，闲置 30 分钟后重建）。`bot.allowed_users` 非空时只允许名单内的用户。测试通过 `pipeline=`、`chat_factory=` 注入假对象。
+- `router.CommandRouter`：与平台无关的命令分发，返回 Markdown。不带参数的命令（大盘、持仓…）要整句匹配，带参数的（诊断、自选、策略、批量、历史）按前缀匹配，参数无法解析为策略或股票时整句交给 AI 问股（按 `平台:会话:用户` 保存 `StockChatSession`，闲置 30 分钟后重建）。`bot.allowed_users` 非空时只允许名单内的用户。测试通过 `pipeline=`、`chat_factory=` 注入假对象。
+- **策略技能系统**（`src/services/strategy_skills.py`）：19 个内置分析策略（YAML 格式），支持自定义覆盖（`config/strategies/*.yaml`），按修改时间动态缓存。机器人「策略」命令、Web 问股页、API `/chat/skills` 都可获取和使用策略；AI 按选定策略的判断标准回答问题。
+- **机器人新命令（从 `HELP_TEXT` 的实际格式）：**
+  - `诊断 茅台` / `分析 茅台` / `/analyze 茅台`：个股 AI 诊断。
+  - `批量 茅台 宁德时代`：批量诊断最多 5 只股票，逐行返回「操作建议 评分｜一句话结论」。
+  - `历史 茅台`：该股票最近 5 次诊断记录。
+  - `策略`：列出全部问股策略说明。
+  - `策略 龙回头 宁德时代能买吗`：按指定策略提问，格式为「策略 策略名 问题」。
+  - `策略 龙回头`：仅策略名时返回该策略的说明、适配环境、用法。
 - `dispatcher.Dispatcher`：平台回调先确认收到，消息放进线程池处理；按消息 ID 去重（平台会重发）；回复按字节拆分。
 - `dingtalk.py`（Stream 模式，回复走消息里的 sessionWebhook）和 `feishu.py`（长连接，回复消息卡片，标题 `#` 转成加粗）。消息解析 `parse_message()` 是纯函数，不依赖 SDK。
   - 飞书 SDK 的长连接客户端用模块级事件循环，在 uvicorn 里导入会拿到正在运行的循环，所以在自己的线程里换成新循环。
@@ -180,6 +194,7 @@ cd apps/desktop && npm test                                 # node --test，不�
 - `browser_client.py` 每个线程持有一个 Playwright 实例，因为同步 Playwright 对象不能跨线程使用。`ths_client.py`（同花顺）在它之上加了重试、Cookie 回退和过期缓存回退。
 - `BaseCollector.fetch_url()` 和 `post_url()` 带指数退避重试。`safe_collect()` 会吞掉所有异常并返回 `[]`，所以采集器出错只会体现在日志里。
 - `CollectorOrchestrator.collect_all()` 要求所有新闻源（cailianshe、xueqiu、jiuyan、hot_topics、weibo、douyin、toutiao）以及行情、国际新闻、美股财报这几组都有数据。缺哪组就只重试哪组，最多 `desktop.collect_max_attempts` 次。
+- **联网新闻搜索**（`src/collectors/news_search.py`）：博查、Tavily、SerpAPI、Brave、SearXNG 五种搜索服务，按 `search.providers` 的顺序回退；每个 provider 可配置多个 Key（或多个 SearXNG 地址），在自己的 Key 之间轮询；某个 Key 返回 401/403/429 时进入 10 分钟冷却（进程级），同一次调用里换下一个 Key。多 provider 之间用 `fetch_with_fallback("news_search", ...)` 回退，出错或无结果都换下一个。结果按（查询词、条数、天数）缓存 `search.cache_minutes` 分钟（进程级），只缓存非空结果。`api_keys` 可以是列表或逗号分隔字符串；环境变量覆盖时是字符串，需要 `_as_list()` 处理。`search.enabled` 为假时完全不请求，所以个股诊断的已有测试不受影响。测试前后调用 `news_search.reset_state()` 清空缓存和冷却。
 
 ### 数据库（`src/database/`）
 
@@ -196,6 +211,7 @@ cd apps/desktop && npm test                                 # node --test，不�
 - 运行时会重写 `settings.yaml` 的代码，都会丢掉文件里的注释：
   - 自学习（`save_config()`）写入完整的合并后配置。
   - `settings_store.save_section()`：Web 设置接口，以及 PyQt6 的 AI 设置、推送设置对话框，按段写回。
+- **search 段配置：** `enabled`（启用联网新闻搜索）、`providers`（优先级列表）、`cache_minutes`（缓存时间）、各 provider 的 Key 配置。Web 设置接口 `/settings/search` 返回时 API Key 显示为 `******` 加后 4 位，保存时按后 4 位还原为原值（找不到对应原值的丢弃）；含 `your-` 的占位 Key 视为未配置。
 
 ### 大盘复盘、AI 研判与策略选股
 
@@ -221,7 +237,8 @@ cd apps/desktop && npm test                                 # node --test，不�
   - **提醒与问股：** 盘中提醒和问股的 `watchlist` 工具都会读取自选股。
 - AI 问股 `StockChatSession`（`src/services/stock_chat.py`）：
   - **协议：** 每个问题最多 3 轮工具调用。LLM 用 JSON 返回 `{"tool_calls": [...]}` 或 `{"answer": ...}`，不依赖各家模型的 function calling。
-  - **工具：** 工具在 `src/services/chat_tools.py`，全部只读，不能下单；股票参数可以是名称或拼音，会先经 `StockSearch` 解析。
+  - **工具：** 工具在 `src/services/chat_tools.py`，全部只读，不能下单；股票参数可以是名称或拼音，会先经 `StockSearch` 解析。新增 `web_search` 工具从博查、Tavily、SerpAPI、Brave、SearXNG 联网搜索资讯（需配置 `search.enabled` 和各源 API Key）。
+  - **策略选择：** `perspective` 参数可传策略名称、中文名或别名；`PERSPECTIVES` 是模块导入时的策略快照。
   - **测试：** 通过 `llm=`、`tools=` 注入假对象。
 
 ### 评分与自学习
@@ -308,22 +325,32 @@ cd apps/desktop && npm test                                 # node --test，不�
   - **消息类型：** `kind` 取值为 `daily_report`、`alert`、`watchlist`、`chat`，按 `notifier.routes` 选择渠道；没配置路由的类型推送到全部已启用渠道。
   - **渠道条件：** `enabled_channels(config, kind)` 只认启用且配置完整的渠道。Webhook 还是示例占位符（含 `your-`）不算完整；邮件至少要有 SMTP 服务器和收件人。
   - **新增推送：** 新增推送时要传 `kind`，测试里替换 `broadcast`、`enabled_channels` 时要接受 `kind` 参数。
-- 渠道：企业微信、钉钉、飞书机器人和邮件（`src/notifier/mail.py`，SMTP，同时发送纯文本和 HTML）。`diagnose()` 检查配置，`test_channel()` 发送测试消息（导入测试文件时要改名，否则 pytest 会把它当成测试）。
-- 各渠道 `send()` 用 `split_by_bytes()` 按字节上限拆分消息并逐条发送：企业微信 3800、钉钉 18000、飞书 20000。
-- 飞书签名比较特殊：用「时间戳\n密钥」作为 HMAC 密钥，对空消息签名。
+  - **QUANT_NO_NOTIFY：** 环境变量 `QUANT_NO_NOTIFY` 非空时，`broadcast()` 不执行推送（用于测试或调试）。
+- **渠道列表：** 企业微信、钉钉、飞书、邮件、Telegram、Discord、Slack、PushPlus、Server酱、ntfy、Gotify、Pushover、Bark、自定义 Webhook。
+  - **CHANNEL_FIELDS：** 新增的 10 个渠道（Telegram、Discord 等）用 `CHANNEL_FIELDS` 字典描述配置字段（如 bot_token、webhook_url、api_key），Web 设置页通用渲染。密钥字段（`secret` 标记）在 `/settings/notifier` 返回时整体替换为 `******`，保存时掩码原样回传会保留原值。大模型 Key 和联网搜索 Key 显示为 `******` 加后 4 位。旧的企业微信、钉钉、飞书、邮件有专用表单。
+  - 各渠道 `send()` 用 `split_by_bytes()` 按字节上限拆分消息并逐条发送，上限见各模块 `MAX_CONTENT_BYTES`。
+  - 飞书签名特殊：用「时间戳\n密钥」作为 HMAC 密钥，对空消息签名。
+  - `diagnose()` 检查配置，`test_channel()` 发送测试消息（导入测试文件时要改名，否则 pytest 会把它当成测试）。
 - `DailyReportService.push()` 在没有任何渠道启用时直接返回，不会生成报告，也不会访问网络。
-- 盘中提醒 `AlertService`（`src/services/alert_service.py`）只在交易时段运行（`trading_calendar.in_trade_session()`）。
+- **盘中提醒规则**（`src/services/alert_service.py`）：
   - **监控范围：** 今日信号股、模拟盘持仓和 `alerts.watchlist`。
   - **内置提醒：** 封涨停、炸板、跌破止损（紧急）、接近止损、达到目标价、大跌，以及大盘环境比前一交易日降档或评分明显下滑。大盘两天都按 `overview={}` 计算，保证口径一致。
-  - **自定义规则：** 可在 `alerts.rules` 设置价格突破、涨跌幅、放量，以及技术指标规则：均线、MACD/KDJ 金叉死叉、RSI 阈值。指标用 `src/analyzers/indicators.py` 计算，当天的行就是最新价。
+  - **自定义规则：** Web 页面可直观编辑，支持启用开关和备注。`validate_rule()` 校验规则格式；`RULE_TYPES` 定义支持的规则类型（价格、涨跌幅、放量、均线、MACD、KDJ、RSI）。保存前逐条校验，指标用 `src/analyzers/indicators.py` 计算，当天的数据就是最新价。本地日线不足时会先自动补齐。
+  - **规则试算：** `AlertService.test_rule()` 不受交易时段和冷却限制，试算结果不写记录不推送，用于 Web 页面「立即试算」功能；当天无行情时用最近交易日。
   - **每天一次：** 指标交叉、接近止损、大盘转弱在 `DAILY_ONCE_TYPES` 中，每天只提醒一次。
   - **降噪：** `NoiseFilter`（`src/notifier/noise.py`）负责冷却期去重和免打扰时段（`notifier.quiet_hours`），紧急提醒不受免打扰限制。同一次检查的多条提醒合并成一条推送，所有提醒都记入 `alert_record` 表。
   - **状态：** 涨停状态和冷却记录是进程级状态，测试前后要调用 `alert_service.reset_state()`。
+  - **交易时段检查：** `AlertService` 只在交易时段运行（`trading_calendar.in_trade_session()`）。
 
 ### 部署与 CI（`docker/`、`.github/workflows/`）
 
-- Docker：多阶段构建（先构建前端），以 UID 1000 的 `quant` 用户运行，默认 `python server.py --host 0.0.0.0`。默认配置放在镜像的 `/app/defaults/config`，`entrypoint.sh` 启动时复制进挂载的 `/app/config`（示例配置覆盖、股票池缺失才复制），并修复挂载目录属主。compose 用环境变量开启 Web 登录，因为容器外的请求不算本机。
-- 工作流：`ci.yml`（后端测试、前端 lint/测试/构建、桌面端测试）、`daily-analysis.yml`（工作日 16:40 `main.py --once`，需要仓库变量 `ENABLE_DAILY_ANALYSIS=true`，配置来自 Secret `SETTINGS_YAML` 或映射成 `QUANT__` 环境变量的单独 Secret，数据库用 actions/cache 保留）、`network-smoke.yml`（`check_sources.py`，`ENABLE_NETWORK_SMOKE=true`）、`docker-publish.yml`（`v*` 标签发布 GHCR 镜像）、`desktop-release.yml`（`v*` 标签打包桌面端并上传 Release）。
+- Docker：多阶段构建（先构建前端），以 UID 1000 的 `quant` 用户运行，默认 `python server.py --host 0.0.0.0`。默认配置放在镜像的 `/app/defaults/config`，`entrypoint.sh` 启动时复制进挂载的 `/app/config`（示例配置覆盖、股票池缺失才复制），并修复挂载目录属主。compose 用环境变量开启 Web 登录，因为容器外的请求不算本机。因为 `COPY src/` 会自然包含 `src/services/skills`，所以 Docker 镜像内置有策略技能。
+- 工作流：
+  - `ci.yml`（后端测试、前端 lint/测试/构建、桌面端测试）。
+  - `daily-analysis.yml`（工作日 16:40 `main.py --once`）：需要仓库变量 `ENABLE_DAILY_ANALYSIS=true`。配置来自 Secret `SETTINGS_YAML` 或按段映射为 `QUANT__` 环境变量的单独 Secret（LLM、各推送渠道、搜索源都支持）。支持 workflow_dispatch 新增 `stocks` 输入诊断指定股票、`no_notify` 不推送。数据库用 actions/cache 保留到下一次运行。
+  - `network-smoke.yml`（`check_sources.py`，`ENABLE_NETWORK_SMOKE=true`）。
+  - `docker-publish.yml`（`v*` 标签发布 GHCR 镜像）。
+  - `desktop-release.yml`（`v*` 标签打包桌面端并上传 Release）。
 - Actions 里给布尔配置映射 Secret 时要写成 `${{ secrets.X != '' && 'true' || '' }}`：直接写比较表达式在 Secret 为空时得到字符串 `false`，会覆盖 `SETTINGS_YAML` 里的设置；空字符串才会被忽略。
 
 ## 约定

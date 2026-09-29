@@ -22,7 +22,12 @@
 - `cp config/settings.yaml.example config/settings.yaml`：生成本地配置，然后填入 LLM API Key。
 - `cd apps/web && npm ci && npm run build`：构建前端（Node.js 22+），`server.py` 托管构建产物。
 - `python server.py`：启动 Web 界面和 API（默认 http://127.0.0.1:8000），同时运行定时任务和聊天机器人；`--no-scheduler` 只提供接口。
-- `python main.py`：启动无界面的 APScheduler 定时任务；`--once` 执行一遍收盘后任务后退出。
+- `python main.py`：启动无界面的 APScheduler 定时任务。
+  - `--once [--steps collect,analysis]`：执行一遍收盘后任务后退出；仅执行部分步骤。
+  - `--stocks 600519,000858`：只诊断指定股票并推送决策仪表盘（跳过采集、分析等步骤）。
+  - `--no-notify`：运行任务但不推送消息。
+  - `--check-notify`：检查推送配置后退出（退出码 0 为可用，1 为失败）。
+  - `--debug`：打印详细日志。
 - `cd apps/web && npm run dev`：前端开发服务器（:5173，接口代理到 8000）。`cd apps/desktop && npm run dev`：Electron 开发模式。
 - `python run_dashboard.py`：启动 PyQt6 桌面端（旧版）。加 `--headless` 只执行一次完整流程，不打开界面。
 - `python scripts/check_sources.py`：联网检查各数据源是否可用（不写数据库）。
