@@ -729,7 +729,7 @@ export interface SettingsImportResult {
 
 export interface LLMRole {
   provider?: string
-  api_key?: string
+  api_key?: string | string[]
   base_url?: string
   model?: string
   temperature?: number

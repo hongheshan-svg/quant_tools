@@ -8,11 +8,14 @@ llm.backend 设为 openai 时改用 OpenAI SDK 直连（只支持 OpenAI 兼容�
 """
 
 import base64
+import dataclasses
 import hashlib
 import json
+import re
 import sqlite3
 import threading
 import time
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,29 +31,153 @@ KEYLESS_PROVIDERS = ("ollama",)                        # 不需要 API Key
 NO_JSON_MODE = ("anthropic", "ollama")                 # 不传 response_format，靠提示词和 chat_json 的修复
 
 
+KEY_COOLDOWN_SECONDS = 600                             # Key 遇到 401/403/429 后的冷却时间
+KEY_ERROR_CODES = (401, 403, 429)
+KEY_ERROR_NAMES = ("AuthenticationError", "RateLimitError", "PermissionDeniedError")
+
+
+def parse_keys(value: Any) -> list[str]:
+    """把 api_key 配置（字符串、逗号/换行分隔的多个 Key 或列表）拆成 Key 列表：去空白、去重，丢弃空值和 your- 占位。"""
+    if value is None:
+        return []
+    items = value if isinstance(value, (list, tuple, set)) else [value]
+    keys: list[str] = []
+    for item in items:
+        for part in re.split(r"[,\n\r]+", str(item or "")):
+            key = part.strip()
+            if key and not key.startswith("your-") and key not in keys:
+                keys.append(key)
+    return keys
+
+
+def _mask_key(key: str) -> str:
+    return "***" + key[-4:] if key else "(无)"
+
+
 @dataclass
 class LLMRoute:
-    """一个可调用的模型：provider/model 是配置里的名字，target 是 LiteLLM 的模型名。"""
+    """一个可调用的模型：provider/model 是配置里的名字，target 是 LiteLLM 的模型名。
+
+    api_keys 是全部可用 Key，api_key 保留为第一个（兼容单 Key 的旧用法）。
+    """
     provider: str
     model: str
     target: str
     api_key: str
     api_base: str | None
+    api_keys: tuple[str, ...] = ()
+
+    def __post_init__(self):
+        if not self.api_keys and self.api_key:
+            self.api_keys = (self.api_key,)
+
+    @property
+    def route_id(self) -> tuple:
+        return (self.provider, self.api_base, self.model)
+
+
+class AllKeysUnavailable(RuntimeError):
+    """本路由的 Key 全部在冷却（或刚刚全部失效），不再重试。"""
+
+
+# 进程级 Key 状态：路由 -> 下一次的起始位置；(路由, Key) -> 冷却截止时间
+_key_lock = threading.Lock()
+_key_start: dict[tuple, int] = {}
+_key_cooldown: dict[tuple, float] = {}
+
+
+def reset_key_state() -> None:
+    """清空 Key 冷却和轮换位置（测试用）。"""
+    with _key_lock:
+        _key_start.clear()
+        _key_cooldown.clear()
+
+
+def _ordered_keys(route: LLMRoute) -> list[str]:
+    """本次请求可用的 Key，从上次之后的下一个开始，跳过冷却中的。免 Key 平台返回 [""]。"""
+    keys = list(route.api_keys) or ([route.api_key] if route.api_key else [])
+    if not keys:
+        return [""]
+    now = time.monotonic()
+    with _key_lock:
+        start = _key_start.get(route.route_id, 0) % len(keys)
+        _key_start[route.route_id] = (start + 1) % len(keys)
+        ordered = keys[start:] + keys[:start]
+        return [k for k in ordered if _key_cooldown.get((route.route_id, k), 0) <= now]
+
+
+def _cool_key(route: LLMRoute, key: str) -> None:
+    with _key_lock:
+        _key_cooldown[(route.route_id, key)] = time.monotonic() + KEY_COOLDOWN_SECONDS
+
+
+def is_key_error(exc: BaseException) -> bool:
+    """401/403/429（认证失败、无权限、限流）：换 Key 重试而不是原 Key 重试。"""
+    if any(c.__name__ in KEY_ERROR_NAMES for c in type(exc).__mro__):
+        return True
+    code = getattr(exc, "status_code", None)
+    if code is None:
+        code = getattr(getattr(exc, "response", None), "status_code", None)
+    return code in KEY_ERROR_CODES
 
 
 def build_route(cfg: dict) -> "LLMRoute | None":
     """配置不可用（缺 Key 或还是示例占位符）时返回 None。"""
     provider = str(cfg.get("provider") or "openai").lower()
     model = str(cfg.get("model") or "").strip()
-    api_key = str(cfg.get("api_key") or "")
+    keys = parse_keys(cfg.get("api_key"))
     if not model:
         return None
-    if provider not in KEYLESS_PROVIDERS and (not api_key or api_key.startswith("your-")):
+    if provider not in KEYLESS_PROVIDERS and not keys:
         return None
+    api_key = keys[0] if keys else ""
     base_url = str(cfg.get("base_url") or "").strip() or None
     if provider in NATIVE_PROVIDERS:
-        return LLMRoute(provider, model, f"{provider}/{model}", api_key, base_url)
-    return LLMRoute(provider, model, f"openai/{model}", api_key, base_url or "https://api.deepseek.com")
+        return LLMRoute(provider, model, f"{provider}/{model}", api_key, base_url, tuple(keys))
+    return LLMRoute(provider, model, f"openai/{model}", api_key, base_url or "https://api.deepseek.com", tuple(keys))
+
+
+def list_models(role_cfg: dict, timeout: float = 10) -> list[str]:
+    """按平台的模型列表接口取可用模型名（排序去重）。失败抛 RuntimeError（中文，不含 Key）。"""
+    import httpx
+
+    from src.analyzers.llm_platforms import AI_PLATFORMS
+
+    provider = str(role_cfg.get("provider") or "openai").lower()
+    keys = parse_keys(role_cfg.get("api_key"))
+    key = keys[0] if keys else ""
+    base_url = str(role_cfg.get("base_url") or "").strip()
+    headers: dict[str, str] = {}
+    params: dict[str, str] = {}
+    if provider == "anthropic":
+        url, field, strip = "https://api.anthropic.com/v1/models", "data", ("id", "")
+        headers = {"x-api-key": key, "anthropic-version": "2023-06-01"}
+    elif provider == "gemini":
+        url, field, strip = "https://generativelanguage.googleapis.com/v1beta/models", "models", ("name", "models/")
+        params = {"key": key}
+    elif provider == "ollama":
+        url, field, strip = f"{(base_url or 'http://localhost:11434').rstrip('/')}/api/tags", "models", ("name", "")
+    else:
+        base = base_url or (AI_PLATFORMS.get(provider) or {}).get("base_url") or ""
+        if not base:
+            raise RuntimeError("请先填写 Base URL 再获取模型列表")
+        url, field, strip = f"{base.rstrip('/')}/models", "data", ("id", "")
+        headers = {"Authorization": f"Bearer {key}"}
+    if provider not in KEYLESS_PROVIDERS and not key:
+        raise RuntimeError("请先填写 API Key 再获取模型列表")
+    try:
+        resp = httpx.get(url, headers=headers, params=params or None, timeout=timeout)
+    except Exception as e:
+        raise RuntimeError(f"获取模型列表失败：无法连接（{type(e).__name__}）") from e
+    status = getattr(resp, "status_code", 200)
+    if status >= 400:
+        raise RuntimeError(f"获取模型列表失败：HTTP {status}")
+    try:
+        items = resp.json()[field]
+        names = {str(item[strip[0]]).removeprefix(strip[1]) for item in items if item.get(strip[0])}
+    except Exception as e:
+        raise RuntimeError("获取模型列表失败：返回内容无法解析") from e
+    return sorted(names)
 
 
 class LLMClient:
@@ -344,7 +471,7 @@ class LLMClient:
         for attempt in range(1, self.max_retries + 2):
             started = time.monotonic()
             try:
-                content, usage = self._complete(client, kwargs)
+                content, usage = self._complete_rotating(client, kwargs)
                 prompt_tokens, completion_tokens = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
                 record_usage(self.usage_path, provider=provider, model=model, feature=feature,
                              prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
@@ -352,6 +479,11 @@ class LLMClient:
                              latency_ms=int((time.monotonic() - started) * 1000))
                 logger.info(f"LLM [{provider}] 调用成功, model={model}, tokens={prompt_tokens + completion_tokens}")
                 return content
+            except AllKeysUnavailable as e:
+                logger.error(f"LLM [{provider}] {e}")
+                record_usage(self.usage_path, provider=provider, model=model, feature=feature, success=False,
+                             latency_ms=int((time.monotonic() - started) * 1000))
+                return None
             except Exception as e:
                 err_str = str(e)[:120]
                 if attempt >= self.max_retries + 1:
@@ -366,6 +498,111 @@ class LLMClient:
                 )
                 time.sleep(delay)
         return None
+
+    def _complete_rotating(self, route: LLMRoute, kwargs: dict) -> tuple[str, dict]:
+        """按 Key 轮换发起请求：401/403/429 时该 Key 冷却并立即换下一个（不计入重试），其他错误直接抛出。"""
+        keys = _ordered_keys(route)
+        if not keys:
+            raise AllKeysUnavailable("所有 API Key 都在冷却中")
+        for key in keys:
+            try:
+                return self._complete(dataclasses.replace(route, api_key=key), kwargs)
+            except Exception as e:
+                if not is_key_error(e):
+                    raise
+                _cool_key(route, key)
+                logger.warning(f"LLM [{route.provider}] Key {_mask_key(key)} 被拒绝或限流，冷却 {KEY_COOLDOWN_SECONDS}s 并换下一个: {str(e)[:80]}")
+        raise AllKeysUnavailable("所有 API Key 均被拒绝或限流")
+
+    def chat_stream(
+        self,
+        user_message: str,
+        system_message: str = "",
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        response_format: str | None = None,
+    ) -> Iterator[str]:
+        """流式聊天：逐块产出文本。主模型 → 备用模型，只有还没产出文本时出错才换下一个路由。
+
+        不走响应缓存；结束时记录一次用量（拿不到 usage 时 token 记 0）。全部失败抛 RuntimeError。
+        """
+        feature = caller_feature()
+        last_error = ""
+        for name, route, cfg in (("主力模型", self.primary_client, self.primary_cfg),
+                                 ("备用模型", self.backup_client, self.backup_cfg)):
+            if route is None:
+                continue
+            temp = temperature if temperature is not None else cfg.get("temperature", 0.3)
+            tokens = max_tokens if max_tokens is not None else cfg.get("max_tokens", 4096)
+            messages = []
+            if system_message:
+                messages.append({"role": "system", "content": system_message})
+            messages.append({"role": "user", "content": user_message})
+            kwargs: dict[str, Any] = {"messages": messages, "temperature": temp, "max_tokens": tokens,
+                                      "timeout": self.timeout_seconds, "stream": True}
+            if response_format == "json" and route.provider not in NO_JSON_MODE:
+                kwargs["response_format"] = {"type": "json_object"}
+            keys = _ordered_keys(route)
+            if not keys:
+                last_error = "所有 API Key 都在冷却中"
+                logger.warning(f"LLM [{route.provider}] {last_error}，流式调用跳过{name}")
+                continue
+            for key in keys:
+                started = time.monotonic()
+                produced = False
+                usage: dict = {}
+                try:
+                    for text in self._stream_once(dataclasses.replace(route, api_key=key), kwargs, usage):
+                        produced = True
+                        yield text
+                    self._record_stream(route, cfg, feature, started, usage, True)
+                    return
+                except GeneratorExit:
+                    self._record_stream(route, cfg, feature, started, usage, produced)
+                    raise
+                except Exception as e:
+                    last_error = str(e)[:120]
+                    if not is_key_error(e) or produced:
+                        self._record_stream(route, cfg, feature, started, usage, False)
+                    if produced:
+                        raise
+                    if is_key_error(e):
+                        _cool_key(route, key)
+                        logger.warning(f"LLM [{route.provider}] Key {_mask_key(key)} 被拒绝或限流，冷却 {KEY_COOLDOWN_SECONDS}s 并换下一个: {last_error}")
+                        continue
+                    logger.warning(f"LLM [{route.provider}] 流式调用失败，切换下一个模型: {last_error}")
+                    break
+        raise RuntimeError(f"所有LLM模型均流式调用失败{('：' + last_error) if last_error else ''}")
+
+    def _record_stream(self, route: LLMRoute, cfg: dict, feature: str, started: float, usage: dict, success: bool) -> None:
+        prompt_tokens, completion_tokens = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
+        model = cfg.get("model", route.model)
+        record_usage(self.usage_path, provider=route.provider, model=model, feature=feature, success=success,
+                     prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
+                     cost_usd=estimate_cost(route.provider, model, prompt_tokens, completion_tokens, self.pricing),
+                     latency_ms=int((time.monotonic() - started) * 1000))
+
+    def _stream_once(self, route: LLMRoute, kwargs: dict, usage: dict) -> Iterator[str]:
+        """发起一次流式请求，产出 delta 文本；usage 字典在流末尾拿到用量时被填充。"""
+        if self.backend != "openai" and self._litellm_available():
+            extra = {"stream_options": {"include_usage": True}} if route.provider == "openai" or route.provider in NATIVE_PROVIDERS else {}
+            stream = import_litellm().completion(model=route.target, api_key=route.api_key or None,
+                                                 api_base=route.api_base, **extra, **kwargs)
+        else:
+            if route.provider in NATIVE_PROVIDERS:
+                raise RuntimeError(f"{route.provider} 需要 LiteLLM（pip install litellm），当前 llm.backend=openai 或未安装")
+            stream = self._openai_client(route).chat.completions.create(model=route.model, **kwargs)
+        for chunk in stream:
+            u = getattr(chunk, "usage", None)
+            if u:
+                usage["prompt_tokens"] = getattr(u, "prompt_tokens", 0) or 0
+                usage["completion_tokens"] = getattr(u, "completion_tokens", 0) or 0
+            choices = getattr(chunk, "choices", None) or []
+            if not choices:
+                continue
+            text = getattr(getattr(choices[0], "delta", None), "content", None)
+            if text:
+                yield text
 
     def _complete(self, route: LLMRoute, kwargs: dict) -> tuple[str, dict]:
         """发起一次请求，返回 (文本, {"prompt_tokens", "completion_tokens"})。"""

@@ -62,14 +62,46 @@ function DesktopPanel({ desktop }: { desktop: QuantDesktop }) {
   )
 }
 
-function RoleEditor({ title, role, platforms, onChange }: {
+// Key 在表单里一行一个；保存时一个发字符串、多个发列表
+function keysToText(key: string | string[] | undefined): string {
+  return Array.isArray(key) ? key.join('\n') : (key ?? '')
+}
+
+function textToKeys(text: string): string | string[] {
+  const keys = text.split(/[\n,]+/).map((k) => k.trim()).filter(Boolean)
+  return keys.length > 1 ? keys : (keys[0] ?? '')
+}
+
+function RoleEditor({ title, roleKey, role, platforms, onChange }: {
   title: string
+  roleKey: 'primary' | 'backup' | 'vision'
   role: LLMRole
   platforms: LLMSettings['platforms']
   onChange: (role: LLMRole) => void
 }) {
   const preset = platforms[role.provider ?? ''] ?? platforms.custom
   const listId = `models-${title}`
+  const [fetched, setFetched] = useState<string[]>([])
+  const [fetching, setFetching] = useState(false)
+  const [keyText, setKeyText] = useState(keysToText(role.api_key))
+  useEffect(() => {
+    // 外部（加载/保存后）改了 Key 时同步到输入框；输入中的文本与其一致时不动
+    if (JSON.stringify(textToKeys(keyText)) !== JSON.stringify(textToKeys(keysToText(role.api_key)))) setKeyText(keysToText(role.api_key))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role.api_key])
+  const fetchModels = async () => {
+    setFetching(true)
+    try {
+      const r = await api.llmModels(roleKey, { ...role })
+      setFetched(r.models)
+      toast.success(`获取到 ${r.models.length} 个模型`)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setFetching(false)
+    }
+  }
+  const models = fetched.length ? fetched : (preset?.models ?? [])
   return (
     <fieldset className="rounded-md border border-line p-3">
       <legend className="px-1 text-sm text-accent">{title}</legend>
@@ -88,10 +120,17 @@ function RoleEditor({ title, role, platforms, onChange }: {
         </Field>
         <Field label="模型">
           <Input list={listId} value={role.model ?? ''} onChange={(e) => onChange({ ...role, model: e.target.value })} />
-          <datalist id={listId}>{(preset?.models ?? []).map((m) => <option key={m} value={m} />)}</datalist>
+          <datalist id={listId}>{models.map((m) => <option key={m} value={m} />)}</datalist>
+          <Button className="mt-1" loading={fetching} onClick={fetchModels}>获取模型列表</Button>
         </Field>
-        <Field label="API Key" hint={role.provider === 'ollama' ? '本地模型不需要 Key' : '已保存的 Key 只显示后 4 位，不修改就原样保留'}>
-          <Input type="password" value={role.api_key ?? ''} onChange={(e) => onChange({ ...role, api_key: e.target.value })} autoComplete="off" />
+        <Field label="API Key" hint={role.provider === 'ollama' ? '本地模型不需要 Key' : '可填多个 Key（一行一个），遇到限流或失效自动轮换；已保存的 Key 只显示后 4 位，不修改就原样保留'}>
+          <Textarea
+            rows={3}
+            value={keyText}
+            onChange={(e) => { setKeyText(e.target.value); onChange({ ...role, api_key: textToKeys(e.target.value) }) }}
+            autoComplete="off"
+            spellCheck={false}
+          />
         </Field>
         <Field label="Base URL" hint="Claude、Gemini 留空；其他平台按 OpenAI 兼容地址">
           <Input value={role.base_url ?? ''} onChange={(e) => onChange({ ...role, base_url: e.target.value })} />
@@ -138,9 +177,9 @@ function LLMSettingsForm() {
 
   return (
     <div className="space-y-4">
-      <RoleEditor title="主力模型" role={primary} platforms={data.platforms} onChange={setPrimary} />
-      <RoleEditor title="备用模型（主力失败时切换）" role={backup} platforms={data.platforms} onChange={setBackup} />
-      <RoleEditor title="图片识别模型（可空，留空用主模型）" role={vision} platforms={data.platforms} onChange={setVision} />
+      <RoleEditor title="主力模型" roleKey="primary" role={primary} platforms={data.platforms} onChange={setPrimary} />
+      <RoleEditor title="备用模型（主力失败时切换）" roleKey="backup" role={backup} platforms={data.platforms} onChange={setBackup} />
+      <RoleEditor title="图片识别模型（可空，留空用主模型）" roleKey="vision" role={vision} platforms={data.platforms} onChange={setVision} />
       <div className="flex flex-wrap gap-2">
         <Button loading={busy === '主力模型'} onClick={() => test(primary, '主力模型')}>测试主力模型</Button>
         <Button loading={busy === '备用模型'} onClick={() => test(backup, '备用模型')}>测试备用模型</Button>

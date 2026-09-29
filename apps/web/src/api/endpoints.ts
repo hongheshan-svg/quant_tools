@@ -115,6 +115,7 @@ export const api = {
   llmSettings: () => http.get<T.LLMSettings>('/settings/llm'),
   saveLlm: (llm: Record<string, unknown>) => http.put<{ ok: boolean }>('/settings/llm', { llm }),
   testLlm: (llm: Record<string, unknown>) => http.post<{ ok: boolean; reply?: string; error?: string }>('/settings/llm/test', { llm }),
+  llmModels: (role: string, config: Record<string, unknown>) => http.post<{ models: string[] }>('/settings/llm/models', { role, config }),
   searchSettings: () => http.get<T.SearchSettings>('/settings/search'),
   saveSearch: (search: Record<string, unknown>) => http.put<{ search: T.SearchSettings['search'] }>('/settings/search', { search }),
   testSearch: (search: Record<string, unknown>, query: string) =>

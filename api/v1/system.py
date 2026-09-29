@@ -165,11 +165,18 @@ def data_capabilities(config: dict = Depends(get_config)) -> list[dict[str, Any]
 # ---------- AI 设置 ----------
 
 def _mask(llm: dict[str, Any]) -> dict[str, Any]:
+    """Key 只留后 4 位：多个 Key 返回列表，单个返回字符串。"""
+    from src.analyzers.llm_client import parse_keys
+
     masked = copy.deepcopy(llm)
     for role in ("primary", "backup", "vision"):
-        key = str((masked.get(role) or {}).get("api_key") or "")
-        if key and not key.startswith("your-"):
-            masked[role]["api_key"] = MASK + key[-4:]
+        if not isinstance(masked.get(role), dict):
+            continue
+        keys = parse_keys(masked[role].get("api_key"))
+        if len(keys) > 1:
+            masked[role]["api_key"] = [MASK + k[-4:] for k in keys]
+        elif keys:
+            masked[role]["api_key"] = MASK + keys[0][-4:]
     return masked
 
 
@@ -184,14 +191,28 @@ class LLMSettingsBody(BaseModel):
     llm: dict[str, Any]
 
 
+def _restore_keys(incoming_key: Any, old_key: Any) -> "str | list[str]":
+    """掩码 Key 按后 4 位在当前配置的 Key 里还原（找不到丢弃），新 Key 原样保留；一个存字符串，多个存列表。"""
+    from src.analyzers.llm_client import parse_keys
+
+    old_keys = parse_keys(old_key)
+    keys: list[str] = []
+    for key in parse_keys(incoming_key):
+        if key.startswith(MASK):
+            key = next((k for k in old_keys if k.endswith(key[len(MASK):])), "")
+        if key and key not in keys:
+            keys.append(key)
+    return keys[0] if len(keys) == 1 else keys if keys else ""
+
+
 def _merge_llm(current: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
-    """前端回传的 api_key 仍是掩码时保留原值。"""
+    """前端回传的 api_key（字符串或列表）里仍是掩码的按后 4 位还原为原值。"""
     merged = {**current, **incoming}
     for role in ("primary", "backup", "vision"):
         if role in incoming:
             new, old = dict(incoming[role] or {}), current.get(role) or {}
-            if str(new.get("api_key", "")).startswith(MASK):
-                new["api_key"] = old.get("api_key", "")
+            if "api_key" in new:
+                new["api_key"] = _restore_keys(new["api_key"], old.get("api_key"))
             merged[role] = {**old, **new}
     return merged
 
@@ -218,6 +239,25 @@ def test_llm(body: LLMSettingsBody, config: dict = Depends(get_config)) -> dict[
     except Exception as e:
         return {"ok": False, "error": str(e)[:300]}
     return {"ok": bool(reply), "reply": (reply or "")[:50]}
+
+
+class LLMModelsBody(BaseModel):
+    role: str = "primary"
+    config: dict[str, Any] = {}
+
+
+@router.post("/settings/llm/models")
+def llm_models(body: LLMModelsBody, config: dict = Depends(get_config)) -> dict[str, Any]:
+    """按表单里的平台、地址和 Key 获取该平台的模型列表（掩码 Key 先还原）。"""
+    from src.analyzers.llm_client import list_models
+
+    if body.role not in ("primary", "backup", "vision"):
+        raise bad_request("role 只能是 primary、backup 或 vision")
+    role_cfg = _merge_llm(config.get("llm") or {}, {body.role: body.config})[body.role]
+    try:
+        return {"models": list_models(role_cfg)}
+    except RuntimeError as e:
+        raise bad_request(str(e))
 
 
 # ---------- 联网搜索设置 ----------
