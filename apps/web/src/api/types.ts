@@ -21,6 +21,22 @@ export interface AuthStatus {
   logged_in: boolean
 }
 
+export interface SetupItem {
+  key: string
+  label: string
+  done: boolean
+  required: boolean
+  hint: string
+  link: string
+}
+
+export interface SetupStatus {
+  items: SetupItem[]
+  done: number
+  total: number
+  required_missing: number
+}
+
 // ---------- 首页 ----------
 
 export interface MarketOverview {

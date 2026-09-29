@@ -17,6 +17,7 @@ import { ResearchPage } from './pages/ResearchPage'
 import { RealPage } from './pages/RealPage'
 import { ReviewPage } from './pages/ReviewPage'
 import { ScreeningPage } from './pages/ScreeningPage'
+import { SetupPage } from './pages/SetupPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { SignalsPage } from './pages/SignalsPage'
 import { SourcesPage } from './pages/SourcesPage'
@@ -50,6 +51,7 @@ export function AppRoutes({ authEnabled }: { authEnabled: boolean }) {
         <Route path="sources" element={<SourcesPage />} />
         <Route path="usage" element={<UsagePage />} />
         <Route path="settings" element={<SettingsPage />} />
+        <Route path="setup" element={<SetupPage />} />
         <Route path="stocks/:code" element={<StockPage />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

@@ -23,6 +23,13 @@ def health() -> dict[str, Any]:
     return {"status": "ok"}
 
 
+@router.get("/system/setup")
+def system_setup(config: dict = Depends(get_config)) -> dict[str, Any]:
+    """首次配置向导：各配置项的完成情况。"""
+    from src.services.setup_status import setup_status
+    return setup_status(config)
+
+
 # ---------- 登录 ----------
 
 class PasswordBody(BaseModel):

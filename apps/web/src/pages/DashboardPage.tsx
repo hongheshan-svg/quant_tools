@@ -1,6 +1,6 @@
 // 交易决策：市场概况、大盘环境、交易焦点、AI 涨停预测、综合评分、涨停池
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { api } from '@/api/endpoints'
 import type { Dashboard, LimitUpStock, MarketOverview, Prediction, TopStock, TradeFocusRow } from '@/api/types'
 import { DataTable, type Column } from '@/components/DataTable'
@@ -10,6 +10,47 @@ import { progressText, useTask } from '@/hooks/useTask'
 import { fmtAmount, fmtNum, RECOMMENDATION_LABELS, verdictClass } from '@/utils/format'
 
 type TabKey = 'focus' | 'predictions' | 'top' | 'limit_up'
+
+const SETUP_DISMISS_KEY = 'setup_hint_dismissed'
+
+function readDismissed(): boolean {
+  try {
+    return localStorage.getItem(SETUP_DISMISS_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+/** 配置未完成提示条：必需项未完成时始终显示，仅可选项未完成时可「暂不提示」 */
+function SetupBanner() {
+  const { data } = useApi(api.setupStatus)
+  const [dismissed, setDismissed] = useState(readDismissed)
+  if (!data || data.done >= data.total) return null
+  if (dismissed && data.required_missing === 0) return null
+  const missing = data.total - data.done
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-3 rounded-md border border-line bg-panel px-3 py-2 text-sm">
+      <span>还有 {missing} 项配置未完成{data.required_missing > 0 ? `（其中必需 ${data.required_missing} 项）` : ''}</span>
+      <Link to="/setup" className="text-accent hover:underline">去配置</Link>
+      {data.required_missing === 0 && (
+        <button
+          type="button"
+          className="text-muted hover:text-text"
+          onClick={() => {
+            try {
+              localStorage.setItem(SETUP_DISMISS_KEY, '1')
+            } catch {
+              /* 存储不可用时仅本次隐藏 */
+            }
+            setDismissed(true)
+          }}
+        >
+          暂不提示
+        </button>
+      )}
+    </div>
+  )
+}
 
 const REGIME_TONE: Record<string, 'up' | 'warn' | 'down' | 'default'> = { 进攻: 'up', 均衡: 'warn', 防守: 'down', 冰点: 'down' }
 
@@ -88,6 +129,7 @@ export function DashboardPage() {
 
   return (
     <div>
+      <SetupBanner />
       <PageHeader
         title="交易决策"
         description={data ? `评分日期 ${data.score_date} ｜ 涨停池 ${data.limit_up_date}` : undefined}
@@ -122,16 +164,16 @@ export function DashboardPage() {
               value={tab}
               onChange={setTab}
               tabs={[
-                { key: 'focus', label: `交易焦点 (${data.trade_focus.length})` },
-                { key: 'predictions', label: `AI 涨停预测 (${data.premarket_predictions.length})` },
-                { key: 'top', label: `综合评分 (${data.top_stocks.length})` },
+                { key: 'focus', label: `交易焦点 (${(data.trade_focus ?? []).length})` },
+                { key: 'predictions', label: `AI 涨停预测 (${(data.premarket_predictions ?? []).length})` },
+                { key: 'top', label: `综合评分 (${(data.top_stocks ?? []).length})` },
                 { key: 'limit_up', label: `涨停池 (${data.limit_up_count})` },
               ]}
             />
-            {tab === 'focus' && <DataTable columns={focusColumns} rows={data.trade_focus} rowKey={(r) => r.code} onRowClick={(r) => open(r.code)} empty="今日还没有评分数据，先采集数据" />}
-            {tab === 'predictions' && <DataTable columns={predictionColumns} rows={data.premarket_predictions} rowKey={(r) => r.code} onRowClick={(r) => open(r.code)} empty="还没有 AI 涨停预测，点右上角「AI 涨停预测」" />}
-            {tab === 'top' && <DataTable columns={topColumns} rows={data.top_stocks} rowKey={(r) => r.code} onRowClick={(r) => open(r.code)} />}
-            {tab === 'limit_up' && <DataTable columns={limitColumns} rows={data.limit_up_stocks} rowKey={(r) => r.code} onRowClick={(r) => open(r.code)} />}
+            {tab === 'focus' && <DataTable columns={focusColumns} rows={data.trade_focus ?? []} rowKey={(r) => r.code} onRowClick={(r) => open(r.code)} empty="今日还没有评分数据，先采集数据" />}
+            {tab === 'predictions' && <DataTable columns={predictionColumns} rows={data.premarket_predictions ?? []} rowKey={(r) => r.code} onRowClick={(r) => open(r.code)} empty="还没有 AI 涨停预测，点右上角「AI 涨停预测」" />}
+            {tab === 'top' && <DataTable columns={topColumns} rows={data.top_stocks ?? []} rowKey={(r) => r.code} onRowClick={(r) => open(r.code)} />}
+            {tab === 'limit_up' && <DataTable columns={limitColumns} rows={data.limit_up_stocks ?? []} rowKey={(r) => r.code} onRowClick={(r) => open(r.code)} />}
           </Card>
         </div>
       )}

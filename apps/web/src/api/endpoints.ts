@@ -16,6 +16,7 @@ export const api = {
   capabilities: () => http.get<T.DataCapability[]>('/system/capabilities'),
   scheduler: () => http.get<T.SchedulerStatus>('/system/scheduler'),
   runJob: (id: string) => http.post<T.Task>(`/system/scheduler/${id}/run`),
+  setupStatus: () => http.get<T.SetupStatus>('/system/setup'),
   usage: (days: number) => http.get<T.UsageSummary>('/usage', { days }),
 
   // 首页与大盘

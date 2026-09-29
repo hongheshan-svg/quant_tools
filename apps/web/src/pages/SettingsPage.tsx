@@ -1,8 +1,10 @@
 // 设置：AI 模型（主/备）、推送渠道与路由、聊天机器人、登录安全；在桌面端里多一个「桌面端」页
 import { useEffect, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '@/api/endpoints'
 import type { AuthStatus, BotSettings, CollectRssResult, IntelligenceSource, IntelligenceTestResult, LLMRole, LLMSettings, NotifierDiagnosis, NotifierField, NotifierSettings, SchedulerJob, SchedulerStatus, SearchTestResult, SettingsImportResult } from '@/api/types'
 import { DataTable } from '@/components/DataTable'
+import { HelpButton } from '@/components/HelpButton'
 import { Button, Card, ErrorBox, Field, Input, PageHeader, Select, Spinner, Tabs, Textarea } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
 import { useTask } from '@/hooks/useTask'
@@ -12,8 +14,11 @@ import { getDesktop, type DesktopInfo, type QuantDesktop } from '@/utils/desktop
 type TabKey = 'llm' | 'notifier' | 'bot' | 'search' | 'intelligence' | 'scheduler' | 'backup' | 'security' | 'desktop'
 
 export function SettingsPage() {
-  const [tab, setTab] = useState<TabKey>('llm')
+  const [params] = useSearchParams()
+  const initialTab = params.get('tab')
   const desktop = getDesktop()
+  const [tab, setTab] = useState<TabKey>(() =>
+    (['llm', 'notifier', 'bot', 'search', 'intelligence', 'scheduler', 'backup', 'security'] as string[]).includes(initialTab ?? '') || (initialTab === 'desktop' && desktop) ? (initialTab as TabKey) : 'llm')
   const tabs: { key: TabKey; label: string }[] = [
     { key: 'llm', label: 'AI 模型' },
     { key: 'notifier', label: '推送' },
@@ -27,9 +32,10 @@ export function SettingsPage() {
   if (desktop) tabs.push({ key: 'desktop', label: '桌面端' })
   return (
     <div>
-      <PageHeader title="设置" description="保存后立即生效；设置会写回 config/settings.yaml（文件中的注释会丢失）" />
+      <PageHeader title="设置" description="保存后立即生效；设置会写回 config/settings.yaml（文件中的注释会丢失）" actions={<Link to="/setup" className="text-sm text-accent hover:underline">配置向导</Link>} />
       <Card bodyClassName="p-3">
         <Tabs value={tab} onChange={setTab} tabs={tabs} />
+        <div className="mb-2 flex justify-end"><HelpButton helpKey={tab} /></div>
         {tab === 'llm' && <LLMSettingsForm />}
         {tab === 'notifier' && <NotifierForm />}
         {tab === 'bot' && <BotForm />}
@@ -146,7 +152,7 @@ function RoleEditor({ title, roleKey, role, platforms, onChange }: {
   )
 }
 
-function LLMSettingsForm() {
+export function LLMSettingsForm() {
   const { data, error, loading, reload } = useApi(api.llmSettings)
   const [primary, setPrimary] = useState<LLMRole>({})
   const [backup, setBackup] = useState<LLMRole>({})
@@ -293,7 +299,7 @@ function BotForm() {
 
 const WEBHOOK_CHANNELS = ['wechat', 'dingtalk', 'feishu'] as const
 
-function NotifierForm() {
+export function NotifierForm() {
   const { data, error, loading, reload } = useApi<NotifierSettings>(api.notifierSettings)
   const [form, setForm] = useState<Record<string, any>>({})
   const [check, setCheck] = useState<NotifierDiagnosis | null>(null)
