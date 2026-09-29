@@ -176,6 +176,21 @@ def fetch_daily_df_with_fallback(code: str, start_date: str, end_date: str, orde
     raise RuntimeError(" | ".join(errors))
 
 
+def normalize_volume_unit(volume: float, amount: float, close: float) -> float:
+    """按「成交额/(收盘价×成交量)」判断成交量单位并统一为股。
+
+    比值应接近 1：约 0.01 说明成交量被多乘了 100，除回去；约 100 说明还是「手」，乘 100；其他原样返回。
+    """
+    if not (volume > 0 and amount > 0 and close > 0):
+        return volume
+    ratio = amount / (close * volume)
+    if 0.005 <= ratio <= 0.02:
+        return volume / 100
+    if 50 <= ratio <= 200:
+        return volume * 100
+    return volume
+
+
 def records_from_daily_df(code: str, name: str, source: str, df) -> list[dict]:
     records: list[dict] = []
 
@@ -233,6 +248,9 @@ def records_from_daily_df(code: str, name: str, source: str, df) -> list[dict]:
             # 新版腾讯日线与新浪日线：volume=成交量（股），amount=成交额（元），turnover=换手率（小数）
             volume = safe_float(row.get("volume", 0))
             amount = safe_float(row.get("amount", 0))
+            if source == "tx":
+                # 腾讯日线的成交量单位随 akshare 版本和板块（688/689）不一致，按成交额校验
+                volume = normalize_volume_unit(volume, amount, close_val)
             raw_turnover = safe_float(row.get("turnover", 0))
             turnover = raw_turnover * 100 if 0 < raw_turnover <= 1 else raw_turnover
 
@@ -310,3 +328,46 @@ def ensure_daily_history(code: str, db_path: str, name: str = "", min_bars: int 
             session.add_all(StockDaily(**r) for r in records)
         logger.info(f"已补齐 {bare} {name} 日线 {len(records)} 根（来源 {source}）")
     return len(records)
+
+
+# ---------- 科创板成交量修复 ----------
+
+_STAR_RATIO_RANGE = (0.005, 0.02)
+_STAR_MAX_CODES = 50
+
+
+def _is_star_code(code: str | None) -> bool:
+    """688/689 开头（含 sh 前缀、.SH 后缀的写法）"""
+    raw = (code or "").strip().lower().split(".")[0]
+    return bare_code(raw).startswith(("688", "689"))
+
+
+def repair_star_volume(db_path: str, apply: bool = False) -> dict:
+    """修复 stock_daily 里被放大 100 倍的科创板（688/689）成交量。
+
+    判断依据：成交额/(收盘价×成交量) 落在 [0.005, 0.02]。apply 为假时只统计不写入。
+    """
+    checked = matched = fixed = 0
+    codes: list[str] = []
+    with get_db_session(db_path) as session:
+        rows = session.query(StockDaily).filter(
+            (StockDaily.code.like("%688%")) | (StockDaily.code.like("%689%"))
+        ).all()
+        for row in rows:
+            if not _is_star_code(row.code):
+                continue
+            volume, amount, close = row.volume or 0, row.amount or 0, row.close or 0
+            if not (volume > 0 and amount > 0 and close > 0):
+                continue
+            checked += 1
+            ratio = amount / (close * volume)
+            if not (_STAR_RATIO_RANGE[0] <= ratio <= _STAR_RATIO_RANGE[1]):
+                continue
+            matched += 1
+            code = bare_code(str(row.code).lower().split(".")[0])
+            if code not in codes and len(codes) < _STAR_MAX_CODES:
+                codes.append(code)
+            if apply:
+                row.volume = volume / 100
+                fixed += 1
+    return {"checked": checked, "matched": matched, "fixed": fixed, "codes": codes}

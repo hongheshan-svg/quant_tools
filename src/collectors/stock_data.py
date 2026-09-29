@@ -15,7 +15,7 @@ from src.collectors.base import BaseCollector
 from src.collectors.fund_flow import collect_fund_flow
 from src.collectors.limit_up_reasons import fetch_ths_limit_up_reasons
 from src.collectors.source_chain import fetch_with_fallback, source_health
-from src.utils.stock_code import daily_limit_pct
+from src.utils.stock_code import board_of, daily_limit_pct
 from src.collectors.em_client import get_em_client
 from src.database.db import get_db_session
 from src.database.models import (
@@ -625,7 +625,7 @@ class StockDataCollector(BaseCollector):
                         price = _safe_float(parts[3])
                         if not name or price is None or price <= 0:
                             continue
-                        # 单位转换: 腾讯成交量=手→股(*100), 成交额=万→元(*10000), 市值=亿→元(*1e8)
+                        # 单位转换: 腾讯成交量=手→股(*100)（科创板已经是股，不再乘）, 成交额=万→元(*10000), 市值=亿→元(*1e8)
                         vol_raw = _safe_float(parts[36])
                         amt_raw = _safe_float(parts[37])
                         tmv_raw = _safe_float(parts[TENCENT_TOTAL_MV_INDEX]) if len(parts) > TENCENT_TOTAL_MV_INDEX else None
@@ -638,7 +638,7 @@ class StockDataCollector(BaseCollector):
                             "最高": _safe_float(parts[33]),
                             "最低": _safe_float(parts[34]),
                             "今开": _safe_float(parts[5]),
-                            "成交量": vol_raw * 100 if vol_raw else None,
+                            "成交量": (vol_raw if board_of(bare_code) == "科创板" else vol_raw * 100) if vol_raw else None,
                             "成交额": amt_raw * 10000 if amt_raw else None,
                             "换手率": _safe_float(parts[38]),
                             "总市值": tmv_raw * 1e8 if tmv_raw else None,

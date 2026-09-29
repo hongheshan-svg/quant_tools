@@ -28,12 +28,17 @@ NAME_HEADERS = ("证券名称", "股票名称", "名称", "name")
 HEADER_WORDS = {*CODE_HEADERS, *NAME_HEADERS, "备注", "持仓", "数量", "成本"}
 
 
+def _strip_bom(text: str | None) -> str:
+    """去掉 UTF-8 BOM（\ufeff），否则首行表头「代码」识别不出来。"""
+    return (text or "").replace("\ufeff", "")
+
+
 def _table_tokens(text: str) -> tuple[list[str], list[str]] | None:
     """有表头（含「代码」列）的表格只读代码列和名称列，避免把数量、金额里的 6 位数字当成代码。"""
-    lines = [line for line in (text or "").splitlines() if line.strip()]
+    lines = [line for line in _strip_bom(text).splitlines() if line.strip()]
     for i, line in enumerate(lines):
         delimiter = "\t" if "\t" in line else "," if "," in line else None
-        cells = [c.strip().strip('"').lower() for c in (line.split(delimiter) if delimiter else line.split())]
+        cells = [_strip_bom(c).strip().strip('"').strip().lower() for c in (line.split(delimiter) if delimiter else line.split())]
         code_idx = next((cells.index(h) for h in CODE_HEADERS if h in cells), None)
         if code_idx is None:
             continue
@@ -53,6 +58,7 @@ def _table_tokens(text: str) -> tuple[list[str], list[str]] | None:
 
 def extract_tokens(text: str) -> tuple[list[str], list[str]]:
     """从文本里找出 (代码列表, 可能的名称列表)，都按出现顺序去重。"""
+    text = _strip_bom(text)
     table = _table_tokens(text)
     if table:
         return table
