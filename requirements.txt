@@ -21,3 +21,5 @@ lxml>=5.0.0
 pyqt6>=6.7.0
 pyinstaller>=6.10.0
 playwright>=1.43.0
+dingtalk-stream>=0.24.0
+lark-oapi>=1.4.0

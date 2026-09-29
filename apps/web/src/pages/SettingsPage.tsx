@@ -1,18 +1,23 @@
-// 设置：AI 模型（主/备）、推送渠道与路由、登录安全；在桌面端里多一个「桌面端」页
+// 设置：AI 模型（主/备）、推送渠道与路由、聊天机器人、登录安全；在桌面端里多一个「桌面端」页
 import { useEffect, useState } from 'react'
 import { api } from '@/api/endpoints'
-import type { AuthStatus, LLMRole, LLMSettings, NotifierDiagnosis, NotifierSettings } from '@/api/types'
+import type { AuthStatus, BotSettings, LLMRole, LLMSettings, NotifierDiagnosis, NotifierSettings } from '@/api/types'
 import { Button, Card, ErrorBox, Field, Input, PageHeader, Select, Spinner, Tabs } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
 import { toast } from '@/stores/toast'
 import { getDesktop, type DesktopInfo, type QuantDesktop } from '@/utils/desktop'
 
-type TabKey = 'llm' | 'notifier' | 'security' | 'desktop'
+type TabKey = 'llm' | 'notifier' | 'bot' | 'security' | 'desktop'
 
 export function SettingsPage() {
   const [tab, setTab] = useState<TabKey>('llm')
   const desktop = getDesktop()
-  const tabs: { key: TabKey; label: string }[] = [{ key: 'llm', label: 'AI 模型' }, { key: 'notifier', label: '推送' }, { key: 'security', label: '登录安全' }]
+  const tabs: { key: TabKey; label: string }[] = [
+    { key: 'llm', label: 'AI 模型' },
+    { key: 'notifier', label: '推送' },
+    { key: 'bot', label: '聊天机器人' },
+    { key: 'security', label: '登录安全' },
+  ]
   if (desktop) tabs.push({ key: 'desktop', label: '桌面端' })
   return (
     <div>
@@ -21,6 +26,7 @@ export function SettingsPage() {
         <Tabs value={tab} onChange={setTab} tabs={tabs} />
         {tab === 'llm' && <LLMSettingsForm />}
         {tab === 'notifier' && <NotifierForm />}
+        {tab === 'bot' && <BotForm />}
         {tab === 'security' && <SecurityForm />}
         {tab === 'desktop' && desktop && <DesktopPanel desktop={desktop} />}
       </Card>
@@ -144,6 +150,90 @@ function LLMSettingsForm() {
           保存
         </Button>
       </div>
+    </div>
+  )
+}
+
+const BOT_PLATFORMS = [
+  { key: 'dingtalk', label: '钉钉', idKey: 'client_id', idLabel: 'Client ID（AppKey）', secretKey: 'client_secret', secretLabel: 'Client Secret',
+    hint: '钉钉开放平台 → 企业内部应用 → 添加机器人，消息接收模式选「Stream 模式」' },
+  { key: 'feishu', label: '飞书', idKey: 'app_id', idLabel: 'App ID', secretKey: 'app_secret', secretLabel: 'App Secret',
+    hint: '飞书开放平台 → 企业自建应用 → 添加机器人，事件订阅选「长连接」并订阅「接收消息」' },
+] as const
+
+function BotForm() {
+  const { data, error, loading, reload } = useApi<BotSettings>(api.botSettings)
+  const [form, setForm] = useState<Record<string, any>>({})
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (data) setForm(structuredClone(data.bot))
+  }, [data])
+
+  if (loading && !data) return <Spinner />
+  if (error || !data) return <ErrorBox message={error || '加载失败'} onRetry={reload} />
+
+  const set = (platform: string, key: string, value: unknown) =>
+    setForm((f) => ({ ...f, [platform]: { ...(f[platform] ?? {}), [key]: value } }))
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted">
+        在钉钉、飞书里发「诊断 茅台」「大盘」「自选」「持仓」或直接提问（AI 问股），只读，不能下单。用长连接收消息，不需要公网 IP；
+        单聊直接发，群聊需要 @机器人。
+      </p>
+      <div className="grid gap-3 lg:grid-cols-2">
+        {BOT_PLATFORMS.map((p) => (
+          <fieldset key={p.key} className="space-y-2 rounded-md border border-line p-3">
+            <legend className="px-1 text-sm text-accent">
+              {p.label}{data.running.includes(p.key) && <span className="ml-2 text-xs text-down">运行中</span>}
+            </legend>
+            <p className="text-xs text-muted">{p.hint}</p>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="checkbox" checked={!!form[p.key]?.enabled} onChange={(e) => set(p.key, 'enabled', e.target.checked)} /> 启用
+            </label>
+            <Field label={p.idLabel}><Input value={form[p.key]?.[p.idKey] ?? ''} onChange={(e) => set(p.key, p.idKey, e.target.value)} /></Field>
+            <Field label={p.secretLabel}>
+              <Input type="password" value={form[p.key]?.[p.secretKey] ?? ''} onChange={(e) => set(p.key, p.secretKey, e.target.value)} />
+            </Field>
+            {p.key === 'feishu' && (
+              <Field label="区域">
+                <Select className="w-full" value={form.feishu?.domain ?? 'feishu'} onChange={(e) => set('feishu', 'domain', e.target.value)}>
+                  <option value="feishu">飞书（国内）</option>
+                  <option value="lark">Lark（海外）</option>
+                </Select>
+              </Field>
+            )}
+          </fieldset>
+        ))}
+      </div>
+      <Field label="允许使用的用户 ID（逗号分隔，为空不限制；无权限的用户发消息时会收到自己的 ID）">
+        <Input
+          value={(form.allowed_users ?? []).join(', ')}
+          onChange={(e) => setForm((f) => ({ ...f, allowed_users: e.target.value.split(/[,，;；\s]+/).map((x) => x.trim()).filter(Boolean) }))}
+        />
+      </Field>
+      <Button
+        variant="primary"
+        loading={busy}
+        onClick={async () => {
+          setBusy(true)
+          try {
+            const r = await api.saveBot(form)
+            if (r.started.length) toast.success(`已保存并启动：${r.started.join('、')}`)
+            else if (!r.background) toast.info('已保存。当前服务没有运行定时任务，机器人由 main.py 负责，重启它后生效')
+            else if (r.restart_required) toast.info('已保存，重启服务后生效')
+            else toast.success('已保存')
+            void reload()
+          } catch (e) {
+            toast.error(e instanceof Error ? e.message : String(e))
+          } finally {
+            setBusy(false)
+          }
+        }}
+      >
+        保存
+      </Button>
     </div>
   )
 }

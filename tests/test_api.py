@@ -261,3 +261,21 @@ def test_frontend_not_built(tmp_path, monkeypatch):
     with TestClient(app) as client:
         assert "前端还没有构建" in client.get("/").json()["detail"]
     _reset_db_engine()
+
+
+def test_bot_settings(env, monkeypatch):
+    client, app, config = env
+    from src import config_loader
+    from src.bot import manager
+
+    config["bot"] = {"dingtalk": {"enabled": False, "client_id": "key", "client_secret": "ding-secret"}}
+    got = client.get("/api/v1/settings/bot").json()
+    assert got["bot"]["dingtalk"]["client_secret"] == "******" and got["running"] == []
+    monkeypatch.setattr(config_loader, "reload_config", lambda: {**config, "bot": settings_store.read_settings()["bot"]})
+    monkeypatch.setattr(manager, "start_bots", lambda *a, **k: (_ for _ in ()).throw(AssertionError("不该启动")))
+    body = {"bot": {"dingtalk": {"enabled": True, "client_id": "key", "client_secret": "******"}, "allowed_users": ["u1"]}}
+    result = client.put("/api/v1/settings/bot", json=body).json()
+    assert result == {"ok": True, "started": [], "restart_required": False, "background": False}  # 测试里没有运行定时任务
+    written = settings_store.read_settings()["bot"]
+    assert written["dingtalk"] == {"enabled": True, "client_id": "key", "client_secret": "ding-secret"}
+    assert written["allowed_users"] == ["u1"]

@@ -232,3 +232,53 @@ def test_notifier(channel: str, body: NotifierBody, config: dict = Depends(get_c
     from src.notifier import test_channel
 
     return test_channel({**config, "notifier": _merge_notifier(config.get("notifier") or {}, body.notifier)}, channel)
+
+
+# ---------- 聊天机器人 ----------
+
+BOT_SECRETS = (("dingtalk", "client_secret"), ("feishu", "app_secret"))
+
+
+@router.get("/settings/bot")
+def get_bot_settings(config: dict = Depends(get_config)) -> dict[str, Any]:
+    from src.bot.manager import running_bots
+
+    bot = copy.deepcopy(config.get("bot") or {})
+    for platform, key in BOT_SECRETS:
+        if (bot.get(platform) or {}).get(key):
+            bot[platform][key] = MASK
+    return {"bot": bot, "running": running_bots()}
+
+
+class BotBody(BaseModel):
+    bot: dict[str, Any]
+
+
+def _merge_bot(current: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    """前端回传的密钥仍是掩码时保留原值"""
+    merged = {**current, **incoming}
+    for platform, key in BOT_SECRETS:
+        new = incoming.get(platform)
+        if isinstance(new, dict):
+            old = current.get(platform) or {}
+            if new.get(key) == MASK:
+                new = {**new, key: old.get(key, "")}
+            merged[platform] = {**old, **new}
+    return merged
+
+
+@router.put("/settings/bot")
+def save_bot_settings(body: BotBody, request: Request, config: dict = Depends(get_config)) -> dict[str, Any]:
+    """保存后启动新启用的机器人；已在运行的机器人改了凭证要重启服务才生效"""
+    from src.bot.manager import running_bots, start_bots
+    from src.config_loader import reload_config
+    from src.settings_store import save_section
+
+    from api.app import apply_config
+
+    save_section("bot", _merge_bot(config.get("bot") or {}, body.bot))
+    new_config = reload_config()
+    apply_config(request.app, new_config)
+    was_running = running_bots()
+    started = start_bots(new_config, request.app.state.pipeline) if request.app.state.background else []
+    return {"ok": True, "started": started, "restart_required": bool(was_running), "background": request.app.state.background}

@@ -597,6 +597,18 @@ export interface NotifierSettings {
   kinds: Dict<string>
 }
 
+export interface BotSettings {
+  bot: Dict<any>
+  running: string[]
+}
+
+export interface BotSaveResult {
+  ok: boolean
+  started: string[]
+  restart_required: boolean
+  background: boolean
+}
+
 export interface NotifierDiagnosis {
   channels: { channel: string; label: string; enabled: boolean; configured: boolean; issues: string[] }[]
   routes: string[]

@@ -56,6 +56,11 @@ def create_app(config: dict[str, Any] | None = None, *, pipeline=None, start_sch
             scheduler = build_scheduler(config, BackgroundScheduler())
             scheduler.start()
             logger.info("API 服务已启动定时任务")
+            # 聊天机器人跟定时任务一起：--no-scheduler 表示 main.py 在运行，由它负责。
+            # 在后台线程里启动：SDK（尤其飞书）导入较慢，不能拖慢服务就绪
+            from src.bot.manager import start_bots
+
+            threading.Thread(target=start_bots, args=(config, app.state.pipeline), name="bot-start", daemon=True).start()
         yield
         if scheduler:
             scheduler.shutdown(wait=False)
@@ -69,6 +74,7 @@ def create_app(config: dict[str, Any] | None = None, *, pipeline=None, start_sch
     from src.services.chat_sessions import ChatSessionStore
 
     app.state.pipeline = pipeline
+    app.state.background = run_scheduler  # 本进程是否运行定时任务和聊天机器人
     app.state.tasks = TaskManager(workers=int(web.get("task_workers", 4)))
     app.state.auth = auth or AuthStore()
     app.state.chat_store = ChatSessionStore(config)

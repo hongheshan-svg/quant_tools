@@ -3,7 +3,7 @@ Web / API 服务入口（参考 daily_stock_analysis 的 server.py）
 
     python server.py                        # 按 config 的 web.host / web.port 启动（默认 127.0.0.1:8000）
     python server.py --host 0.0.0.0 --port 8000
-    python server.py --no-scheduler         # 只提供接口，不运行定时任务（已经在运行 main.py 时用）
+    python server.py --no-scheduler         # 只提供接口，不运行定时任务和聊天机器人（已经在运行 main.py 时用）
 
     python server.py --workdir D:/quant      # 以指定目录存放 config/、data/、logs/
 
@@ -97,7 +97,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="A股量化交易系统 Web / API 服务")
     parser.add_argument("--host", default=web.get("host", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(web.get("port", 8000)))
-    parser.add_argument("--no-scheduler", action="store_true", help="不运行定时任务")
+    parser.add_argument("--no-scheduler", action="store_true", help="不运行定时任务和聊天机器人")
     parser.add_argument("--workdir", help="存放 config/、data/、logs/ 的目录（默认当前目录）")
     args = parser.parse_args()
 

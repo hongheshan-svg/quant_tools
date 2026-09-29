@@ -91,7 +91,10 @@ def main():
             logger.info(f"{r['label']}：{r['seconds']}s")
         return
 
+    from src.bot.manager import start_bots
     from src.scheduler import start_scheduler
+
+    start_bots(config)
     logger.info("正在启动任务调度器...")
     start_scheduler(config)
 

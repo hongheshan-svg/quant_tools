@@ -83,3 +83,24 @@ describe('SettingsPage desktop tab', () => {
     expect(desktop.openLogDir).toHaveBeenCalled()
   })
 })
+
+describe('SettingsPage bot tab', () => {
+  it('saves bot settings with the masked secret untouched', async () => {
+    const saveBot = vi.spyOn(api, 'saveBot').mockResolvedValue({ ok: true, started: ['dingtalk'], restart_required: false, background: true })
+    vi.spyOn(api, 'botSettings').mockResolvedValue({
+      bot: { dingtalk: { enabled: false, client_id: 'key', client_secret: '******' }, feishu: {}, allowed_users: [] },
+      running: [],
+    })
+    stubFetch({ '/settings/llm': { llm: { primary: {}, fallback: {} }, platforms: {} } })
+    render(<MemoryRouter initialEntries={['/settings']}><AppRoutes authEnabled={false} /></MemoryRouter>)
+    fireEvent.click(screen.getByRole('tab', { name: '聊天机器人' }))
+    const enable = (await screen.findAllByLabelText('启用'))[0]
+    fireEvent.click(enable)
+    fireEvent.change(screen.getByLabelText(/允许使用的用户 ID/), { target: { value: 'u1，u2 u3' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(saveBot).toHaveBeenCalled())
+    expect(saveBot.mock.calls[0][0]).toEqual({
+      dingtalk: { enabled: true, client_id: 'key', client_secret: '******' }, feishu: {}, allowed_users: ['u1', 'u2', 'u3'],
+    })
+  })
+})
