@@ -358,6 +358,7 @@ class StockDiagnosis(Base):
     action = Column(String(10), comment="操作建议 buy/add/hold/watch/reduce/sell/avoid")
     score = Column(Float, comment="评分 0-100")
     result_json = Column(Text, comment="完整诊断结果 JSON")
+    run_log = Column(Text, comment="运行记录 JSON（步骤、耗时、模型）")
     created_at = Column(DateTime, default=datetime.now)
 
     __table_args__ = (

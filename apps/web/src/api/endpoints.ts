@@ -51,6 +51,7 @@ export const api = {
   diagnose: (code: string) => http.post<T.Task<T.Diagnosis>>(`/stocks/${code}/diagnosis`),
   diagnosisHistoryList: (params: { code?: string; action?: string; days?: number; limit?: number; offset?: number }) =>
     http.get<T.DiagnosisHistoryPage>('/stocks/diagnoses', params),
+  diagnosisTrend: (code: string, days = 180) => http.get<T.DiagnosisTrendPoint[]>(`/stocks/${code}/diagnosis-trend`, { days }),
   diagnosisRecord: (id: number) => http.get<T.DiagnosisRecord>(`/stocks/diagnoses/${id}`),
   deleteDiagnosis: (id: number) => http.del<{ ok: boolean }>(`/stocks/diagnoses/${id}`),
   diagnosisMarkdownUrl: (id: number) => `${API_BASE}/stocks/diagnoses/${id}/markdown`,

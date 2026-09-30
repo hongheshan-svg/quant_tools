@@ -7,6 +7,7 @@ import type { DailyBar, Diagnosis, SignalReview, StockNews } from '@/api/types'
 import { CandlestickChart, toCandles, type Period } from '@/components/CandlestickChart'
 import { DataTable, type Column } from '@/components/DataTable'
 import { DiagnosisView } from '@/components/DiagnosisView'
+import { ScoreTrendChart } from '@/components/ScoreTrendChart'
 import { Badge, Button, Card, ErrorBox, Pct, Spinner, Tabs } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
 import { progressText, useTask } from '@/hooks/useTask'
@@ -184,6 +185,7 @@ function DiagnosisTab({ code, isFund }: { code: string; isFund: boolean }) {
           <Link to={`/signals?code=${code}`} className="ml-2 text-xs text-accent hover:underline">决策信号</Link>
         </p>
       )}
+      <div className="mb-3"><ScoreTrendChart code={code} key={data?.created_at} /></div>
       {loading && !data ? <Spinner /> : data ? <DiagnosisView d={data} /> : <p className="text-sm text-muted">还没有诊断记录</p>}
     </div>
   )

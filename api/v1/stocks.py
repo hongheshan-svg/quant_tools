@@ -143,6 +143,13 @@ def latest_diagnosis(code: str, pipeline: PipelineService = Depends(get_pipeline
     return pipeline.latest_diagnosis(fund["code"] if fund else bare_code(code))
 
 
+@router.get("/{code}/diagnosis-trend")
+def diagnosis_trend(code: str, days: int = Query(180, ge=1, le=730), pipeline: PipelineService = Depends(get_pipeline)) -> list[dict[str, Any]]:
+    """诊断评分走势（时间正序）；指数代码不能调用 bare_code，交给 diagnosis_code 规范。"""
+    fund = _fund(code, pipeline)
+    return pipeline.diagnosis_trend(fund["code"] if fund else bare_code(code), days)
+
+
 @router.post("/{code}/diagnosis")
 def diagnose(code: str, tasks: TaskManager = Depends(get_tasks), pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
     fund = _fund(code, pipeline)

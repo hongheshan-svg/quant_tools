@@ -246,6 +246,12 @@ class PipelineService:
 
         return DataQueryService(self.db_path).get_diagnosis(diagnosis_id)
 
+    def diagnosis_trend(self, code: str, days: int = 180) -> list[dict[str, Any]]:
+        """某代码的诊断评分走势（时间正序）。"""
+        from src.services.data_query_service import DataQueryService
+
+        return DataQueryService(self.db_path).diagnosis_trend(code, days)
+
     def delete_diagnosis(self, diagnosis_id: int) -> bool:
         """删除一条诊断记录。"""
         from src.services.data_query_service import DataQueryService

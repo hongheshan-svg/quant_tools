@@ -128,7 +128,57 @@ class DataQueryService:
                 "score": r.score,
                 "created_at": r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "",
                 "result": detail,
+                "run_log": self._parse_run_log(r.run_log) or detail.get("run_log") or None,
             }
+
+    @staticmethod
+    def _parse_run_log(text: str | None) -> dict | None:
+        import json
+
+        try:
+            data = json.loads(text) if text else None
+        except ValueError:
+            return None
+        return data if isinstance(data, dict) else None
+
+    def diagnosis_trend(self, code: str, days: int = 180) -> list[dict]:
+        """某代码近 days 天的诊断评分走势（时间正序），附诊断行情日的收盘价（取不到为 None）。"""
+        from src.analyzers.decision import normalize_action
+        from src.database.models import FundDaily, StockDaily
+
+        key = diagnosis_code(code)
+        since = datetime.now() - timedelta(days=max(days, 1))
+        with get_db_session(self.db_path) as session:
+            rows = (
+                session.query(StockDiagnosis)
+                .filter(StockDiagnosis.code == key, StockDiagnosis.created_at >= since)
+                .order_by(StockDiagnosis.created_at.asc(), StockDiagnosis.id.asc()).all()
+            )
+            dates = {r.trade_date for r in rows if r.trade_date}
+            closes: dict[str, float | None] = {}
+            if dates:
+                table, cands = (FundDaily, [key]) if len(key) != 6 else (StockDaily, None)
+                if cands is None:
+                    from src.utils.stock_code import code_candidates
+
+                    cands = code_candidates(key)
+                found = session.query(table.trade_date, table.close).filter(table.code.in_(cands), table.trade_date.in_(dates)).all()
+                closes = {d: c for d, c in found}
+                if table is StockDaily and not closes:
+                    # 6 位代码也可能是 ETF（存在 fund_daily）
+                    found = session.query(FundDaily.trade_date, FundDaily.close).filter(FundDaily.code == key, FundDaily.trade_date.in_(dates)).all()
+                    closes = {d: c for d, c in found}
+            return [
+                {
+                    "id": r.id,
+                    "created_at": r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "",
+                    "trade_date": r.trade_date or "",
+                    "score": r.score,
+                    "action": normalize_action(r.action) or "",
+                    "close": closes.get(r.trade_date),
+                }
+                for r in rows
+            ]
 
     def delete_diagnosis(self, diagnosis_id: int) -> bool:
         """删除一条诊断记录；不存在返回 False。"""

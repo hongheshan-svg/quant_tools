@@ -6,6 +6,8 @@ import { api } from '@/api/endpoints'
 import type { DiagnosisHistoryItem, DiagnosisRecord } from '@/api/types'
 import { DataTable, type Column } from '@/components/DataTable'
 import { DiagnosisView } from '@/components/DiagnosisView'
+import { RunLogView } from '@/components/RunLogView'
+import { ScoreTrendChart } from '@/components/ScoreTrendChart'
 import { StockSearch } from '@/components/StockSearch'
 import { Badge, Button, Card, ErrorBox, Modal, PageHeader, Select, Spinner } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
@@ -66,6 +68,7 @@ export function HistoryPage() {
         </Select>
         {data && <span className="text-xs text-muted">共 {data.total} 条</span>}
       </Card>
+      {code && <Card className="mb-4" title="评分走势"><ScoreTrendChart code={code} /></Card>}
       {error && <ErrorBox message={error} onRetry={reload} />}
       {loading && !data ? <Spinner /> : data && (
         <Card bodyClassName="p-0">
@@ -84,6 +87,7 @@ export function HistoryPage() {
 
 function DetailModal({ id, onClose, onDeleted }: { id: number; onClose: () => void; onDeleted: () => void }) {
   const { data, error, loading } = useApi<DiagnosisRecord>(() => api.diagnosisRecord(id), [id])
+  const [logOpen, setLogOpen] = useState(false)  // 展开后才渲染运行记录
 
   const copy = async () => {
     try {
@@ -119,7 +123,15 @@ function DetailModal({ id, onClose, onDeleted }: { id: number; onClose: () => vo
         </>
       )}
     >
-      {error ? <ErrorBox message={error} /> : loading || !data ? <Spinner /> : <DiagnosisView d={data.result} />}
+      {error ? <ErrorBox message={error} /> : loading || !data ? <Spinner /> : (
+        <>
+          <DiagnosisView d={data.result} />
+          <details className="mt-4 rounded border border-line p-3" onToggle={(e) => setLogOpen(e.currentTarget.open)}>
+            <summary className="cursor-pointer text-sm font-medium">运行记录</summary>
+            {logOpen && <div className="mt-3"><RunLogView log={data.run_log ?? data.result.run_log} /></div>}
+          </details>
+        </>
+      )}
     </Modal>
   )
 }

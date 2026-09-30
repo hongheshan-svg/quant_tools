@@ -11,6 +11,7 @@ ETF / 指数 AI 诊断（对齐个股诊断的决策仪表盘，结果字段一�
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -18,11 +19,14 @@ from loguru import logger
 
 from src.database.db import get_db_session
 from src.database.models import FinanceNews, FundDaily, StockDiagnosis
+from src.services.run_log import RunLog
 from src.services.stock_diagnosis import (
     CACHE_MINUTES,
     MIN_DAILY_BARS,
     STABILITY_DAYS,
     StockDiagnosisService,
+    _step_factory,
+    note_guardrail_change,
 )
 
 FUND_NEWS_DAYS = 7
@@ -87,22 +91,31 @@ class FundDiagnosisService(StockDiagnosisService):
             if cached:
                 return {**cached, "cached": True}
 
-        context = self.build_context(code, info)
+        run_log = RunLog()
+        context = self.build_context(code, info, run_log)
         if not context["quote"]:
             return {"code": code, "name": context["name"], "kind": info["kind"], "error": "行情库中没有该基金/指数的数据"}
         cfg = self.config.get("diagnosis") or {}
+        model = str((getattr(self.llm, "primary_cfg", None) or {}).get("model") or "")
+        analyst_start = time.perf_counter()
         opinions = run_analysts(self.llm, context["text"], str(cfg.get("mode", "single")))
+        if opinions:
+            run_log.llm("分析员", model, True, (time.perf_counter() - analyst_start) * 1000)
         conflict = disagreement(opinions)
         message = context["text"]
         if opinions:
             message += "\n" + opinions_text(opinions, conflict)
+        decision_start = time.perf_counter()
         raw = self.llm.chat_json(user_message=message, system_message=FUND_SYSTEM_PROMPT + (DECISION_ADDENDUM if opinions else ""))
+        run_log.llm("决策", model, bool(raw), (time.perf_counter() - decision_start) * 1000)
         if not raw:
             return {"code": code, "name": context["name"], "kind": info["kind"], "error": "AI 未返回有效结果，请检查 AI 设置或稍后重试"}
         previous = self.latest(code, max_age_minutes=STABILITY_DAYS * 24 * 60)
         context = {**context, "opinions": opinions, "disagreement": conflict, "calibration": {}}
         result = self._apply_guardrails(raw, context, previous)
         result["kind"] = info["kind"]
+        note_guardrail_change(run_log, raw, result)
+        result["run_log"] = run_log.to_dict()
         diagnosis_id = self._save(result)
         self._record_signal(result, diagnosis_id)
         return result
@@ -143,7 +156,8 @@ class FundDiagnosisService(StockDiagnosisService):
         hits = [t for t in themes if any(k in t.name or t.name in name for k in keys)]
         return max(hits, key=lambda t: t.heat) if hits else None
 
-    def build_context(self, code: str, info: dict[str, Any] | None = None) -> dict[str, Any]:  # type: ignore[override]
+    def build_context(self, code: str, info: dict[str, Any] | None = None,
+                      run_log: RunLog | None = None) -> dict[str, Any]:  # type: ignore[override]
         """汇总诊断所需数据，返回 {"name", "quote", "text", ...}；text 为交给 LLM 的完整上下文。"""
         from src.analyzers.market_regime import MarketRegimeAnalyzer
         from src.analyzers.theme_tracker import ThemeTracker
@@ -153,12 +167,16 @@ class FundDiagnosisService(StockDiagnosisService):
 
         info = info or resolve_fund(code, self.db_path) or {"kind": "etf", "code": code, "name": ""}
         kind = info["kind"]
+        step = _step_factory(run_log)
         try:  # 本地日线不足时联网补齐，再把落后的最新几根补上
-            fund_data.ensure_fund_daily(code, self.db_path)
-            fund_data.refresh_recent_fund_daily(code, self.db_path)
+            with step("补齐日线"):
+                fund_data.ensure_fund_daily(code, self.db_path)
+                fund_data.refresh_recent_fund_daily(code, self.db_path)
         except Exception as e:
             logger.debug(f"补齐 ETF/指数日线失败 [{code}]: {e}")
-        bars = self._load_bars(code)
+        with step("行情与日线") as s:
+            bars = self._load_bars(code)
+            s.detail = f"本地日线 {len(bars)} 根"
         name = next((b.name for b in reversed(bars) if b.name), "") or info.get("name") or ""
         quote: dict[str, Any] = {}
         if bars:
@@ -169,17 +187,22 @@ class FundDiagnosisService(StockDiagnosisService):
             }
         recent = [f"{b.trade_date} 收{b.close} {b.change_pct:+.2f}%" for b in bars[-RECENT_BARS:] if b.close and b.change_pct is not None]
         closes = [b.close for b in bars if b.close]
-        tech = analyze_series(closes, [b.volume for b in bars if b.volume], [b.change_pct for b in bars if b.change_pct is not None])
+        with step("技术面") as s:
+            tech = analyze_series(closes, [b.volume for b in bars if b.volume], [b.change_pct for b in bars if b.change_pct is not None])
+            s.detail = tech.brief() or "数据不足"
         tech_text = self._technical_text(bars, tech)
 
         tracker = ThemeTracker(self.config)
         try:
-            themes = tracker.analyze_all()
+            with step("主线"):
+                themes = tracker.analyze_all()
         except Exception as e:
             logger.debug(f"读取主线失败: {e}")
             themes = []
         theme = self.match_theme(name, themes)
-        regime = MarketRegimeAnalyzer(self.config).analyze()
+        with step("大盘环境") as s:
+            regime = MarketRegimeAnalyzer(self.config).analyze()
+            s.detail = regime.regime
 
         since = datetime.now() - timedelta(days=FUND_NEWS_DAYS)
         news_lines: list[str] = []

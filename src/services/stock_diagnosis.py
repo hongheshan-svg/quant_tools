@@ -22,6 +22,8 @@
 from __future__ import annotations
 
 import json
+import time
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -38,6 +40,7 @@ from src.database.models import (
     StockDaily,
     StockDiagnosis,
 )
+from src.services.run_log import RunLog
 from src.trading.price_plan import sanitize_price_plan
 from src.utils.stock_code import bare_code, board_of, code_candidates
 
@@ -115,6 +118,31 @@ def _as_list(value: Any) -> list[str]:
     return [str(value)] if value else []
 
 
+def _step_factory(run_log: RunLog | None):
+    """run_log 为 None 时返回什么都不记录的 step。"""
+    if run_log is not None:
+        return run_log.step
+
+    @contextmanager
+    def _noop(name: str):
+        yield _NoopStep()
+
+    return _noop
+
+
+class _NoopStep:
+    detail = ""
+
+
+def note_guardrail_change(run_log: RunLog, raw: dict, result: dict[str, Any]) -> None:
+    """护栏把原始建议降级时记一条说明。"""
+    original = normalize_action(str(raw.get("action", "")))
+    final = result.get("action")
+    if original and final and original != final:
+        reasons = "；".join(result.get("guardrails") or [])
+        run_log.note(f"{ACTION_LABELS.get(original, original)}降为{ACTION_LABELS.get(final, final)}：{reasons}"[:200])
+
+
 class StockDiagnosisService:
     """单只股票的 AI 诊断。"""
 
@@ -141,12 +169,17 @@ class StockDiagnosisService:
 
         from src.services.diagnosis_agents import DECISION_ADDENDUM, disagreement, opinions_text, run_analysts
 
-        context = self.build_context(code)
+        run_log = RunLog()
+        context = self.build_context(code, run_log)
         if not context["quote"]:
             return {"code": code, "error": "行情库中没有该股票的数据"}
         cfg = self.config.get("diagnosis") or {}
         calibration = self._calibration() if cfg.get("calibration", True) else {}
+        model = str((getattr(self.llm, "primary_cfg", None) or {}).get("model") or "")
+        analyst_start = time.perf_counter()
         opinions = run_analysts(self.llm, context["text"], str(cfg.get("mode", "single")))
+        if opinions:
+            run_log.llm("分析员", model, True, (time.perf_counter() - analyst_start) * 1000)
         conflict = disagreement(opinions)
         message = context["text"]
         history_line = self._calibration_line(calibration, code)
@@ -154,16 +187,24 @@ class StockDiagnosisService:
             message += "\n" + history_line
         if opinions:
             message += "\n" + opinions_text(opinions, conflict)
+        consult_start = time.perf_counter()
         skill_opinions, skill_consensus, consult_text = self._consult_skills(context, skills)
+        if skill_opinions:
+            names = "、".join(o["display_name"] for o in skill_opinions)
+            run_log.llm(f"策略会诊（{names}）", model, True, (time.perf_counter() - consult_start) * 1000)
         if consult_text:
             message += "\n" + consult_text
+        decision_start = time.perf_counter()
         raw = self.llm.chat_json(user_message=message, system_message=SYSTEM_PROMPT + (DECISION_ADDENDUM if opinions else ""))
+        run_log.llm("决策", model, bool(raw), (time.perf_counter() - decision_start) * 1000)
         if not raw:
             return {"code": code, "name": context["name"], "error": "AI 未返回有效结果，请检查 AI 设置或稍后重试"}
         previous = self.latest(code, max_age_minutes=STABILITY_DAYS * 24 * 60)
         context = {**context, "opinions": opinions, "disagreement": conflict, "calibration": calibration}
         result = self._apply_guardrails(raw, context, previous)
         result["skill_opinions"], result["skill_consensus"] = skill_opinions, skill_consensus
+        note_guardrail_change(run_log, raw, result)
+        result["run_log"] = run_log.to_dict()
         diagnosis_id = self._save(result)
         self._record_opinions(result, diagnosis_id)
         self._record_signal(result, diagnosis_id)
@@ -287,7 +328,7 @@ class StockDiagnosisService:
             lines.append(f"{r.published or '近期'} [联网·{label}] {r.title}")
         return lines[:5]
 
-    def build_context(self, code: str) -> dict[str, Any]:
+    def build_context(self, code: str, run_log: RunLog | None = None) -> dict[str, Any]:
         """汇总诊断所需数据，返回 {"name", "quote", "text", ...}；text 为交给 LLM 的完整上下文。"""
         from src.analyzers.market_regime import MarketRegimeAnalyzer
         from src.analyzers.theme_tracker import ThemeTracker
@@ -299,19 +340,25 @@ class StockDiagnosisService:
         from src.collectors.fundamentals import EarningsCache, describe_chips, describe_earnings, earnings_risk, fetch_chip_summary
         from src.collectors.stock_news import get_stock_news
 
+        step = _step_factory(run_log)
         try:  # 本地日线不足时先联网补齐，技术面和筹码估算都依赖它
-            ensure_daily_history(code, self.db_path)
+            with step("补齐日线"):
+                ensure_daily_history(code, self.db_path)
         except Exception as e:
             logger.debug(f"补齐日线失败 [{code}]: {e}")
         cands = code_candidates(code)
         with get_db_session(self.db_path) as session:
-            bar_count = session.query(StockDaily.id).filter(StockDaily.code.in_(cands)).count()
-            flow = latest_fund_flow(session, code)
-            flow_text, flow_ratio = describe_flow(flow), (flow.net_ratio if flow else None)
-            bars = (
-                session.query(StockDaily).filter(StockDaily.code.in_(cands))
-                .order_by(StockDaily.trade_date.desc()).limit(10).all()
-            )
+            with step("行情与日线") as s:
+                bar_count = session.query(StockDaily.id).filter(StockDaily.code.in_(cands)).count()
+                bars = (
+                    session.query(StockDaily).filter(StockDaily.code.in_(cands))
+                    .order_by(StockDaily.trade_date.desc()).limit(10).all()
+                )
+                s.detail = f"本地日线 {bar_count} 根"
+            with step("资金流") as s:
+                flow = latest_fund_flow(session, code)
+                flow_text, flow_ratio = describe_flow(flow), (flow.net_ratio if flow else None)
+                s.detail = flow_text or "暂无"
             quote = {}
             if bars:
                 b = bars[0]
@@ -355,29 +402,49 @@ class StockDiagnosisService:
             )
             dragon_lines = [f"{d} {reason or ''} 净买入{(net or 0) / 1e4:.0f}万" for d, reason, net in dragon]
 
-        tech = analyze_technical(code, self.db_path)
+        with step("技术面") as s:
+            tech = analyze_technical(code, self.db_path)
+            s.detail = tech.brief() or "数据不足"
         tracker = ThemeTracker(self.config)
-        themes = tracker.analyze_all()
-        role = tracker.stock_roles(themes).get(code)
-        theme = next((t for t in themes if role and (t.dimension, t.name) == (role["dimension"], role["theme"])), None)
-        regime = MarketRegimeAnalyzer(self.config).analyze()
+        with step("主线") as s:
+            themes = tracker.analyze_all()
+            role = tracker.stock_roles(themes).get(code)
+            theme = next((t for t in themes if role and (t.dimension, t.name) == (role["dimension"], role["theme"])), None)
+            s.detail = f"{role['role']}（{role['theme']}）" if role else "不在近期涨停主线中"
+        with step("大盘环境") as s:
+            regime = MarketRegimeAnalyzer(self.config).analyze()
+            s.detail = regime.regime
         position = self._position(code)
         real_position = self._real_position(code)
-        chip = fetch_chip_summary(code, self.db_path)
+        with step("筹码") as s:
+            chip = fetch_chip_summary(code, self.db_path)
+            s.detail = "已获取" if chip is not None else "暂无"
         try:
-            earnings = EarningsCache.get(code)
+            with step("业绩") as s:
+                earnings = EarningsCache.get(code)
+                s.detail = "已获取" if earnings is not None else "暂无"
         except Exception as e:
             logger.debug(f"业绩数据获取失败: {e}")
             earnings = None
         try:
-            stock_news = get_stock_news(code)
+            with step("个股新闻公告") as s:
+                stock_news = get_stock_news(code)
+                s.detail = f"新闻 {len(stock_news['news'])} 条，公告 {len(stock_news['notices'])} 条"
         except Exception as e:
             logger.debug(f"个股新闻/公告获取失败: {e}")
             stock_news = {"news": [], "notices": []}
         seen = set(news_lines)
         news_lines += [f"{n['date'][:10]} [{n['source'] or '东方财富'}] {n['title']}" for n in stock_news["news"][:STOCK_NEWS_LIMIT]
                        if n["title"] not in seen]
-        news_lines += self._web_search_lines(code, name, news_lines)
+        from src.collectors import news_search
+
+        if news_search.is_enabled(self.config):  # 未启用联网搜索时不记录这一步
+            with step("联网搜索") as s:
+                web_lines = self._web_search_lines(code, name, news_lines)
+                s.detail = f"{len(web_lines)} 条"
+        else:
+            web_lines = []
+        news_lines += web_lines
         notices = stock_news["notices"]
         notice_lines = [f"{n['date']} {n['title']}" + (f"（风险：{n['risk']}）" if n["risk"] else "") for n in notices[:NOTICE_LIMIT]]
         risk_notices = [n for n in notices if n["risk"]]
@@ -570,6 +637,7 @@ class StockDiagnosisService:
             row = StockDiagnosis(
                 code=result["code"], name=result["name"], trade_date=result["trade_date"], action=result["action"],
                 score=result["score"], result_json=json.dumps(result, ensure_ascii=False),
+                run_log=json.dumps(result["run_log"], ensure_ascii=False) if result.get("run_log") else None,
             )
             session.add(row)
             session.flush()

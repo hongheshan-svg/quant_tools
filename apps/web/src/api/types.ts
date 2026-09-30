@@ -249,6 +249,29 @@ export interface DiagnosisHistoryPage {
   items: DiagnosisHistoryItem[]
 }
 
+export interface RunLogStep {
+  name: string
+  kind: 'data' | 'llm' | 'note'
+  ok: boolean
+  ms: number
+  detail: string
+}
+
+export interface RunLog {
+  steps: RunLogStep[]
+  total_ms: number
+  model: string
+}
+
+export interface DiagnosisTrendPoint {
+  id: number
+  created_at: string
+  trade_date: string
+  score: number | null
+  action: string
+  close: number | null
+}
+
 export interface DiagnosisRecord {
   id: number
   code: string
@@ -258,6 +281,7 @@ export interface DiagnosisRecord {
   score: number | null
   created_at: string
   result: Diagnosis
+  run_log: RunLog | null
 }
 
 export interface Diagnosis {
@@ -265,6 +289,7 @@ export interface Diagnosis {
   name: string
   trade_date: string
   created_at: string
+  run_log?: RunLog | null
   score: number
   action: string
   action_label: string
