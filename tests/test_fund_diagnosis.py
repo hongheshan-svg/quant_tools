@@ -68,6 +68,7 @@ def offline(monkeypatch):
     from src.collectors import fund_data
 
     monkeypatch.setattr(fund_data, "ensure_fund_daily", lambda code, db_path, min_bars=60, **k: 0)
+    monkeypatch.setattr(fund_data, "refresh_recent_fund_daily", lambda *a, **k: 0)  # 不依赖当前时间/网络
     monkeypatch.setattr(daily_history_mod, "ensure_daily_history", lambda *a, **k: 0)
     monkeypatch.setattr(fundamentals_mod, "fetch_chip_summary", lambda *a, **k: None)
     monkeypatch.setattr(fundamentals_mod.EarningsCache, "get", classmethod(lambda cls, code: None))

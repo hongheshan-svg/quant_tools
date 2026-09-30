@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import httpx
 import pandas as pd
@@ -179,7 +179,8 @@ class _Resp:
             raise httpx.HTTPStatusError("err", request=None, response=None)  # type: ignore[arg-type]
 
 
-def _bars(n=70, end="2026-09-29"):
+def _bars(n=70, end=None):
+    end = end or (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")  # 相对当前日期，始终落在 150 天补齐窗口内
     days = [d.strftime("%Y-%m-%d") for d in pd.bdate_range(end=end, periods=n)]
     return [[d, f"{4000 + i:.2f}", f"{4001 + i:.2f}", f"{4010 + i:.2f}", f"{3990 + i:.2f}", f"{100000 + i}"] for i, d in enumerate(days)]
 
