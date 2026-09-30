@@ -6,6 +6,7 @@ import { DataTable, type Column } from '@/components/DataTable'
 import { Badge, Button, Card, ErrorBox, Field, Input, PageHeader, Select, Spinner, Tabs } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
 import { useTask } from '@/hooks/useTask'
+import { useT } from '@/i18n'
 import { toast } from '@/stores/toast'
 
 const LEVEL: Record<string, [string, 'down' | 'warn' | 'accent']> = { critical: ['紧急', 'down'], warning: ['注意', 'warn'], info: ['提示', 'accent'] }
@@ -13,30 +14,31 @@ const LEVEL: Record<string, [string, 'down' | 'warn' | 'accent']> = { critical: 
 type TabKey = 'records' | 'rules' | 'settings'
 
 export function AlertsPage() {
+  const t = useT()
   const [tab, setTab] = useState<TabKey>('records')
   const { data, error, loading, reload } = useApi(api.alerts)
   const check = useTask<{ alerts: number; skipped?: string }>()
   const columns: Column<AlertRow>[] = [
-    { key: 'time', title: '时间', render: (r) => <span className="num text-xs">{r.time}</span> },
-    { key: 'stock', title: '股票', render: (r) => <>{r.name} <span className="num text-xs text-muted">{r.code}</span></> },
-    { key: 'type', title: '类型', render: (r) => r.type },
-    { key: 'level', title: '级别', render: (r) => <Badge tone={(LEVEL[r.severity] ?? ['', 'accent'])[1]}>{(LEVEL[r.severity] ?? [r.severity])[0]}</Badge> },
-    { key: 'message', title: '内容', className: 'max-w-lg', render: (r) => r.message },
-    { key: 'pushed', title: '推送', render: (r) => (r.notified ? <span className="text-down">已推送</span> : <span className="text-xs text-muted">{r.reason || '未推送'}</span>) },
+    { key: 'time', title: t('时间'), render: (r) => <span className="num text-xs">{r.time}</span> },
+    { key: 'stock', title: t('股票'), render: (r) => <>{r.name} <span className="num text-xs text-muted">{r.code}</span></> },
+    { key: 'type', title: t('类型'), render: (r) => t(r.type) },
+    { key: 'level', title: t('级别'), render: (r) => <Badge tone={(LEVEL[r.severity] ?? ['', 'accent'])[1]}>{t((LEVEL[r.severity] ?? [r.severity])[0])}</Badge> },
+    { key: 'message', title: t('内容'), className: 'max-w-lg', render: (r) => r.message },
+    { key: 'pushed', title: t('推送'), render: (r) => (r.notified ? <span className="text-down">{t('已推送')}</span> : <span className="text-xs text-muted">{r.reason || t('未推送')}</span>) },
   ]
   return (
     <div>
       <PageHeader
-        title="盘中提醒"
-        description="交易时段内每次采集后检查今日信号股、持仓、自选股：封涨停、炸板、跌破/接近止损、目标价、大跌、大盘转弱和自定义技术指标规则"
+        title={t('盘中提醒')}
+        description={t('交易时段内每次采集后检查今日信号股、持仓、自选股：封涨停、炸板、跌破/接近止损、目标价、大跌、大盘转弱和自定义技术指标规则')}
         actions={
-          <Button loading={check.running} onClick={() => check.run(api.checkAlerts, { success: (r) => (r.skipped ? `已跳过：${r.skipped}` : `新增 ${r.alerts} 条提醒`) }).then(reload).catch(() => {})}>
-            立即检查
+          <Button loading={check.running} onClick={() => check.run(api.checkAlerts, { success: (r) => (r.skipped ? t('已跳过：{reason}', { reason: r.skipped }) : t('新增 {n} 条提醒', { n: r.alerts })) }).then(reload).catch(() => {})}>
+            {t('立即检查')}
           </Button>
         }
       />
       <Tabs<TabKey>
-        tabs={[{ key: 'records', label: '提醒记录' }, { key: 'rules', label: '提醒规则' }, { key: 'settings', label: '提醒设置' }]}
+        tabs={[{ key: 'records', label: t('提醒记录') }, { key: 'rules', label: t('提醒规则') }, { key: 'settings', label: t('提醒设置') }]}
         value={tab}
         onChange={setTab}
       />
@@ -44,7 +46,7 @@ export function AlertsPage() {
         <>
           {error && <ErrorBox message={error} onRetry={reload} />}
           <Card bodyClassName="p-0">
-            <DataTable columns={columns} rows={data ?? []} rowKey={(r, i) => `${r.time}-${r.code}-${i}`} empty={loading ? '加载中…' : '还没有提醒记录'} maxHeight="75vh" />
+            <DataTable columns={columns} rows={data ?? []} rowKey={(r, i) => `${r.time}-${r.code}-${i}`} empty={loading ? t('加载中…') : t('还没有提醒记录')} maxHeight="75vh" />
           </Card>
         </>
       )}
@@ -56,6 +58,7 @@ export function AlertsPage() {
 
 /** 提醒规则：本地编辑，点「保存」整体提交 */
 function RulesPanel() {
+  const t = useT()
   const { data, error, loading, reload } = useApi(api.alertRules)
   const [rules, setRules] = useState<AlertRule[]>([])
   const [names, setNames] = useState<Record<string, string>>({})
@@ -100,7 +103,7 @@ function RulesPanel() {
       const r = await api.saveAlertRules(rules)
       setRules(r.rules)
       setDirty(false)
-      toast.success('提醒规则已保存')
+      toast.success(t('提醒规则已保存'))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
@@ -111,7 +114,7 @@ function RulesPanel() {
     setTesting(index)
     try {
       const r = await api.testAlertRule(rules[index])
-      setResults((x) => ({ ...x, [index]: `${r.triggered ? '已触发：' : '未触发：'}${r.message}` }))
+      setResults((x) => ({ ...x, [index]: `${r.triggered ? t('已触发：') : t('未触发：')}${r.message}` }))
     } catch (e) {
       setResults((x) => ({ ...x, [index]: e instanceof Error ? e.message : String(e) }))
     } finally {
@@ -120,29 +123,29 @@ function RulesPanel() {
   }
 
   const columns: Column<AlertRule>[] = [
-    { key: 'stock', title: '股票', render: (r) => <>{names[r.code] || '-'} <span className="num text-xs text-muted">{r.code}</span></> },
-    { key: 'type', title: '类型', render: (r) => types[r.type]?.label ?? r.type },
-    { key: 'cond', title: '条件', render: (r) => describeRule(r, types) },
+    { key: 'stock', title: t('股票'), render: (r) => <>{names[r.code] || '-'} <span className="num text-xs text-muted">{r.code}</span></> },
+    { key: 'type', title: t('类型'), render: (r) => t(types[r.type]?.label ?? r.type) },
+    { key: 'cond', title: t('条件'), render: (r) => describeRule(r, types) },
     {
       key: 'enabled',
-      title: '启用',
+      title: t('启用'),
       render: (r) => {
         const i = rules.indexOf(r)
-        return <input type="checkbox" aria-label="启用" checked={r.enabled !== false} onChange={(e) => update(rules.map((x, j) => (j === i ? { ...x, enabled: e.target.checked } : x)))} />
+        return <input type="checkbox" aria-label={t('启用')} checked={r.enabled !== false} onChange={(e) => update(rules.map((x, j) => (j === i ? { ...x, enabled: e.target.checked } : x)))} />
       },
     },
-    { key: 'note', title: '备注', render: (r) => <span className="text-xs text-muted">{r.note || '-'}</span> },
+    { key: 'note', title: t('备注'), render: (r) => <span className="text-xs text-muted">{r.note || '-'}</span> },
     {
       key: 'ops',
-      title: '操作',
+      title: t('操作'),
       render: (r) => {
         const i = rules.indexOf(r)
         return (
           <div className="space-y-1">
             <div className="flex gap-1">
-              <Button loading={testing === i} onClick={() => test(i)}>测试</Button>
-              <Button onClick={() => setEditing({ index: i, rule: r })}>编辑</Button>
-              <Button variant="danger" onClick={() => update(rules.filter((_, j) => j !== i))}>删除</Button>
+              <Button loading={testing === i} onClick={() => test(i)}>{t('测试')}</Button>
+              <Button onClick={() => setEditing({ index: i, rule: r })}>{t('编辑')}</Button>
+              <Button variant="danger" onClick={() => update(rules.filter((_, j) => j !== i))}>{t('删除')}</Button>
             </div>
             {results[i] && <div className="max-w-xs text-xs text-muted">{results[i]}</div>}
           </div>
@@ -154,18 +157,18 @@ function RulesPanel() {
   return (
     <>
       <Card
-        title="自定义提醒规则"
+        title={t('自定义提醒规则')}
         actions={
           <div className="flex gap-2">
-            <Button onClick={() => setEditing({ index: -1, rule: null })}>新增规则</Button>
-            <Button variant="primary" loading={saving} disabled={!dirty} onClick={save}>保存</Button>
+            <Button onClick={() => setEditing({ index: -1, rule: null })}>{t('新增规则')}</Button>
+            <Button variant="primary" loading={saving} disabled={!dirty} onClick={save}>{t('保存')}</Button>
           </div>
         }
         bodyClassName="p-0"
       >
-        <DataTable columns={columns} rows={rules} rowKey={(_, i) => String(i)} empty="还没有规则，点右上角「新增规则」" />
+        <DataTable columns={columns} rows={rules} rowKey={(_, i) => String(i)} empty={t('还没有规则，点右上角「新增规则」')} />
       </Card>
-      {dirty && <p className="mt-2 text-xs text-muted">有未保存的修改，点「保存」后才会生效</p>}
+      {dirty && <p className="mt-2 text-xs text-muted">{t('有未保存的修改，点「保存」后才会生效')}</p>}
       <AlertRuleEditor
         open={editing !== null}
         initial={editing?.rule ?? null}
@@ -185,6 +188,7 @@ function RulesPanel() {
 
 /** 提醒设置：冷却时间、阈值、开关和额外关注的股票 */
 function SettingsPanel() {
+  const t = useT()
   const { data, error, loading, reload } = useApi(api.alertSettings)
   const [form, setForm] = useState<AlertSettings | null>(null)
   const [watch, setWatch] = useState('')
@@ -212,7 +216,7 @@ function SettingsPanel() {
       const saved = await api.saveAlertSettings({ ...form, watchlist })
       setForm(saved)
       setWatch(saved.watchlist.join(', '))
-      toast.success('提醒设置已保存')
+      toast.success(t('提醒设置已保存'))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     } finally {
@@ -221,44 +225,44 @@ function SettingsPanel() {
   }
 
   return (
-    <Card title="提醒设置" actions={<Button variant="primary" loading={saving} onClick={save}>保存</Button>}>
+    <Card title={t('提醒设置')} actions={<Button variant="primary" loading={saving} onClick={save}>{t('保存')}</Button>}>
       <div className="grid max-w-2xl gap-4 sm:grid-cols-2">
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
-          启用盘中提醒
+          {t('启用盘中提醒')}
         </label>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={form.market_regime} onChange={(e) => setForm({ ...form, market_regime: e.target.checked })} />
-          大盘环境转弱时提醒
+          {t('大盘环境转弱时提醒')}
         </label>
-        {num('cooldown_minutes', '冷却时间（分钟）', '同一提醒在冷却期内不重复推送')}
-        {num('big_drop_pct', '大跌阈值（%）', '跌幅达到该值提醒，填负数，如 -7')}
-        {num('near_stop_pct', '接近止损（%）', '持仓现价距止损价不到该百分比时提醒')}
-        {num('regime_score_drop', '大盘评分下降（分）', '比前一交易日下降该分数以上时提醒')}
-        <Field label="最低推送级别" hint="低于该级别的提醒只记录不推送；紧急提醒永远推送">
+        {num('cooldown_minutes', t('冷却时间（分钟）'), t('同一提醒在冷却期内不重复推送'))}
+        {num('big_drop_pct', t('大跌阈值（%）'), t('跌幅达到该值提醒，填负数，如 -7'))}
+        {num('near_stop_pct', t('接近止损（%）'), t('持仓现价距止损价不到该百分比时提醒'))}
+        {num('regime_score_drop', t('大盘评分下降（分）'), t('比前一交易日下降该分数以上时提醒'))}
+        <Field label={t('最低推送级别')} hint={t('低于该级别的提醒只记录不推送；紧急提醒永远推送')}>
           <Select
             className="w-full"
-            aria-label="最低推送级别"
+            aria-label={t('最低推送级别')}
             value={form.min_severity ?? 'info'}
             onChange={(e) => setForm({ ...form, min_severity: e.target.value as AlertSettings['min_severity'] })}
           >
-            <option value="info">全部（提示及以上）</option>
-            <option value="warning">警告及以上</option>
-            <option value="critical">仅紧急</option>
+            <option value="info">{t('全部（提示及以上）')}</option>
+            <option value="warning">{t('警告及以上')}</option>
+            <option value="critical">{t('仅紧急')}</option>
           </Select>
         </Field>
         <div className="space-y-2">
           <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" aria-label="推送盘中提醒日报" checked={!!form.daily_digest} onChange={(e) => setForm({ ...form, daily_digest: e.target.checked })} />
-            推送盘中提醒日报
+            <input type="checkbox" aria-label={t('推送盘中提醒日报')} checked={!!form.daily_digest} onChange={(e) => setForm({ ...form, daily_digest: e.target.checked })} />
+            {t('推送盘中提醒日报')}
           </label>
-          <Field label="日报时间（HH:MM，工作日）" hint="修改后需重启服务生效；当天没有提醒时不推送">
-            <Input aria-label="日报时间" value={form.digest_time ?? '15:10'} onChange={(e) => setForm({ ...form, digest_time: e.target.value })} />
+          <Field label={t('日报时间（HH:MM，工作日）')} hint={t('修改后需重启服务生效；当天没有提醒时不推送')}>
+            <Input aria-label={t('日报时间')} value={form.digest_time ?? '15:10'} onChange={(e) => setForm({ ...form, digest_time: e.target.value })} />
           </Field>
         </div>
         <div className="sm:col-span-2">
-          <Field label="额外关注的股票代码" hint="逗号分隔，如 600519, 300750；自选股、持仓、今日信号股会自动监控">
-            <Input aria-label="额外关注的股票代码" value={watch} onChange={(e) => setWatch(e.target.value)} />
+          <Field label={t('额外关注的股票代码')} hint={t('逗号分隔，如 600519, 300750；自选股、持仓、今日信号股会自动监控')}>
+            <Input aria-label={t('额外关注的股票代码')} value={watch} onChange={(e) => setWatch(e.target.value)} />
           </Field>
         </div>
       </div>
