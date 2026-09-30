@@ -1,8 +1,11 @@
 import { useState } from 'react'
 import { api } from '@/api/endpoints'
 import { Button, Input } from '@/components/ui'
+import { useLang, useT } from '@/i18n'
 
 export function LoginPage({ passwordSet, onLoggedIn }: { passwordSet: boolean; onLoggedIn: () => void }) {
+  const t = useT()
+  const [lang, setLang] = useLang()
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -29,12 +32,22 @@ export function LoginPage({ passwordSet, onLoggedIn }: { passwordSet: boolean; o
           void submit()
         }}
       >
-        <h1 className="mb-1 text-lg font-semibold">A股量化</h1>
-        <p className="mb-4 text-xs text-muted">{passwordSet ? '请输入访问密码' : '首次使用，请设置访问密码（至少 6 位）'}</p>
-        <Input type="password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} placeholder="密码" aria-label="密码" />
+        <div className="mb-1 flex items-center justify-between">
+          <h1 className="text-lg font-semibold">{t('A股量化')}</h1>
+          <button
+            type="button"
+            aria-label={t('切换语言')}
+            onClick={() => setLang(lang === 'en' ? 'zh' : 'en')}
+            className="rounded-md border border-line px-2 py-1 text-xs text-muted hover:text-text"
+          >
+            {lang === 'en' ? '中' : 'EN'}
+          </button>
+        </div>
+        <p className="mb-4 text-xs text-muted">{passwordSet ? t('请输入访问密码') : t('首次使用，请设置访问密码（至少 6 位）')}</p>
+        <Input type="password" autoFocus value={password} onChange={(e) => setPassword(e.target.value)} placeholder={t('密码')} aria-label={t('密码')} />
         {error && <p className="mt-2 text-sm text-danger">{error}</p>}
         <Button type="submit" variant="primary" className="mt-4 w-full" loading={loading}>
-          {passwordSet ? '登录' : '设置密码并登录'}
+          {passwordSet ? t('登录') : t('设置密码并登录')}
         </Button>
       </form>
     </div>

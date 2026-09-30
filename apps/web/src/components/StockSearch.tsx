@@ -3,6 +3,7 @@ import { Search } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { api } from '@/api/endpoints'
 import type { StockRef } from '@/api/types'
+import { useT } from '@/i18n'
 import { cn } from '@/utils/cn'
 import { FUND_LABELS } from '@/utils/fund'
 
@@ -14,6 +15,7 @@ export function StockSearch({ onSelect, placeholder = '搜索股票 / ETF / 指�
   className?: string
   autoFocus?: boolean
 }) {
+  const t = useT()
   const [text, setText] = useState('')
   const [results, setResults] = useState<StockRef[]>([])
   const [active, setActive] = useState(0)
@@ -73,8 +75,8 @@ export function StockSearch({ onSelect, placeholder = '搜索股票 / ETF / 指�
             setOpen(false)
           }
         }}
-        placeholder={placeholder}
-        aria-label="搜索股票"
+        placeholder={t(placeholder)}
+        aria-label={t('搜索股票')}
         className="w-full rounded-md border border-line bg-bg py-1.5 pr-2.5 pl-8 text-sm outline-none placeholder:text-muted focus:border-accent"
       />
       {open && results.length > 0 && (
@@ -91,7 +93,7 @@ export function StockSearch({ onSelect, placeholder = '搜索股票 / ETF / 指�
               <span>
                 {r.name}
                 {r.kind && r.kind !== 'stock' && (
-                  <span className="ml-2 rounded border border-line px-1 text-xs text-muted">{FUND_LABELS[r.kind]}</span>
+                  <span className="ml-2 rounded border border-line px-1 text-xs text-muted">{t(FUND_LABELS[r.kind])}</span>
                 )}
               </span>
               <span className="num text-muted">{r.code}</span>

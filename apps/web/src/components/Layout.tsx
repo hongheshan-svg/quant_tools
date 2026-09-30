@@ -6,6 +6,7 @@ import {
 import { useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { api } from '@/api/endpoints'
+import { useLang, useT } from '@/i18n'
 import { useThemeStore } from '@/stores/theme'
 import { cn } from '@/utils/cn'
 import { StockSearch } from './StockSearch'
@@ -55,12 +56,14 @@ export function Layout({ authEnabled }: { authEnabled: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const { theme, toggle } = useThemeStore()
   const navigate = useNavigate()
+  const t = useT()
+  const [lang, setLang] = useLang()
 
   const nav = (
     <nav className="flex flex-col gap-4 p-3">
       {NAV.map((g) => (
         <div key={g.group}>
-          <div className="mb-1 px-2 text-[11px] tracking-wide text-muted">{g.group}</div>
+          <div className="mb-1 px-2 text-[11px] tracking-wide text-muted">{t(g.group)}</div>
           {g.items.map((item) => (
             <NavLink
               key={item.to}
@@ -72,7 +75,7 @@ export function Layout({ authEnabled }: { authEnabled: boolean }) {
               }
             >
               {item.icon}
-              {item.label}
+              {t(item.label)}
             </NavLink>
           ))}
         </div>
@@ -83,7 +86,7 @@ export function Layout({ authEnabled }: { authEnabled: boolean }) {
   return (
     <div className="flex h-full">
       <aside className="hidden w-48 shrink-0 overflow-y-auto border-r border-line bg-panel md:block">
-        <div className="px-4 pt-4 text-sm font-semibold">A股量化</div>
+        <div className="px-4 pt-4 text-sm font-semibold">{t('A股量化')}</div>
         {nav}
       </aside>
       {menuOpen && (
@@ -95,19 +98,27 @@ export function Layout({ authEnabled }: { authEnabled: boolean }) {
       )}
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center gap-2 border-b border-line bg-panel px-3 py-2">
-          <button type="button" className="text-muted md:hidden" aria-label="菜单" onClick={() => setMenuOpen(true)}>
+          <button type="button" className="text-muted md:hidden" aria-label={t('菜单')} onClick={() => setMenuOpen(true)}>
             <Menu className="size-5" />
           </button>
           <StockSearch className="max-w-sm flex-1" onSelect={(s) => navigate(`/stocks/${s.code}`)} />
           <div className="ml-auto flex items-center gap-2">
             <TaskCenter />
-            <button type="button" aria-label="切换主题" onClick={toggle} className="rounded-md border border-line p-1.5 text-muted hover:text-text">
+            <button type="button" aria-label={t('切换主题')} onClick={toggle} className="rounded-md border border-line p-1.5 text-muted hover:text-text">
               {theme === 'dark' ? <Sun className="size-4" /> : <Moon className="size-4" />}
+            </button>
+            <button
+              type="button"
+              aria-label={t('切换语言')}
+              onClick={() => setLang(lang === 'en' ? 'zh' : 'en')}
+              className="rounded-md border border-line px-2 py-1.5 text-xs text-muted hover:text-text"
+            >
+              {lang === 'en' ? '中' : 'EN'}
             </button>
             {authEnabled && (
               <button
                 type="button"
-                aria-label="退出登录"
+                aria-label={t('退出登录')}
                 onClick={async () => {
                   await api.logout()
                   window.location.reload()

@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import { api } from '@/api/endpoints'
 import type { Task } from '@/api/types'
+import { t } from '@/i18n'
 import { useTaskStore } from '@/stores/tasks'
 import { toast } from '@/stores/toast'
 
@@ -14,7 +15,7 @@ export async function waitForTask<R>(task: Task<R>, onUpdate?: (t: Task<R>) => v
     current = (await api.task(current.id)) as Task<R>
     onUpdate?.(current)
   }
-  if (current.status === 'error') throw new Error(current.error || '任务失败')
+  if (current.status === 'error') throw new Error(current.error || t('任务失败'))
   return current.result as R
 }
 

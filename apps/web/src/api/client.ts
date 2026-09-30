@@ -1,4 +1,6 @@
 // 统一请求封装：带 Cookie，错误转成 ApiError；401 时广播 auth:required 让页面跳转登录
+import { t } from '@/i18n'
+
 export const API_BASE = '/api/v1'
 
 export class ApiError extends Error {
@@ -27,7 +29,7 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   const isJson = res.headers.get('content-type')?.includes('application/json')
   const body = isJson ? await res.json().catch(() => null) : await res.text()
   if (!res.ok) {
-    const message = detailOf(body, `请求失败（${res.status}）`)
+    const message = detailOf(body, t('请求失败（{status}）', { status: res.status }))
     if (res.status === 401 && !path.startsWith('/auth/')) {
       window.dispatchEvent(new CustomEvent('auth:required', { detail: message }))
     }
@@ -68,11 +70,11 @@ export const http = {
     })
     if (!res.ok) {
       const body = await res.json().catch(() => null)
-      const message = detailOf(body, `请求失败（${res.status}）`)
+      const message = detailOf(body, t('请求失败（{status}）', { status: res.status }))
       if (res.status === 401) window.dispatchEvent(new CustomEvent('auth:required', { detail: message }))
       throw new ApiError(message, res.status)
     }
-    if (!res.body) throw new ApiError('浏览器不支持流式响应', 0)
+    if (!res.body) throw new ApiError(t('浏览器不支持流式响应'), 0)
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''

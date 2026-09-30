@@ -1,6 +1,7 @@
 // 基础界面组件：按钮、卡片、标签、输入框、页签、弹窗、空状态等
 import { Loader2, X } from 'lucide-react'
 import { useEffect, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
+import { useT } from '@/i18n'
 import { cn } from '@/utils/cn'
 import { fmtPct, trendClass } from '@/utils/format'
 
@@ -45,11 +46,12 @@ export function Card({ title, actions, children, className, bodyClassName }: {
   className?: string
   bodyClassName?: string
 }) {
+  const t = useT()
   return (
     <section className={cn('rounded-lg border border-line bg-panel', className)}>
       {(title || actions) && (
         <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-2.5">
-          <h2 className="text-sm font-semibold text-accent">{title}</h2>
+          <h2 className="text-sm font-semibold text-accent">{typeof title === 'string' ? t(title) : title}</h2>
           {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
         </header>
       )}
@@ -59,11 +61,12 @@ export function Card({ title, actions, children, className, bodyClassName }: {
 }
 
 export function PageHeader({ title, description, actions }: { title: string; description?: ReactNode; actions?: ReactNode }) {
+  const t = useT()
   return (
     <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
       <div>
-        <h1 className="text-lg font-semibold">{title}</h1>
-        {description && <p className="mt-0.5 text-xs text-muted">{description}</p>}
+        <h1 className="text-lg font-semibold">{t(title)}</h1>
+        {description && <p className="mt-0.5 text-xs text-muted">{typeof description === 'string' ? t(description) : description}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
@@ -86,9 +89,10 @@ export function Pct({ value, digits = 2, signed = true }: { value: unknown; digi
 }
 
 export function Stat({ label, value, sub, className }: { label: string; value: ReactNode; sub?: ReactNode; className?: string }) {
+  const t = useT()
   return (
     <div className={cn('rounded-md border border-line bg-panel-2 px-3 py-2', className)}>
-      <div className="text-xs text-muted">{label}</div>
+      <div className="text-xs text-muted">{t(label)}</div>
       <div className="num mt-0.5 text-base font-semibold">{value}</div>
       {sub && <div className="mt-0.5 text-xs">{sub}</div>}
     </div>
@@ -114,31 +118,33 @@ export function Select({ className, children, ...rest }: SelectHTMLAttributes<HT
 }
 
 export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+  const t = useT()
   return (
     <label className="block">
-      <span className="mb-1 block text-xs text-muted">{label}</span>
+      <span className="mb-1 block text-xs text-muted">{t(label)}</span>
       {children}
-      {hint && <span className="mt-1 block text-xs text-muted">{hint}</span>}
+      {hint && <span className="mt-1 block text-xs text-muted">{t(hint)}</span>}
     </label>
   )
 }
 
 export function Tabs<K extends string>({ tabs, value, onChange }: { tabs: { key: K; label: ReactNode }[]; value: K; onChange: (key: K) => void }) {
+  const t = useT()
   return (
     <div className="mb-3 flex gap-1 border-b border-line" role="tablist">
-      {tabs.map((t) => (
+      {tabs.map((tab) => (
         <button
-          key={t.key}
+          key={tab.key}
           type="button"
           role="tab"
-          aria-selected={value === t.key}
-          onClick={() => onChange(t.key)}
+          aria-selected={value === tab.key}
+          onClick={() => onChange(tab.key)}
           className={cn(
             '-mb-px border-b-2 px-3 py-2 text-sm transition',
-            value === t.key ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-text',
+            value === tab.key ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-text',
           )}
         >
-          {t.label}
+          {typeof tab.label === 'string' ? t(tab.label) : tab.label}
         </button>
       ))}
     </div>
@@ -153,6 +159,7 @@ export function Modal({ open, title, onClose, children, footer, wide }: {
   footer?: ReactNode
   wide?: boolean
 }) {
+  const t = useT()
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
@@ -164,13 +171,13 @@ export function Modal({ open, title, onClose, children, footer, wide }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onMouseDown={onClose}>
       <div
         role="dialog"
-        aria-label={title}
+        aria-label={t(title)}
         className={cn('max-h-[90vh] w-full overflow-auto rounded-lg border border-line bg-panel shadow-xl', wide ? 'max-w-3xl' : 'max-w-lg')}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <header className="flex items-center justify-between border-b border-line px-4 py-2.5">
-          <h2 className="font-semibold">{title}</h2>
-          <button type="button" aria-label="关闭" onClick={onClose} className="text-muted hover:text-text">
+          <h2 className="font-semibold">{t(title)}</h2>
+          <button type="button" aria-label={t('关闭')} onClick={onClose} className="text-muted hover:text-text">
             <X className="size-4" />
           </button>
         </header>
@@ -182,25 +189,28 @@ export function Modal({ open, title, onClose, children, footer, wide }: {
 }
 
 export function Spinner({ text = '加载中…' }: { text?: string }) {
+  const t = useT()
   return (
     <div className="flex items-center gap-2 py-6 text-sm text-muted">
       <Loader2 className="size-4 animate-spin" />
-      {text}
+      {t(text)}
     </div>
   )
 }
 
 export function Empty({ children }: { children: ReactNode }) {
-  return <div className="py-6 text-center text-sm text-muted">{children}</div>
+  const t = useT()
+  return <div className="py-6 text-center text-sm text-muted">{typeof children === 'string' ? t(children) : children}</div>
 }
 
 export function ErrorBox({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  const t = useT()
   return (
     <div className="flex items-center justify-between gap-3 rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
       <span>{message}</span>
       {onRetry && (
         <Button variant="ghost" onClick={onRetry}>
-          重试
+          {t('重试')}
         </Button>
       )}
     </div>

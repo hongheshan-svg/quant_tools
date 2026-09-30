@@ -1,5 +1,6 @@
 // 通用表格：列定义 + 数据，表头吸顶，可点击行
 import type { ReactNode } from 'react'
+import { useT } from '@/i18n'
 import { cn } from '@/utils/cn'
 import { Empty } from './ui'
 
@@ -21,6 +22,7 @@ export function DataTable<T>({ columns, rows, rowKey, onRowClick, empty = '暂�
   maxHeight?: string
   className?: string
 }) {
+  const t = useT()
   if (!rows.length) return <Empty>{empty}</Empty>
   return (
     <div className={cn('overflow-auto', className)} style={maxHeight ? { maxHeight } : undefined}>
@@ -36,7 +38,7 @@ export function DataTable<T>({ columns, rows, rowKey, onRowClick, empty = '暂�
                   c.align === 'right' ? 'text-right' : c.align === 'center' ? 'text-center' : 'text-left',
                 )}
               >
-                {c.title}
+                {typeof c.title === 'string' ? t(c.title) : c.title}
               </th>
             ))}
           </tr>
