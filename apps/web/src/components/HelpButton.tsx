@@ -1,14 +1,15 @@
 // 带「?」图标的帮助按钮：点击弹出对应设置标签的说明
 import { CircleHelp } from 'lucide-react'
 import { useState } from 'react'
-import { useT } from '@/i18n'
+import { useLang, useT } from '@/i18n'
 import { Modal } from '@/components/ui'
-import { SETTINGS_HELP } from '@/utils/settingsHelp'
+import { getSettingsHelp } from '@/utils/settingsHelp'
 
 export function HelpButton({ helpKey }: { helpKey: string }) {
   const t = useT()
   const [open, setOpen] = useState(false)
-  const help = SETTINGS_HELP[helpKey]
+  const [lang] = useLang()
+  const help = getSettingsHelp(lang)[helpKey]
   if (!help) return null
   return (
     <>
@@ -22,13 +23,13 @@ export function HelpButton({ helpKey }: { helpKey: string }) {
         <CircleHelp className="size-4" />
         {t('帮助')}
       </button>
-      <Modal open={open} title={t(help.title)} onClose={() => setOpen(false)} wide>
-        <p className="mb-3 text-sm text-muted">{t(help.summary)}</p>
+      <Modal open={open} title={help.title} onClose={() => setOpen(false)} wide>
+        <p className="mb-3 text-sm text-muted">{help.summary}</p>
         <dl className="space-y-3 text-sm">
           {help.items.map((i) => (
             <div key={i.label}>
-              <dt className="font-medium">{t(i.label)}</dt>
-              <dd className="mt-0.5 text-muted">{t(i.text)}</dd>
+              <dt className="font-medium">{i.label}</dt>
+              <dd className="mt-0.5 text-muted">{i.text}</dd>
             </div>
           ))}
         </dl>
