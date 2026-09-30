@@ -63,7 +63,7 @@ export default {
   '钉钉开放平台 → 企业内部应用 → 添加机器人，消息接收模式选「Stream 模式」': 'DingTalk Open Platform → internal enterprise app → add a bot, and choose "Stream mode" for message receiving',
   '飞书开放平台 → 企业自建应用 → 添加机器人，事件订阅选「长连接」并订阅「接收消息」': 'Feishu Open Platform → self-built enterprise app → add a bot, choose "long connection" for event subscription and subscribe to "receive messages"',
   'Client ID（AppKey）': 'Client ID (AppKey)',
-  '在钉钉、飞书、Discord 里发「诊断 茅台」「大盘」「自选」「持仓」或直接提问（AI 问股），只读，不能下单。用长连接收消息，不需要公网 IP；单聊直接发，群聊需要 @机器人。': 'In DingTalk, Feishu or Discord, send commands such as "诊断 茅台" (diagnose), "大盘" (market), "自选" (watchlist), "持仓" (positions), or just ask a question (AI chat). It is read-only and cannot place orders. Messages are received over a long connection, so no public IP is needed; send directly in a private chat, and @ the bot in a group chat.',
+  '在钉钉、飞书、Discord 里发「诊断 茅台」「大盘」「自选」「持仓」或直接提问（AI 问股），只读，不能下单。用长连接收消息，不需要公网 IP；单聊直接发，群聊需要 @机器人。': 'In DingTalk, Feishu or Discord, send commands such as "analyze 600519", "market", "watchlist" or "positions", or just ask a question (AI chat). It is read-only and cannot place orders. Messages are received over a long connection, so no public IP is needed; send directly in a private chat, and @ the bot in a group chat.',
   '运行中': 'Running',
   '启用': 'Enabled',
   '区域': 'Region',
