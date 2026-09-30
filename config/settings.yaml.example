@@ -409,6 +409,11 @@ diagnosis:
   calibration: true
   # 把该股历史决策信号的复盘（命中率、平均最大回撤、偏乐观/偏悲观）写进提示词（至少 3 条已评估信号）
   signal_review: true
+  # 多策略会诊：按个股特征挑 max_skills 个策略各调用一次 LLM 给观点，交给决策员参考（额外 max_skills 次调用）；
+  # 观点 5 个交易日后按日线评估命中率，样本 >= 20 时策略权重在 0.8~1.2 间浮动
+  skill_consult:
+    enabled: true
+    max_skills: 2
 
 # --- 自选股 ---
 # 在桌面端【自选股】页增删、批量导入（粘贴文本或 CSV/Excel）；盘中提醒也会关注自选股

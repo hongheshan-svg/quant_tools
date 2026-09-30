@@ -288,9 +288,27 @@ export interface Diagnosis {
   agents: AgentOpinion[]
   disagreement: string
   calibration: string
+  skill_opinions?: SkillOpinion[]
+  skill_consensus?: SkillConsensus
   kind?: 'etf' | 'index'
   error?: string
   cached?: boolean
+}
+
+export interface SkillOpinion {
+  skill: string
+  display_name: string
+  stance: string
+  score: number
+  confidence: string
+  reason: string
+  weight: number
+}
+
+export interface SkillConsensus {
+  stance?: string
+  score?: number
+  agreement?: string
 }
 
 // ---------- 策略选股 ----------
@@ -500,6 +518,16 @@ export interface DiagnosisOutcomes {
 }
 
 // ---------- 问股 ----------
+
+export interface SkillPerformanceRow {
+  skill: string
+  display_name: string
+  samples: number
+  hits: number
+  hit_rate: number
+  avg_ret: number | null
+  weight: number
+}
 
 export interface ChatSkill {
   name: string

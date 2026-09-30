@@ -348,6 +348,14 @@ def _run_signal_lifecycle(config: dict):
     except Exception as e:
         logger.error(f"决策信号评估异常: {e}")
         _report_error(config, "决策信号评估", e)
+    try:
+        from src.services.skill_consult import SkillOpinionService
+
+        result = SkillOpinionService(config).evaluate()
+        logger.info(f"策略观点评估完成: {result}")
+    except Exception as e:
+        logger.error(f"策略观点评估异常: {e}")
+        _report_error(config, "策略观点评估", e)
 
 
 # 定时任务清单：任务 id -> (中文名, 任务函数)；build_scheduler 注册、Web 定时任务面板和「立即运行」共用

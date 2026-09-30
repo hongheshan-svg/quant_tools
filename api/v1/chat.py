@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -44,6 +44,14 @@ def skills() -> list[dict[str, Any]]:
     from src.services.strategy_skills import load_skills
 
     return [s.to_dict() for s in load_skills()]
+
+
+@router.get("/skills/performance")
+def skills_performance(days: int = Query(90, ge=7, le=365), pipeline: PipelineService = Depends(get_pipeline)) -> list[dict[str, Any]]:
+    """各策略会诊观点的 5 日后验表现（样本、命中率、平均收益、当前权重）。"""
+    from src.services.skill_consult import SkillOpinionService
+
+    return SkillOpinionService(pipeline.config).performance(days)
 
 
 @router.get("/sessions")

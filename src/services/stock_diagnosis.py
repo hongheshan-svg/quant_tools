@@ -131,7 +131,7 @@ class StockDiagnosisService:
             self._llm = LLMClient(self.config.get("llm", {}))
         return self._llm
 
-    def diagnose(self, code: str, force: bool = False) -> dict[str, Any]:
+    def diagnose(self, code: str, force: bool = False, skills: list[str] | None = None) -> dict[str, Any]:
         """诊断一只股票；30 分钟内的诊断结果直接复用（force=True 时重新诊断）。"""
         code = bare_code(code)
         if not force:
@@ -154,13 +154,18 @@ class StockDiagnosisService:
             message += "\n" + history_line
         if opinions:
             message += "\n" + opinions_text(opinions, conflict)
+        skill_opinions, skill_consensus, consult_text = self._consult_skills(context, skills)
+        if consult_text:
+            message += "\n" + consult_text
         raw = self.llm.chat_json(user_message=message, system_message=SYSTEM_PROMPT + (DECISION_ADDENDUM if opinions else ""))
         if not raw:
             return {"code": code, "name": context["name"], "error": "AI 未返回有效结果，请检查 AI 设置或稍后重试"}
         previous = self.latest(code, max_age_minutes=STABILITY_DAYS * 24 * 60)
         context = {**context, "opinions": opinions, "disagreement": conflict, "calibration": calibration}
         result = self._apply_guardrails(raw, context, previous)
+        result["skill_opinions"], result["skill_consensus"] = skill_opinions, skill_consensus
         diagnosis_id = self._save(result)
+        self._record_opinions(result, diagnosis_id)
         self._record_signal(result, diagnosis_id)
         return result
 
@@ -187,6 +192,45 @@ class StockDiagnosisService:
         if review.get("samples", 0) < 3:
             return ""
         return f"【历史信号复盘】{review['text']}（历史判断偏乐观/偏悲观时，请相应调整信心）"
+
+    def _consult_skills(self, context: dict[str, Any], requested: list[str] | None = None) -> tuple[list[dict], dict, str]:
+        """多策略会诊：返回（各策略观点，共识，交给决策员的文本）；未启用、非个股或出错时全部为空。"""
+        cfg = (self.config.get("diagnosis") or {}).get("skill_consult") or {}
+        if not cfg.get("enabled", False):
+            return [], {}, ""
+        try:
+            from src.services.diagnosis_agents import split_sections
+            from src.services.skill_consult import SkillOpinionService, consensus, consult, section_text, select_skills
+
+            regime = getattr(context.get("regime"), "regime", "") or ""
+            picked = select_skills(split_sections(context["text"]), regime, int(cfg.get("max_skills", 2)), requested)
+            if not picked:
+                return [], {}, ""
+            try:
+                weights = SkillOpinionService(self.config).weights()
+            except Exception as e:
+                logger.debug(f"读取策略权重失败: {e}")
+                weights = {}
+            opinions = consult(self.llm, context["text"], picked, weights)
+            if not opinions:
+                return [], {}, ""
+            cons = consensus(opinions)
+            return opinions, cons, section_text(opinions, cons)
+        except Exception as e:
+            logger.warning(f"策略会诊失败 [{context.get('code')}]: {e}")
+            return [], {}, ""
+
+    def _record_opinions(self, result: dict[str, Any], diagnosis_id: int | None) -> None:
+        """策略观点落库（用于后验命中率与权重）；异常只记日志。"""
+        if not result.get("skill_opinions"):
+            return
+        try:
+            from src.services.skill_consult import SkillOpinionService
+
+            SkillOpinionService(self.config).record(
+                diagnosis_id, result["code"], result.get("name", ""), result.get("trade_date", ""), result["skill_opinions"])
+        except Exception as e:
+            logger.warning(f"保存策略观点失败 [{result.get('code')}]: {e}")
 
     def latest(self, code: str, max_age_minutes: int | None = None) -> dict[str, Any] | None:
         with get_db_session(self.db_path) as session:

@@ -78,6 +78,7 @@ export const api = {
 
   // 问股
   skills: () => http.get<T.ChatSkill[]>('/chat/skills'),
+  skillPerformance: (days = 90) => http.get<T.SkillPerformanceRow[]>('/chat/skills/performance', { days }),
   perspectives: () => http.get<Record<string, string>>('/chat/perspectives'),
   chatSessions: () => http.get<T.ChatSessionSummary[]>('/chat/sessions'),
   createChat: (perspective: string) => http.post<T.ChatSession>('/chat/sessions', { perspective }),

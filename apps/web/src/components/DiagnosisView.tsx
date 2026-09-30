@@ -54,6 +54,29 @@ export function DiagnosisView({ d }: { d: Diagnosis }) {
           </ul>
         </div>
       )}
+      {(d.skill_opinions?.length ?? 0) > 0 && (
+        <div>
+          <div className="mb-1 font-medium text-accent">
+            策略会诊{' '}
+            {d.skill_consensus?.stance && (
+              <span className="text-xs font-normal">
+                共识 <span className={verdictClass(d.skill_consensus.stance)}>{d.skill_consensus.stance}</span>{' '}
+                <span className="num">{d.skill_consensus.score}分</span>
+                {d.skill_consensus.agreement === '分歧' ? <span className="text-warn">（分歧）</span> : <span className="text-muted">（一致）</span>}
+              </span>
+            )}
+          </div>
+          <ul className="space-y-1">
+            {d.skill_opinions!.map((o) => (
+              <li key={o.skill}>
+                <span className="text-muted">{o.display_name}：</span>
+                <span className={verdictClass(o.stance)}>{o.stance}</span> <span className="num">{o.score}分</span>
+                <span className="text-xs text-muted">（信心{o.confidence}，权重 {o.weight.toFixed(2)}）{o.reason}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="grid gap-1 text-xs">
         {d.theme_role?.theme && <div><span className="text-muted">主线地位：</span>{d.theme_role.theme}（{d.theme_role.phase}）{d.theme_role.role}</div>}
         <div><span className="text-muted">大盘：</span>{d.market_regime}</div>

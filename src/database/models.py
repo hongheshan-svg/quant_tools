@@ -849,3 +849,26 @@ class ResearchReport(Base):
     created_at = Column(DateTime, default=datetime.now)
 
     __table_args__ = (Index("idx_research_report_created", "created_at"),)
+
+
+class SkillOpinion(Base):
+    """策略会诊观点：每次个股诊断中各策略的看法，及其 5 日后验结果"""
+    __tablename__ = "skill_opinion"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    diagnosis_id = Column(Integer, comment="stock_diagnosis.id")
+    code = Column(String(12), nullable=False, comment="规范代码")
+    name = Column(String(40))
+    skill = Column(String(60), nullable=False, comment="策略 name")
+    stance = Column(String(8), comment="看多/中性/看空")
+    score = Column(Float)
+    confidence = Column(String(4))
+    weight = Column(Float, comment="会诊时使用的权重")
+    reason = Column(Text)
+    trade_date = Column(String(10), comment="诊断行情日 YYYY-MM-DD")
+    ret_5d = Column(Float, comment="之后第 5 个交易日相对行情日收盘的涨跌幅 %")
+    hit = Column(Boolean, comment="看多涨/看空跌为命中；中性为空")
+    evaluated_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (Index("idx_skill_opinion_skill_created", "skill", "created_at"),)
