@@ -2,11 +2,11 @@
 
 ## 项目结构与模块组织
 代码位于 `src/`，按功能分包：
-- 数据流主线：`collectors/`（数据采集）→ `analyzers/`（LLM 分析）→ `strategy/`（评分与风控）→ `trading/`（订单执行）。
-- 编排：`services/` 串联流水线、自学习和涨停预测。
+- 数据流主线：`collectors/`（数据采集：基类、新闻搜索、RSS 订阅）→ `analyzers/`（LLM 分析）→ `strategy/`（评分与风控）→ `trading/`（订单执行）。
+- 编排：`services/` 串联流水线、自学习、涨停预测、诊断、决策信号、深度研究等功能。
 - 存储：`database/` 存放 SQLAlchemy 模型与 SQLite 会话管理。
 - 界面：`desktop/` 是 PyQt6 桌面端（旧版）；Web 界面见下方 `api/` 和 `apps/web/`。
-- 其他：`bot/`（钉钉、飞书聊天机器人）、`notifier/`（14 个推送渠道与降噪）、`backtest/`（回测）。
+- 其他：`bot/`（钉钉、飞书、Discord 聊天机器人）、`notifier/`（14 个推送渠道与降噪）、`backtest/`（回测）。
 
 仓库根目录的其他部分：
 - `api/`：FastAPI 接口（`/api/v1`）、登录、后台任务，并托管前端构建产物。

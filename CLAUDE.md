@@ -41,6 +41,7 @@ python run_full.py                          # 基于已采集数据一次性执�
 python run_score.py                         # 只对已有数据评分
 python run_demo.py                          # 演示采集与展示
 python scripts/fetch_history.py --mode daily --start-date 2024-01-01   # 回补历史数据；mode 可选 all/daily/limit_up/concepts/dragon_tiger
+python scripts/repair_star_volume.py [--apply]                         # 修复科创板成交量单位错误（默认预览）
 ```
 
 日线下载与解析在 `src/collectors/daily_history.py`，脚本只负责批量调度。`fetch_history.py` 的日线回补默认按每只股票的最新日期续传。显式指定 `--start-date` 时，历史起点晚于该日期 10 天以上的股票会从起点重新下载，因为日常采集会给每只股票写入当天行情，否则所有股票都会被当成已是最新。`--force-full` 忽略续传，`--overwrite` 重新下载并覆盖已有行（用于修复旧版本写错的成交量/成交额）。
@@ -73,8 +74,9 @@ cd apps/web && npm run lint && npm test && npm run build   # ESLint、Vitest + T
 cd apps/desktop && npm test                                 # node --test，不需要安装 Electron
 ```
 
-- 前端测试用 `stubFetch()` 伪造接口，或 `vi.spyOn(api, '...')`；页面按 `role="tab"` 找标签页。
+- 前端测试用 `stubFetch()` 伪造接口，或 `vi.spyOn(api, '...')`；页面按 `role="tab"` 找标签页。操作设置类表单前要等表单初始化完成，否则随后的状态同步会覆盖输入。
 - 桌面端测试只测 `src/backend.js` 的纯逻辑，`preload.test.js` 通过 `Module._load` 替换 `electron` 模块。
+- 涉及当前日期的实现（如基金日线补齐），测试里要屏蔽或用相对日期。
 
 ## 打包
 
@@ -129,6 +131,7 @@ cd apps/desktop && npm test                                 # node --test，不�
   - **定时任务：** `GET /system/scheduler`（任务列表和状态）、`POST /system/scheduler/{job_id}/run`（立即运行，非交易日行情和分析类任务照常跳过）。任务 id → 中文名和函数映射在 `src/scheduler.py` 的 `JOBS` 和 `describe_jobs()`；`app.state.scheduler` 仅在本进程运行定时任务时存在。
   - **图片导入：** `POST /watchlist/import-image`（后台任务），识别出的股票经校验后勾选加入。
   - **资讯源配置：** `GET/PUT /settings/intelligence`、`POST /settings/intelligence/test`、`POST /pipeline/collect-rss`。
+  - **配置向导：** `GET /system/setup`（`src/services/setup_status.py`）检查大模型、数据、交易日历、推送、自选股、浏览器，以及对外监听时是否开启登录；只查本地、不联网、出错视为未完成。首页据此提示，`/setup` 为向导页，设置页支持 `?tab=`，帮助内容在 `utils/settingsHelp.ts`（中英文两份）。
 - AI 问股的多会话存在 `chat_session` 表（`src/services/chat_sessions.py` 的 `ChatSessionStore`），每个会话一把锁。
 
 ### Web 前端（`apps/web`）
@@ -137,6 +140,7 @@ cd apps/desktop && npm test                                 # node --test，不�
 - 接口：`src/api/client.ts`（`http.get/post/put/del/upload`，401 时派发 `auth:required` 事件）、`src/api/endpoints.ts`（`api` 对象）、`src/api/types.ts`。新增接口时三处一起改。
 - 数据加载用 `useApi(fn, deps)`；后台任务用 `useTask().run(() => api.xxx(), { success })`，它会轮询到任务结束并显示进度，任务中心（右上角）列出全部任务。
 - 通用组件在 `src/components/ui.tsx`（Button、Card、Tabs、Modal、Field…）和 `DataTable.tsx`、`CandlestickChart.tsx`（SVG K 线）。颜色用 `index.css` 里的 CSS 变量（深色/浅色主题），A 股习惯红涨绿跌：`text-up` 红、`text-down` 绿。
+- **国际化**（`src/stores/lang.ts`、`src/i18n/index.ts`）：顶栏和登录页可切换中文/英文（保存在 localStorage `quant-lang`，默认中文）。中文原文作为 i18n key，英文词典分页面放在 `src/i18n/en/*.ts`（`import.meta.glob` 自动合并），组件内用 `const t = useT()`、非组件代码用 `t()`；只翻译界面文字，AI 回答/报告/新闻不翻译。前端测试 `apps/web/src/__tests__/i18n-coverage.test.ts` 检查所有 `t()` 字面量都有译文、译文不含中文、占位符一致——新增文字时要同步补词典。
 - 在 Electron 里运行时 `window.quantDesktop`（`src/utils/desktop.ts`）可用，设置页据此显示「桌面端」页。
 
 ### Electron 桌面端（`apps/desktop`）
@@ -158,9 +162,10 @@ cd apps/desktop && npm test                                 # node --test，不�
   - `策略 龙回头 宁德时代能买吗`：按指定策略提问，格式为「策略 策略名 问题」。
   - `策略 龙回头`：仅策略名时返回该策略的说明、适配环境、用法。
 - `dispatcher.Dispatcher`：平台回调先确认收到，消息放进线程池处理；按消息 ID 去重（平台会重发）；回复按字节拆分。
-- `dingtalk.py`（Stream 模式，回复走消息里的 sessionWebhook）和 `feishu.py`（长连接，回复消息卡片，标题 `#` 转成加粗）。消息解析 `parse_message()` 是纯函数，不依赖 SDK。
+- `dingtalk.py`（Stream 模式，回复走消息里的 sessionWebhook）、`feishu.py`（长连接，回复消息卡片，标题 `#` 转成加粗）、`discord.py`（Gateway 长连接，不需要公网地址）。消息解析 `parse_message()` 是纯函数，不依赖 SDK。
   - 飞书 SDK 的长连接客户端用模块级事件循环，在 uvicorn 里导入会拿到正在运行的循环，所以在自己的线程里换成新循环。
   - 两个 SDK 的重连间隔都改成逐次加长（`retry_delay()`，最多 10 分钟），凭证填错时不刷日志。
+  - Discord 需要 requirements 增加 `discord.py`，配置 `bot.discord`（token、allowed_channels、guild_mode 为 mention/all）；需在开发者后台开启 Message Content Intent。
 - `manager.start_bots(config, pipeline)`：同一进程每个平台只启动一次，占位或空的凭证跳过；SDK 导入较慢（打包后十几秒），服务里在后台线程调用。改了已在运行的机器人的凭证要重启服务。
 
 ### 交易日历（`src/trading_calendar.py`）
@@ -182,6 +187,9 @@ cd apps/desktop && npm test                                 # node --test，不�
   - baostock 用模块级单连接，调用加锁，登录输出被静默；不支持北交所。
   - 通达信按「`data_sources.pytdx_servers` → 上次连上的 → 内置列表 → pytdx 自带列表」尝试服务器（pytdx 自带的大多已失效）；日线不复权，成交量单位是手。
   - efinance 走东方财富接口，东方财富不可用时它也不可用；Tushare 需要 `data_sources.tushare_token`，日线不复权。
+  - **成交量单位统一：** 实时行情腾讯普通板块是手、科创板（688/689）是股；日线由 `normalize_volume_unit()` 按「成交额/(收盘价×成交量)」判断单位并转换为股；`scripts/repair_star_volume.py` 修复已入库的错误数据。
+- **ETF 与指数：** 日线来自腾讯 K 线（`src/collectors/fund_data.py`，不走个股日线回退链），单独存入 `fund_daily`、`fund_info`，不写 `stock_daily`，否则会影响涨跌家数、大盘环境和选股。指数与个股代码会冲突（000001 上证指数与平安银行、000016、000688 等），所以指数的规范代码带交易所前缀（如 `sh000300`），任何地方都不能对指数调用 `bare_code`，统一用 `stock_code.diagnosis_code()`；ETF 用 6 位代码。内置指数在 `fund_registry.INDEXES`；ETF 列表来自新浪，7 天刷新一次，只在 `server.py` 运行定时任务或 `main.py` 常驻时后台刷新。支持搜索、个股页 K 线、AI 诊断（`FundDiagnosisService`，结果字段与个股相同）、问股工具、机器人诊断；不能加入自选股和交易。腾讯 K 线不含成交额，ETF 按成交量×均价估算，指数记 0。
+- **数据源能力总览**（`src/services/data_capabilities.py`，`GET /system/capabilities`）：实时行情、个股日线、涨停池、涨停原因、个股资金流、联网搜索、RSS 资讯源七个数据集，按实际回退顺序列出各来源是否已配置和健康状态（ok / failing / open / unknown，读自进程级的 source_health 与熔断器）。
 - 财联社电报用签名的 `/v1/roll/get_roll_list`（`cailianshe.sign_params()`：参数按键排序后 SHA1 再 MD5），每次最多 50 条（超过返回空列表）；旧的 `nodeapi` 接口已 404，只作兜底。
 - 东方财富 `push2`/`push2his` 行情接口有时直接断开连接（2026-09 观察到，浏览器和普通 HTTP 都一样），依赖它的指数、资金流、efinance 会失败，所以各处都要有回退。`scripts/check_sources.py` 可以快速确认各源状态。
 - 涨停池：东方财富涨停池 → 东方财富强势股池。强势股池里有没涨停的股票，所以只保留涨幅达到该板块涨停幅度的行。
@@ -246,6 +254,7 @@ cd apps/desktop && npm test                                 # node --test，不�
   - **协议：** 每个问题最多 3 轮工具调用。LLM 用 JSON 返回 `{"tool_calls": [...]}` 或 `{"answer": ...}`，不依赖各家模型的 function calling。
   - **工具：** 工具在 `src/services/chat_tools.py`，全部只读，不能下单；股票参数可以是名称或拼音，会先经 `StockSearch` 解析。新增 `web_search` 工具从博查、Tavily、SerpAPI、Brave、SearXNG 联网搜索资讯（需配置 `search.enabled` 和各源 API Key）。
   - **策略选择：** `perspective` 参数可传策略名称、中文名或别名；`PERSPECTIVES` 是模块导入时的策略快照。
+  - **流式输出**（`POST /chat/sessions/{id}/ask/stream`）：SSE，每个事件一行 `data: JSON`，type 为 status、tool、tool_result、delta、error、done，done 总是最后一个；`StockChatSession.ask_stream()` 边接收边解析 JSON 里的 answer 字符串产出 delta；`POST /chat/sessions/{id}/cancel` 取消；前端可停止，流式失败回退任务轮询。模型没有 `chat_stream` 时退化为一次性回答。
   - **测试：** 通过 `llm=`、`tools=` 注入假对象。
 
 ### 评分与自学习
@@ -275,12 +284,15 @@ cd apps/desktop && npm test                                 # node --test，不�
 ### LLM
 
 - `LLMClient`（`src/analyzers/llm_client.py`）默认通过 LiteLLM 调用（`llm.backend: litellm`）。`build_route()` 把配置转成路由：anthropic、gemini、ollama 用原生的 `提供商/模型`，其他平台按 OpenAI 兼容接口走 `openai/模型` + `api_base`；Key 为空或仍是 `your-` 占位时跳过（ollama 不需要 Key）。`llm.backend: openai` 改用 OpenAI SDK 直连（不支持原生提供商）。平台预设在 `src/analyzers/llm_platforms.py`。
+  - **多 API Key 支持：** primary、backup、vision 各角色的 `api_key`支持列表或逗号/换行分隔字符串，按顺序轮询。单个 Key 返回 401/403/429 时进入 10 分钟冷却（进程级），同一次调用里换下一个 Key；冷却期内该 Key 跳过。设置接口返回掩码列表，保存时按后 4 位还原（找不到对应原值的丢弃）。
   - 导入 LiteLLM 一律用 `llm_usage.import_litellm()`：它让 LiteLLM 使用本地价格表，否则导入时会联网下载。
   - **用量统计：** 每次调用（含命中缓存和失败）由 `record_usage()` 写进缓存库的 `llm_usage` 表，记录 token 和估算费用（`llm.pricing` 可自定义单价）。功能按调用栈里第一个 `src.`/`api.` 模块归类，映射表是 `FEATURE_LABELS`，新增调用 LLM 的模块要加进去，否则显示为「其他」。`usage_summary()` 供 Web【AI 用量】页使用。
   - 主模型失败时切换到备用模型；备用模型的 Key 仍以 `your-` 开头时会被跳过。
   - 响应缓存在 SQLite 里，缓存键是模型 + 提示词 + 参数的哈希，带 TTL。
   - `reload()` 可热切换模型平台。
   - `chat_json()` 解析失败时依次尝试：提取 markdown 代码块 → 修复截断的 `items` 列表 → 截到最后一个完整对象后交给 `json_repair`。截断的输出不能直接交给 `json_repair`，它会把半截的对象（如半截股票代码）当成有效数据保留下来。
+  - **流式接口：** `LLMClient.chat_stream(user_message, system_message=...)` 逐块产出文本，主模型出错且还没产出文本时切备用模型；不走响应缓存。
+  - **模型列表：** `llm_client.list_models(role_cfg)` 按平台请求模型列表接口（OpenAI 兼容的 /models、Anthropic、Gemini、Ollama /api/tags），设置页「获取模型列表」调用 `POST /settings/llm/models`。
   - **图片识别**（`chat_vision(prompt, images, ...)`）：按 `llm.vision` → 主模型 → 备用模型的顺序尝试，相同路由只试一次，不走响应缓存。`llm.vision` 留空时用主模型（需支持图片输入）。用于自选股图片导入（`src/services/image_import.py` 的 `extract_stocks()`，支持 PNG/JPEG/WebP/GIF，最大 5MB）；FEATURE_LABELS 记录为「图片识别」。
 - 操作建议统一用 `src/analyzers/decision.py`：`normalize_action()` 把文本归一为 buy、add、hold、watch、reduce、sell、avoid、alert 八种。否定说法（「不建议买入」）识别为 avoid；多个关键词同时出现时，取最先出现的；无法识别时返回空字符串。下单只接受 `is_bullish()` 为真的建议。
 - AI 预测保存前会经过 `_validate_predictions()`：剔除在 `stock_daily` 和 `stock_info` 里都查不到的代码（AI 编造的）、ST/退市股和重复代码，名称以数据库为准。行情库为空时无法校验，直接跳过。
@@ -301,9 +313,13 @@ cd apps/desktop && npm test                                 # node --test，不�
   - **历史校准：** 由 `diagnosis.calibration` 控制。`diagnosis_outcome.calibration_stats()` 汇总近 90 天诊断的事后准确率，进程内缓存 30 分钟，写进提示词；看多诊断的 3 日准确率低于 45%（至少 10 次）时，买入信心下调一档。
   - **测试：** 诊断前会补齐日线，并获取筹码、业绩、个股新闻和公告，这些都会联网。测试要 monkeypatch `fundamentals.fetch_chip_summary`、`EarningsCache.get`、`stock_news.get_stock_news` 和 `daily_history.ensure_daily_history`（参考 `tests/test_stock_diagnosis.py` 的 fixture）。
   - **缓存：** 结果存入 `stock_diagnosis` 表，30 分钟内复用。
+  - **多策略会诊**（`src/services/skill_consult.py`，表 `skill_opinion`）：个股诊断时可选择多个策略（`diagnosis.skill_consult`，示例配置 `enabled: true`、`max_skills: 2`；代码缺省关闭）并发咨询各策略给观点后汇总；结果含 `skill_opinions` 和 `skill_consensus`；5 个交易日后评估命中，样本≥20 后按命中率调整权重到 0.8~1.2；决策信号页「策略表现」（`GET /chat/skills/performance`）查看；每次诊断多约 `max_skills` 次模型调用。
+  - **运行记录**（`src/services/run_log.py`，存 `stock_diagnosis.run_log`）：记录各数据步骤的结果与耗时、模型调用（名称与耗时，不含 token）和护栏调整；`build_context(code, run_log=None)` 通过参数传入记录器，不能存在服务实例上（自选股诊断多线程共用一个实例）。诊断历史详情可查看；`GET /stocks/{code}/diagnosis-trend` 提供评分与收盘价趋势。
   - **历史查询：** `DataQueryService.list_diagnoses(code, action, days, limit, offset)` 按股票、操作建议、天数筛选诊断记录；`get_diagnosis(id)` 获取单条；`delete_diagnosis(id)` 删除。诊断历史 Web 页面支持下载 Markdown 或分享图（`/stocks/diagnoses/{id}/markdown`、`/stocks/diagnoses/{id}/image`）。
   - **注入假 LLM：** 测试通过构造函数的 `llm=` 参数注入（`MarketReviewService` 也一样）。
 - `LimitUpPredictor`（`src/services/premarket_predictor.py`）按时段选择提示词，时段为 `premarket`（9:25 前）、`morning`、`noon`、`afternoon`、`aftermarket`（15:00 后）。非交易日一律按 `premarket` 处理。预测写入 `TradeSignal` 时，`signal_date` 存的是目标交易日：交易日盘前和盘中是当天，盘后和非交易日是下一个交易日。
+- **决策信号**（`src/services/decision_signals.py`，表 `decision_signal`）：AI 诊断的 buy/add/reduce/sell/avoid 建议转为决策信号，带观察期（1~20 日，默认 5）和失效条件。相反建议使旧信号失效（invalidated），同方向的旧信号被替代（replaced）；收盘后定时任务 `signal_lifecycle`（默认 16:25）评估 1/3/5 日收益、最大不利/有利波动、止损止盈、过期；单票历史复盘（样本≥3）进诊断提示词；Web「决策信号」页（`/signals`）可查看和反馈；API `/signals` 系列。
+- **深度研究**（`src/services/research.py`，表 `research_report`）：按选定议题自动拆解问题 → 联网搜索 + 本地新闻/行情/技术面/主线/大盘取证（证据编号 E1…，每条≤400 字、总计≤12000 字）→ LLM 生成带引用的报告。Web「深度研究」页（`/research`），API `/research` 系列，机器人命令「研究」（别名：深度研究、research）。
 
 ### 交易（`src/trading/`）
 
@@ -318,6 +334,7 @@ cd apps/desktop && npm test                                 # node --test，不�
 - 当 `min_listing_days > 0` 时，每个 `RiskManager` 实例第一次校验股票池会调用 `StockInfoCollector.refresh_if_stale()`：如果 `stock_info` 表超过一天没更新，就联网从沪深北交易所列表采集。涉及股票池的测试要 monkeypatch 掉这一步。
 - 实盘记账 `RealPortfolioService`（`src/services/real_portfolio.py`）只记账，不连券商、不下单。
   - **成交流水：** 存在 `real_trade` 表，手动录入或导入交割单（`parse_trade_rows()` 按常见列名识别）。导入用 `import_key` 去重：有成交编号时按编号，否则按日期+时间+代码+方向+价格+数量+序号。
+  - **公司行为**（`real_corporate_action` 表）：分红（现金到账摊薄成本）、送转股（只增加数量）、红利税补缴（计入成本）。同一天先处理公司行为再处理成交；可按每 10 股方案（`add_corporate_action_by_plan`，按除权日前持仓计算）或按到账金额逐笔录入。交割单导入识别「红利入账」「红股入账」「红利税补缴」行并转换为公司行为记录（`parse_import_rows`，`parse_trade_rows` 三元组签名不变）。Web 页面导入先预览后确认（`POST /real/trades/import?preview=true`）。API 支持 `GET/POST/DELETE /real/actions`。**已知限制：** 公司行为（dividend/tax）暂不进 `PortfolioRiskService` 的 fills 重放。
   - **持仓：** 按移动平均成本计算，费用计入成本。
   - **可用资金：** 用 `real_cash` 表记录的锚点，加上锚点之后的成交推算。
   - **止损止盈：** `real_position_plan` 可以逐只覆盖止损价、目标价，没设置时按风控比例从成本计算。
@@ -331,7 +348,7 @@ cd apps/desktop && npm test                                 # node --test，不�
 ### 推送（`src/notifier/`、`src/services/daily_report.py`）
 
 - 统一通过 `notifier.broadcast(config, title, content, kind=)` 推送。
-  - **消息类型：** `kind` 取值为 `daily_report`、`alert`、`watchlist`、`chat`，按 `notifier.routes` 选择渠道；没配置路由的类型推送到全部已启用渠道。
+  - **消息类型：** `kind` 取值为 `daily_report`、`alert`、`watchlist`、`chat`、`system_error`；按 `notifier.routes` 选择渠道；没配置路由的类型推送到全部已启用渠道。系统错误（定时任务出错时 `report_error`）同一来源冷却 `notifier.system_error.cooldown_minutes`（默认 60 分钟）。
   - **渠道条件：** `enabled_channels(config, kind)` 只认启用且配置完整的渠道。Webhook 还是示例占位符（含 `your-`）不算完整；邮件至少要有 SMTP 服务器和收件人。
   - **新增推送：** 新增推送时要传 `kind`，测试里替换 `broadcast`、`enabled_channels` 时要接受 `kind` 参数。
   - **QUANT_NO_NOTIFY：** 环境变量 `QUANT_NO_NOTIFY` 非空时，`broadcast()` 不执行推送（用于测试或调试）。
@@ -348,18 +365,20 @@ cd apps/desktop && npm test                                 # node --test，不�
   - **规则试算：** `AlertService.test_rule()` 不受交易时段和冷却限制，试算结果不写记录不推送，用于 Web 页面「立即试算」功能；当天无行情时用最近交易日。
   - **每天一次：** 指标交叉、接近止损、大盘转弱在 `DAILY_ONCE_TYPES` 中，每天只提醒一次。
   - **降噪：** `NoiseFilter`（`src/notifier/noise.py`）负责冷却期去重和免打扰时段（`notifier.quiet_hours`），紧急提醒不受免打扰限制。同一次检查的多条提醒合并成一条推送，所有提醒都记入 `alert_record` 表。
+  - **日报与分享图：** `alerts.daily_digest` 和 `digest_time` 启用盘中提醒日报（定时任务 `alert_digest`），统计当天全部提醒；`notifier.image` 配置把日报和自选股仪表盘渲染成分享图推送（支持企业微信、Telegram、邮件、Discord、ntfy，失败回退文字）；`min_severity` 低于该级别的提醒记录但不推送。
   - **状态：** 涨停状态和冷却记录是进程级状态，测试前后要调用 `alert_service.reset_state()`。
   - **交易时段检查：** `AlertService` 只在交易时段运行（`trading_calendar.in_trade_session()`）。
 
 ### 部署与 CI（`docker/`、`.github/workflows/`）
 
 - Docker：多阶段构建（先构建前端），以 UID 1000 的 `quant` 用户运行，默认 `python server.py --host 0.0.0.0`。默认配置放在镜像的 `/app/defaults/config`，`entrypoint.sh` 启动时复制进挂载的 `/app/config`（示例配置覆盖、股票池缺失才复制），并修复挂载目录属主。compose 用环境变量开启 Web 登录，因为容器外的请求不算本机。因为 `COPY src/` 会自然包含 `src/services/skills`，所以 Docker 镜像内置有策略技能。
+- **桌面端自动更新：** 使用 electron-updater，检查 GitHub Release（hongheshan-svg/quant_tools）；启动时检查（可在设置禁用，偏好文件 `desktop-prefs.json`），菜单「帮助 → 检查更新」手动触发；Windows 下载后重启安装，macOS 未签名只提示前往下载。发布工作流需上传 `latest*.yml` 和 `*.blockmap`（旧版本发布没有这些文件时检查不到更新）。
 - 工作流：
   - `ci.yml`（后端测试、前端 lint/测试/构建、桌面端测试）。
   - `daily-analysis.yml`（工作日 16:40 `main.py --once`）：需要仓库变量 `ENABLE_DAILY_ANALYSIS=true`。配置来自 Secret `SETTINGS_YAML` 或按段映射为 `QUANT__` 环境变量的单独 Secret（LLM、各推送渠道、搜索源都支持）。支持 workflow_dispatch 新增 `stocks` 输入诊断指定股票、`no_notify` 不推送。数据库用 actions/cache 保留到下一次运行。
   - `network-smoke.yml`（`check_sources.py`，`ENABLE_NETWORK_SMOKE=true`）。
   - `docker-publish.yml`（`v*` 标签发布 GHCR 镜像）。
-  - `desktop-release.yml`（`v*` 标签打包桌面端并上传 Release）。
+  - `desktop-release.yml`（`v*` 标签打包桌面端并上传 Release，需要 electron-builder 生成 latest*.yml 和 *.blockmap）。
 - Actions 里给布尔配置映射 Secret 时要写成 `${{ secrets.X != '' && 'true' || '' }}`：直接写比较表达式在 Secret 为空时得到字符串 `false`，会覆盖 `SETTINGS_YAML` 里的设置；空字符串才会被忽略。
 
 ## 约定
