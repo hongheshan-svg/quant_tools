@@ -1,4 +1,6 @@
-// 设置页各标签的帮助说明：配置项作用、常见错误与获取方式
+// 设置页各标签的帮助说明：配置项作用、常见错误与获取方式；中文与英文各一份，结构和 items 数量保持一致
+import type { Lang } from '@/i18n'
+
 export interface HelpItem {
   label: string
   text: string
@@ -107,4 +109,108 @@ export const SETTINGS_HELP: Record<string, HelpSection> = {
       { label: '重试', text: '后台服务启动失败或崩溃后，可在错误页点击重试重新启动。' },
     ],
   },
+}
+
+export const SETTINGS_HELP_EN: Record<string, HelpSection> = {
+  llm: {
+    title: 'AI Models',
+    summary: 'All AI analysis (sentiment, limit-up prediction, market review, stock diagnosis, AI chat) runs on the large models configured here. The primary model is required; the others are optional.',
+    items: [
+      { label: 'Platform and Base URL', text: 'Choosing a platform fills in the Base URL and common models automatically. DeepSeek, Qwen, Zhipu, Kimi, SiliconFlow and similar platforms use the OpenAI-compatible API; Claude (anthropic) and Gemini use their native APIs, so leave Base URL empty.' },
+      { label: 'API Key', text: "Create one in the selected platform's console. You can enter several (one per line or comma-separated); they are used in rotation, and a key that returns 401/403/429 cools down for 10 minutes while the next one is used. After saving, only the last 4 characters are shown; saving the mask unchanged keeps the original value. Common mistakes: extra spaces copied, a key from another platform, or an exhausted balance." },
+      { label: 'Model name', text: 'Must be a real model ID on that platform (for example deepseek-chat). Click "Fetch model list" to load it from the platform; a wrong name returns 404 or "model not found".' },
+      { label: 'Ollama local models', text: 'Choose ollama as the platform, set Base URL to http://localhost:11434, no API key is needed, and run ollama pull for the model on your machine first.' },
+      { label: 'Backup model', text: 'Used automatically when the primary model fails (rate limit, timeout, invalid key). It is skipped while its key is still a placeholder starting with your-.' },
+      { label: 'Vision model', text: 'Used when importing watchlist stocks from screenshots; it must support image input (such as gpt-4o, Claude, Gemini, qwen-vl, glm-4v). If left empty, the primary model is used.' },
+      { label: 'Test buttons', text: 'Send one real request to verify connectivity, which costs a tiny amount. A failure shows the reason, such as an invalid key, network problem or missing model.' },
+    ],
+  },
+  notifier: {
+    title: 'Notifications',
+    summary: 'Push daily reports, intraday alerts, the watchlist dashboard and system errors to your phone or mailbox. At least one channel must be enabled to push; with no channel enabled, no daily report is generated.',
+    items: [
+      { label: 'WeCom / DingTalk / Feishu', text: 'Add a custom bot to a group chat and copy its Webhook URL. If DingTalk or Feishu has the "signature" security option enabled, fill in the secret too. A Webhook that is still an example value starting with your- counts as not configured.' },
+      { label: 'Email', text: 'Enter the SMTP server, port, account and recipients. For QQ and 163 mail, enable SMTP in the mailbox settings and put the authorization code (not the login password) in the password field; tick SSL for port 465 and untick it for port 587 (STARTTLS).' },
+      { label: 'Telegram / Discord / Slack', text: 'For Telegram, create a bot with @BotFather to get the bot_token and fill in the chat_id; for Discord and Slack, create an Incoming Webhook and copy its URL.' },
+      { label: 'PushPlus / ServerChan / ntfy, etc.', text: "Get the token or SendKey from each service's website and fill it in." },
+      { label: 'Routing', text: 'You can pick channels for each message type (daily report, alerts, watchlist, AI chat, etc.); types without a route are pushed to all enabled channels.' },
+      { label: 'Quiet hours', text: 'For example 22:00-08:00; during this period only urgent alerts (such as a stop-loss breach) are pushed.' },
+      { label: 'Check config and test', text: '"Check config" lists what is missing, and "Test" sends a test message to the channel. If nothing arrives, first check whether the Webhook has expired and the bot security settings such as keywords or IP allowlist.' },
+    ],
+  },
+  bot: {
+    title: 'Chat Bots',
+    summary: 'Let the bots in DingTalk and Feishu query the market, positions, diagnose stocks and chat with the AI directly. After changing bot credentials, restart the service for them to take effect.',
+    items: [
+      { label: 'DingTalk', text: 'Create an internal enterprise app on the DingTalk Open Platform and add a bot, choose "Stream mode" for message receiving, then put the AppKey in client_id and the AppSecret in client_secret.' },
+      { label: 'Feishu', text: 'Create a self-built enterprise app on the Feishu Open Platform and enable the bot, choose "long connection" for event subscription and subscribe to im.message.receive_v1, then fill in app_id and app_secret; for the international Lark, set the domain to lark.' },
+      { label: 'Allowed users', text: 'Enter the IDs of users allowed to use the bot (DingTalk senderStaffId, Feishu open_id); empty means no restriction. A user without permission receives their own ID when sending a message, which you can copy into the list.' },
+      { label: 'Common errors', text: 'With wrong credentials the bot will not connect, and the log shows retries at gradually longer intervals; an unpublished app or missing permissions also prevents messages from arriving.' },
+    ],
+  },
+  search: {
+    title: 'Web Search',
+    summary: 'Adds the latest news search results to stock diagnosis and AI chat. Off by default; once enabled, configure at least one search service key or address.',
+    items: [
+      { label: 'Enable and service order', text: 'Search services are tried in order, and if one fails the next is used. Bocha gives good results for Chinese news and is the recommended first choice.' },
+      { label: 'Bocha / Tavily / SerpAPI / Brave', text: 'Register on each official website to get an API key; you can enter several. Tavily has a free monthly quota.' },
+      { label: 'SearXNG', text: 'The address of a self-hosted instance, for example http://127.0.0.1:8080; the instance must enable json in search.formats in its settings.yml, otherwise it returns 403.' },
+      { label: 'Result count and days', text: 'The maximum number of results per search and how many recent days of results to keep (results with unknown dates are kept). Identical queries are cached and not requested again within the cache time.' },
+      { label: 'Test', text: 'Runs a real search with a keyword to confirm that the key and network work.' },
+    ],
+  },
+  intelligence: {
+    title: 'News Sources',
+    summary: 'Subscribe to any RSS / Atom address; collected articles enter the news feed and take part in sentiment analysis. They are collected around the clock at the set interval, regardless of trading days.',
+    items: [
+      { label: 'Feed address', text: 'Enter an RSS 2.0, Atom or RSS 1.0 address. For financial media without an RSS feed, use RSSHub to generate one. The test reports an error if the address is unreachable or not valid XML.' },
+      { label: 'Collection interval', text: 'In minutes, at least 5.' },
+      { label: 'Items per source', text: 'The maximum number of items taken from each source each time, to avoid storing too many at once.' },
+      { label: 'Dedup days', text: 'Within this period, items with the same link (or the same title when there is no link) are not stored again.' },
+      { label: 'Collect now', text: 'Fetch once manually without waiting for the scheduled job, and show the number of new items.' },
+    ],
+  },
+  scheduler: {
+    title: 'Scheduled Jobs',
+    summary: 'View the next run time of each scheduled job and run any job immediately. Times and intervals are configured in the scheduler section of settings.yaml.',
+    items: [
+      { label: 'Requirements', text: 'The service must be running without --no-scheduler; running the scheduled jobs of both main.py and server.py collects data twice, so choose one.' },
+      { label: 'Interval jobs', text: 'Hot search, Cailianshe telegraph, market data and international news run at minute intervals; market data is collected only during trading hours.' },
+      { label: 'Daily jobs', text: 'By default on weekdays: 15:30 daily analysis, 16:00 signal generation, 16:10 market review and daily report, 16:20 self-learning, 16:30 watchlist dashboard. Jobs that depend on market data are skipped on non-trading days.' },
+      { label: 'Run now', text: 'The job runs in the background and its progress appears in the task center at the top right; a job that is already running is not started twice.' },
+    ],
+  },
+  backup: {
+    title: 'Backup & Restore',
+    summary: 'Export the current configuration to a file, or restore it from a file, for easy migration and backup.',
+    items: [
+      { label: 'Export', text: 'By default API keys, Webhooks and other secrets are not included; if you tick "Include secrets", the exported file contains plaintext secrets, so keep it safe and do not send it to others or commit it to a repository.' },
+      { label: 'Import', text: 'Importing overwrites the whole current settings.yaml and takes effect immediately, so confirm before proceeding. The content must be valid YAML, and missing settings are filled with defaults.' },
+      { label: 'Note', text: 'The export contains configuration only, not the market data, signals and orders in the database; that data is in data/quant.db in the data directory and must be backed up separately.' },
+    ],
+  },
+  security: {
+    title: 'Security',
+    summary: 'Controls how the web page can be accessed. By default only this machine is allowed; login must be enabled for access from a phone or the local network.',
+    items: [
+      { label: 'Enable login', text: 'When enabled, a password is required (set on first login, at least 6 characters), and it is stored as a hash in data/web_auth.json.' },
+      { label: 'Listening externally', text: 'Setting web.host to 0.0.0.0 lets devices on the local network connect; always enable login in that case, because requests from outside the container do not count as local.' },
+      { label: 'Change password', text: 'Requires the current password, and the new password must be at least 6 characters. If you forget it, stop the service and delete data/web_auth.json to set it again.' },
+      { label: 'API Token', text: 'web.api_token lets scripts or bots call the API with Authorization: Bearer; leave it empty to disable it, and configure it in settings.yaml.' },
+    ],
+  },
+  desktop: {
+    title: 'Desktop',
+    summary: 'Shown only in the Electron desktop app, for viewing the version and opening the data and log directories.',
+    items: [
+      { label: 'Data directory', text: 'Holds config, data and logs: the configuration files, database and logs are all in it, so copy this directory to back up or migrate.' },
+      { label: 'Log directory', text: 'When troubleshooting a startup or collection failure, look at the logs under logs first; desktop.log records how the desktop app itself started.' },
+      { label: 'Retry', text: 'If the background service fails to start or crashes, click Retry on the error page to start it again.' },
+    ],
+  },
+}
+
+/** 按界面语言返回设置帮助；英文缺少的标签回退到中文 */
+export function getSettingsHelp(lang: Lang): Record<string, HelpSection> {
+  return lang === 'en' ? { ...SETTINGS_HELP, ...SETTINGS_HELP_EN } : SETTINGS_HELP
 }
