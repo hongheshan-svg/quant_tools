@@ -1,6 +1,7 @@
 // K 线图（SVG）：蜡烛、MA5/10/20、成交额柱，悬停显示当日数据；红涨绿跌
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { DailyBar } from '@/api/types'
+import { useT } from '@/i18n'
 import { fmtAmount, fmtNum, fmtPct } from '@/utils/format'
 
 export type Period = 'day' | 'week' | 'month'
@@ -67,6 +68,7 @@ export function movingAverage(values: number[], n: number): (number | null)[] {
 }
 
 export function CandlestickChart({ candles, height = 380, visible = 120 }: { candles: Candle[]; height?: number; visible?: number }) {
+  const t = useT()
   const ref = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(800)
   const [hover, setHover] = useState<number | null>(null)
@@ -86,7 +88,7 @@ export function CandlestickChart({ candles, height = 380, visible = 120 }: { can
     return MA.map((m) => ({ ...m, values: movingAverage(closes, m.n).slice(offset) }))
   }, [candles, data.length])
 
-  if (!data.length) return <div ref={ref} className="py-10 text-center text-sm text-muted">暂无 K 线数据</div>
+  if (!data.length) return <div ref={ref} className="py-10 text-center text-sm text-muted">{t('暂无 K 线数据')}</div>
 
   const pad = { left: 8, right: 56, top: 10, bottom: 18 }
   const priceH = height * 0.72
@@ -104,18 +106,18 @@ export function CandlestickChart({ candles, height = 380, visible = 120 }: { can
   const x = (i: number) => pad.left + step * i + step / 2
   const maxAmt = Math.max(...data.map((c) => c.amount), 1)
   const current = hover != null ? data[hover] : data[data.length - 1]
-  const ticks = [0, 0.25, 0.5, 0.75, 1].map((t) => minP + span * t)
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((k) => minP + span * k)
 
   return (
     <div ref={ref} className="relative select-none">
       <div className="num mb-1 flex flex-wrap gap-x-3 text-xs text-muted">
         <span>{current.date}</span>
-        <span>开 {fmtNum(current.open)}</span>
-        <span>高 {fmtNum(current.high)}</span>
-        <span>低 {fmtNum(current.low)}</span>
-        <span>收 {fmtNum(current.close)}</span>
+        <span>{t('开')} {fmtNum(current.open)}</span>
+        <span>{t('高')} {fmtNum(current.high)}</span>
+        <span>{t('低')} {fmtNum(current.low)}</span>
+        <span>{t('收')} {fmtNum(current.close)}</span>
         <span className={current.change_pct == null ? '' : current.change_pct >= 0 ? 'text-up' : 'text-down'}>{fmtPct(current.change_pct)}</span>
-        <span>额 {fmtAmount(current.amount)}</span>
+        <span>{t('额')} {fmtAmount(current.amount)}</span>
         {mas.map((m) => {
           const v = m.values[hover ?? data.length - 1]
           return <span key={m.n} style={{ color: m.color }}>MA{m.n} {fmtNum(v)}</span>
@@ -125,7 +127,7 @@ export function CandlestickChart({ candles, height = 380, visible = 120 }: { can
         width={width}
         height={height}
         role="img"
-        aria-label="K线图"
+        aria-label={t('K线图')}
         onMouseMove={(e) => {
           const rect = (e.currentTarget as SVGElement).getBoundingClientRect()
           const i = Math.floor((e.clientX - rect.left - pad.left) / step)

@@ -2,6 +2,7 @@ import { api } from '@/api/endpoints'
 import type { NewsItem } from '@/api/types'
 import { Badge, Button, Card, ErrorBox, PageHeader, Spinner } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
+import { useT } from '@/i18n'
 import { cn } from '@/utils/cn'
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -16,10 +17,11 @@ function sourceLabel(n: NewsItem): string {
 }
 
 export function NewsPage() {
+  const t = useT()
   const { data, error, loading, reload } = useApi(api.news)
   return (
     <div>
-      <PageHeader title="实时资讯流" description="财联社、韭研公社、国际新闻、美股财报合并，重要消息置顶" actions={<Button onClick={reload} loading={loading}>刷新</Button>} />
+      <PageHeader title={t('实时资讯流')} description={t('财联社、韭研公社、国际新闻、美股财报合并，重要消息置顶')} actions={<Button onClick={reload} loading={loading}>{t('刷新')}</Button>} />
       {error && <ErrorBox message={error} onRetry={reload} />}
       {loading && !data && <Spinner />}
       <Card bodyClassName="p-0">
@@ -37,14 +39,14 @@ export function NewsPage() {
                   {n.title}
                 </a>
                 <div className="mt-1 flex flex-wrap gap-1">
-                  <Badge>{sourceLabel(n)}</Badge>
-                  {(n.tags ?? []).slice(0, 4).map((t) => <Badge key={t} tone="accent">{t}</Badge>)}
+                  <Badge>{t(sourceLabel(n))}</Badge>
+                  {(n.tags ?? []).slice(0, 4).map((tag) => <Badge key={tag} tone="accent">{tag}</Badge>)}
                 </div>
               </div>
             </li>
           ))}
         </ul>
-        {data && !data.length && <p className="p-4 text-sm text-muted">暂无资讯，先在交易决策页采集数据</p>}
+        {data && !data.length && <p className="p-4 text-sm text-muted">{t('暂无资讯，先在交易决策页采集数据')}</p>}
       </Card>
     </div>
   )
