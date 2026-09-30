@@ -95,7 +95,10 @@ describe('SettingsPage bot tab', () => {
     render(<MemoryRouter initialEntries={['/settings']}><AppRoutes authEnabled={false} /></MemoryRouter>)
     fireEvent.click(screen.getByRole('tab', { name: '聊天机器人' }))
     const enable = (await screen.findAllByLabelText('启用'))[0]
+    // 等 BotForm 把 botSettings 同步进表单状态后再操作，否则随后的同步会覆盖点击/输入
+    await waitFor(() => expect(screen.getByLabelText(/Client ID/)).toHaveValue('key'))
     fireEvent.click(enable)
+    await waitFor(() => expect(enable).toBeChecked())
     fireEvent.change(screen.getByLabelText(/允许使用的用户 ID/), { target: { value: 'u1，u2 u3' } })
     fireEvent.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(saveBot).toHaveBeenCalled())
