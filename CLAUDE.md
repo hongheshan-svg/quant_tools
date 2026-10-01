@@ -26,9 +26,10 @@ SQLite 数据库会自动创建在 `data/quant.db`，LLM 响应缓存在 `data/l
 python server.py                            # Web 界面 + API（默认 127.0.0.1:8000）+ 定时任务 + 聊天机器人；--no-scheduler 只提供接口
 python main.py                              # 无界面 APScheduler 定时循环（含聊天机器人）
 python main.py --once [--steps collect,analysis]   # 按顺序执行一遍收盘后任务后退出（GitHub Actions、Docker 用）
-python main.py --stocks 600519,000858       # 只诊断指定股票并推送决策仪表盘
+python main.py --stocks 600519,000858       # 只诊断指定股票（也可以是 ETF、指数，如 510300、sh000300）并推送决策仪表盘
 python main.py --no-notify                  # 运行任务但不推送消息
 python main.py --check-notify               # 检查推送配置后退出（退出码 0 为可用，1 为失败）
+python main.py --check-config               # 校验 settings.yaml（未知键、类型、格式、语义）后退出（有错误时退出码 1）
 python main.py --debug                      # 打印详细日志
 cd apps/web && npm run dev                  # 前端开发服务器 :5173，/api 代理到 8000（API_TARGET 可改）
 cd apps/desktop && npm run dev              # Electron 开发模式：在空闲端口启动仓库里的 server.py
@@ -77,11 +78,13 @@ cd apps/desktop && npm test                                 # node --test，不�
 - 前端测试用 `stubFetch()` 伪造接口，或 `vi.spyOn(api, '...')`；页面按 `role="tab"` 找标签页。操作设置类表单前要等表单初始化完成，否则随后的状态同步会覆盖输入。
 - 桌面端测试只测 `src/backend.js` 的纯逻辑，`preload.test.js` 通过 `Module._load` 替换 `electron` 模块。
 - 涉及当前日期的实现（如基金日线补齐），测试里要屏蔽或用相对日期。
+- `tests/conftest.py` 的 autouse fixture 把 `market_phase.current_phase` 固定为盘后（`effective_daily_bar_date=None`，不触发行情过时护栏），避免诊断测试随运行时间漂移；测试阶段逻辑本身用 `market_phase._real_current_phase` 并传入 `now`、用 `trading_calendar._set_days()` 指定日历。
+- 报告模板测试要把 `report_templates.templates_dir()`（或 `CUSTOM_DIR`）monkeypatch 到 `tmp_path`，不能往仓库的 `config/templates/` 写文件。
 
 ## 打包
 
 - **桌面端安装包：** `python scripts/build_desktop.py`（`--backend-only`、`--skip-web`、`--dir`）。依次构建前端 → 用 PyInstaller 把 `server.py` 打成 onedir 的 `dist/backend/quant_server`（内置 `settings.yaml.example`、`stock_pool.yaml`、策略技能（`src/services/skills`）和前端，排除 PyQt6）→ electron-builder 打包（Windows NSIS、macOS dmg，产物在 `apps/desktop/dist/`）。只能打包当前系统的安装包；推送 `v*` 标签时 `desktop-release.yml` 在 Windows 和 macOS 上打包并上传到 Release。
-  - 打包时用 `build_desktop.py` 的 `--add-data` 把 `src/services/skills` 内置，用户自定义策略放在 `config/strategies/` 目录（数据目录）。
+  - 打包时用 `build_desktop.py` 的 `--add-data` 把 `src/services/skills` 和内置报告模板 `src/services/templates` 内置，用户自定义策略放在 `config/strategies/`、自定义报告模板放在 `config/templates/`（数据目录）。
   - 运行时按字符串导入或带数据文件、原生库的包要加到脚本里的 `HIDDEN_IMPORTS`、`COLLECT_DATA`、`COLLECT_SUBMODULES`、`COLLECT_ALL`（例如 litellm 的价格表、akshare 的数据文件、py_mini_racer 的动态库）。打包后记得实际运行 `quant_server` 冒烟，缺文件只有运行到那段代码才会报错。
   - 打包的后台服务用 `--workdir` 指定数据目录，启动时把内置的示例配置复制进去（每次覆盖），股票池规则只在缺失时复制；没传 `--workdir` 时用可执行文件所在目录。它还会在后台执行 `playwright install chromium`。
 - **旧版 PyQt6 EXE：** `powershell .\scripts\build_exe.ps1`，需要不在仓库里的 `AStockQuantQt6.spec`（`*.spec` 被 git 忽略）。运行时 `run_dashboard.py` 切换到 EXE 所在目录。
@@ -131,6 +134,11 @@ cd apps/desktop && npm test                                 # node --test，不�
   - **定时任务：** `GET /system/scheduler`（任务列表和状态）、`POST /system/scheduler/{job_id}/run`（立即运行，非交易日行情和分析类任务照常跳过）。任务 id → 中文名和函数映射在 `src/scheduler.py` 的 `JOBS` 和 `describe_jobs()`；`app.state.scheduler` 仅在本进程运行定时任务时存在。
   - **图片导入：** `POST /watchlist/import-image`（后台任务），识别出的股票经校验后勾选加入。
   - **资讯源配置：** `GET/PUT /settings/intelligence`、`POST /settings/intelligence/test`、`POST /pipeline/collect-rss`。
+  - **选股历史：** `GET /screening/dates?limit=`（1~250，附策略列表）、`GET /screening/picks?trade_date=&strategy=`（日期格式不对 422）。
+  - **分享图：** `GET /market/review/image?trade_date=`（大盘复盘）、`GET /watchlist/report/image`（最近一份自选股仪表盘）；没有数据 404，渲染失败 503。
+  - **重新评估：** `POST /stocks/diagnoses/{id}/reassess`（body `{profile, persist}`），按其他决策风格重算该诊断，persist 为真时保存为该风格的决策信号。
+  - **其他设置段：** `GET/PUT /settings/report`（AI 输出语言）、`/settings/watchlist`（仪表盘设置）、`/settings/diagnosis`（决策风格、多智能体模式、股东数据等，body 外层有 `diagnosis` 键）、`/settings/templates` 系列（报告模板，见下文）。
+  - **配置校验：** `GET /system/config-check`（`src/services/config_check.py` 的 `check_config()`），配置导入的返回也附带校验结果（只提示，不拦截）。
   - **配置向导：** `GET /system/setup`（`src/services/setup_status.py`）检查大模型、数据、交易日历、推送、自选股、浏览器，以及对外监听时是否开启登录；只查本地、不联网、出错视为未完成。首页据此提示，`/setup` 为向导页，设置页支持 `?tab=`，帮助内容在 `utils/settingsHelp.ts`（中英文两份）。
 - AI 问股的多会话存在 `chat_session` 表（`src/services/chat_sessions.py` 的 `ChatSessionStore`），每个会话一把锁。
 
@@ -139,8 +147,8 @@ cd apps/desktop && npm test                                 # node --test，不�
 - React 19 + TypeScript + Vite + Tailwind 4 + react-router + zustand + recharts。`@/` 指向 `src/`。
 - 接口：`src/api/client.ts`（`http.get/post/put/del/upload`，401 时派发 `auth:required` 事件）、`src/api/endpoints.ts`（`api` 对象）、`src/api/types.ts`。新增接口时三处一起改。
 - 数据加载用 `useApi(fn, deps)`；后台任务用 `useTask().run(() => api.xxx(), { success })`，它会轮询到任务结束并显示进度，任务中心（右上角）列出全部任务。
-- 通用组件在 `src/components/ui.tsx`（Button、Card、Tabs、Modal、Field…）和 `DataTable.tsx`、`CandlestickChart.tsx`（SVG K 线）。颜色用 `index.css` 里的 CSS 变量（深色/浅色主题），A 股习惯红涨绿跌：`text-up` 红、`text-down` 绿。
-- **国际化**（`src/stores/lang.ts`、`src/i18n/index.ts`）：顶栏和登录页可切换中文/英文（保存在 localStorage `quant-lang`，默认中文）。中文原文作为 i18n key，英文词典分页面放在 `src/i18n/en/*.ts`（`import.meta.glob` 自动合并），组件内用 `const t = useT()`、非组件代码用 `t()`；只翻译界面文字，AI 回答/报告/新闻不翻译。前端测试 `apps/web/src/__tests__/i18n-coverage.test.ts` 检查所有 `t()` 字面量都有译文、译文不含中文、占位符一致——新增文字时要同步补词典。
+- 通用组件在 `src/components/ui.tsx`（Button、Card、Tabs、Modal、Field…）和 `DataTable.tsx`、`CandlestickChart.tsx`（SVG K 线）。`Modal` 用 portal 渲染到 `document.body`，叠放时只有最上层弹窗对辅助技术可见（下层 `aria-hidden`），Esc 只关最上层。颜色用 `index.css` 里的 CSS 变量（深色/浅色主题），A 股习惯红涨绿跌：`text-up` 红、`text-down` 绿。
+- **国际化**（`src/stores/lang.ts`、`src/i18n/index.ts`）：顶栏和登录页可切换中文/英文（保存在 localStorage `quant-lang`，默认中文）。中文原文作为 i18n key，英文词典分页面放在 `src/i18n/en/*.ts`（`import.meta.glob` 自动合并），组件内用 `const t = useT()`、非组件代码用 `t()`；只翻译界面文字，AI 回答/报告/新闻不翻译（AI 输出语言是后端的 `report.language`，与界面语言分开设置）。每个工作流的新译文放在自己的 `en/*.ts` 文件里。前端测试 `apps/web/src/__tests__/i18n-coverage.test.ts` 检查所有 `t()` 字面量都有译文、译文不含中文、占位符一致——新增文字时要同步补词典。
 - 在 Electron 里运行时 `window.quantDesktop`（`src/utils/desktop.ts`）可用，设置页据此显示「桌面端」页。
 
 ### Electron 桌面端（`apps/desktop`）
@@ -188,8 +196,8 @@ cd apps/desktop && npm test                                 # node --test，不�
   - 通达信按「`data_sources.pytdx_servers` → 上次连上的 → 内置列表 → pytdx 自带列表」尝试服务器（pytdx 自带的大多已失效）；日线不复权，成交量单位是手。
   - efinance 走东方财富接口，东方财富不可用时它也不可用；Tushare 需要 `data_sources.tushare_token`，日线不复权。
   - **成交量单位统一：** 实时行情腾讯普通板块是手、科创板（688/689）是股；日线由 `normalize_volume_unit()` 按「成交额/(收盘价×成交量)」判断单位并转换为股；`scripts/repair_star_volume.py` 修复已入库的错误数据。
-- **ETF 与指数：** 日线来自腾讯 K 线（`src/collectors/fund_data.py`，不走个股日线回退链），单独存入 `fund_daily`、`fund_info`，不写 `stock_daily`，否则会影响涨跌家数、大盘环境和选股。指数与个股代码会冲突（000001 上证指数与平安银行、000016、000688 等），所以指数的规范代码带交易所前缀（如 `sh000300`），任何地方都不能对指数调用 `bare_code`，统一用 `stock_code.diagnosis_code()`；ETF 用 6 位代码。内置指数在 `fund_registry.INDEXES`；ETF 列表来自新浪，7 天刷新一次，只在 `server.py` 运行定时任务或 `main.py` 常驻时后台刷新。支持搜索、个股页 K 线、AI 诊断（`FundDiagnosisService`，结果字段与个股相同）、问股工具、机器人诊断；不能加入自选股和交易。腾讯 K 线不含成交额，ETF 按成交量×均价估算，指数记 0。
-- **数据源能力总览**（`src/services/data_capabilities.py`，`GET /system/capabilities`）：实时行情、个股日线、涨停池、涨停原因、个股资金流、联网搜索、RSS 资讯源七个数据集，按实际回退顺序列出各来源是否已配置和健康状态（ok / failing / open / unknown，读自进程级的 source_health 与熔断器）。
+- **ETF 与指数：** 日线来自腾讯 K 线（`src/collectors/fund_data.py`，不走个股日线回退链），单独存入 `fund_daily`、`fund_info`，不写 `stock_daily`，否则会影响涨跌家数、大盘环境和选股。指数与个股代码会冲突（000001 上证指数与平安银行、000016、000688 等），所以指数的规范代码带交易所前缀（如 `sh000300`），任何地方都不能对指数调用 `bare_code`，统一用 `stock_code.diagnosis_code()`；ETF 用 6 位代码。内置指数在 `fund_registry.INDEXES`；ETF 列表来自新浪，7 天刷新一次，只在 `server.py` 运行定时任务或 `main.py` 常驻时后台刷新。支持搜索、个股页 K 线、AI 诊断（`FundDiagnosisService`，结果字段与个股相同）、问股工具、机器人诊断、加入自选股（决策仪表盘和 `--stocks` 对基金走基金诊断，盘中提醒跳过基金）；不能交易，批量导入、图片导入和实盘记账只识别个股。腾讯 K 线不含成交额，ETF 按成交量×均价估算，指数记 0。
+- **数据源能力总览**（`src/services/data_capabilities.py`，`GET /system/capabilities`）：实时行情、个股日线、涨停池、涨停原因、个股资金流、股东数据、联网搜索、RSS 资讯源八个数据集，按实际回退顺序列出各来源是否已配置和健康状态（ok / failing / open / unknown，读自进程级的 source_health 与熔断器）。
 - 财联社电报用签名的 `/v1/roll/get_roll_list`（`cailianshe.sign_params()`：参数按键排序后 SHA1 再 MD5），每次最多 50 条（超过返回空列表）；旧的 `nodeapi` 接口已 404，只作兜底。
 - 东方财富 `push2`/`push2his` 行情接口有时直接断开连接（2026-09 观察到，浏览器和普通 HTTP 都一样），依赖它的指数、资金流、efinance 会失败，所以各处都要有回退。`scripts/check_sources.py` 可以快速确认各源状态。
 - 涨停池：东方财富涨停池 → 东方财富强势股池。强势股池里有没涨停的股票，所以只保留涨幅达到该板块涨停幅度的行。
@@ -197,17 +205,20 @@ cd apps/desktop && npm test                                 # node --test，不�
 - 结构不适合改成回退链的内联回退（指数、板块、北向资金、各资讯采集器），直接调用 `source_health.record()` 记录健康状态。
 - 个股资金流（`src/collectors/fund_flow.py`）：同花顺即时资金流 → 东方财富（分页，每页最多 100 条），随行情采集每 10 分钟最多一次，15:05 后再取一次收盘快照，写入 `stock_fund_flow`。
 - 筹码和业绩（`src/collectors/fundamentals.py`）：筹码分布先用 AKShare，失败时用本地日线按换手率衰减估算（至少 60 根日线）；业绩预告/快报由 `EarningsCache` 按报告期整批缓存。二者只在个股诊断时按需获取。
+- 股东数据（`src/collectors/shareholders.py`）：东方财富 F10 `ShareholderResearch/PageAjax`（普通 HTTP，一次返回股东户数、十大股东、十大流通股东、机构持仓），`fetch_shareholders(code)` 成功缓存 12 小时、失败缓存 30 分钟（`reset_cache()` 清空），ETF/指数直接返回 None 不请求。只在个股诊断（`diagnosis.shareholders`，代码缺省关闭、示例配置开启）和问股 `shareholders` 工具里按需获取。
 - 行情里的市盈率、市净率（`stock_daily.pe/pb`）来自腾讯字段 39/46 和东方财富 f9/f23，新浪没有；接口用 0 或 `-` 表示没有数据，入库为空。
 - 成交量单位各数据源不一致（腾讯、新浪、历史日线为股，东方财富为手），成交额统一为元。需要量比时用成交额比（策略选股就是这样做的）。
 - 按需补齐日线：`ensure_daily_history(code, db_path)`（`src/collectors/daily_history.py`）在本地近 150 天日线少于 60 根时联网下载，只写入缺失的交易日，失败的股票 30 分钟内不重试。个股详情、AI 诊断、问股工具、技术指标提醒都会调用它，相关测试要把它 monkeypatch 掉。
 - 个股新闻与公告：`get_stock_news(code)`（`src/collectors/stock_news.py`，东方财富资讯搜索和公告接口，普通 HTTP），进程内缓存 30 分钟。公告标题命中关键词时标注风险，其中立案、退市风险警示等是严重风险。「没有新闻」不算数据源失败（`is_valid` 放行空列表），也不能用数据集级的 `allow_stale`，否则会拿到别的股票的缓存。
-- 股票搜索：`StockSearch`（`src/services/stock_search.py`）用 `stock_info` 和最新一天行情建索引，按代码、名称、拼音首字母（`pypinyin`，多音字给出多种组合）匹配，进程内缓存 12 小时。`pypinyin` 自带 PyInstaller hook，打包不用额外配置。
+- 股票搜索：`StockSearch`（`src/services/stock_search.py`）用 `stock_info` 和最新一天行情建索引，按代码、名称、拼音首字母（`pypinyin`，多音字给出多种组合）匹配，进程内缓存 12 小时。索引名称和查询都先经 `normalize_name()`，所以「万科」「万 科」都能找到「万科A」。`pypinyin` 自带 PyInstaller hook，打包不用额外配置。
 - 股票代码统一用 `src/utils/stock_code.py`（`bare_code`、`code_candidates`、`exchange_of`、`board_of`、`daily_limit_pct`），不要再手写代码前缀规则。北交所新代码以 92 开头，不是上交所。
+- **股票名称规范化：** 深交所列表和腾讯行情的简称含空格和全角字母（如「万  科Ａ」）。写入名称一律用 `stock_code.normalize_name()`（NFKC 转半角并删除空白），行情、股票列表、涨停池、龙虎榜、日线入库都已处理；按名称匹配资讯用 `name_variants()`（去掉 XD/XR/DR/N/C 标记、ST 前缀、结尾的 A/B）。`init_db()` 会一次性规范化 `stock_info` 和 `watchlist` 的旧名称，`stock_daily` 的旧行不迁移，读取处兜底。
 - 东方财富数据统一走 `em_client.get_em_client()`：这是一个 Playwright 单例，用来绕过 TLS 指纹检测，替代 AKShare 的 `ak.*_em()` 系列函数。不要直接调用 `ak.*_em()`。
 - `browser_client.py` 每个线程持有一个 Playwright 实例，因为同步 Playwright 对象不能跨线程使用。`ths_client.py`（同花顺）在它之上加了重试、Cookie 回退和过期缓存回退。
 - `BaseCollector.fetch_url()` 和 `post_url()` 带指数退避重试。`safe_collect()` 会吞掉所有异常并返回 `[]`，所以采集器出错只会体现在日志里。
 - `CollectorOrchestrator.collect_all()` 要求所有新闻源（cailianshe、xueqiu、jiuyan、hot_topics、weibo、douyin、toutiao）以及行情、国际新闻、美股财报这几组都有数据。缺哪组就只重试哪组，最多 `desktop.collect_max_attempts` 次。
 - **联网新闻搜索**（`src/collectors/news_search.py`）：博查、Tavily、SerpAPI、Brave、SearXNG 五种搜索服务，按 `search.providers` 的顺序回退；每个 provider 可配置多个 Key（或多个 SearXNG 地址），在自己的 Key 之间轮询；某个 Key 返回 401/403/429 时进入 10 分钟冷却（进程级），同一次调用里换下一个 Key。多 provider 之间用 `fetch_with_fallback("news_search", ...)` 回退，出错或无结果都换下一个。结果按（查询词、条数、天数）缓存 `search.cache_minutes` 分钟（进程级），只缓存非空结果。`api_keys` 可以是列表或逗号分隔字符串；环境变量覆盖时是字符串，需要 `_as_list()` 处理。`search.enabled` 为假时完全不请求，所以个股诊断的已有测试不受影响。测试前后调用 `news_search.reset_state()` 清空缓存和冷却。
+- **资讯相关度**（`src/collectors/news_relevance.py`，纯函数）：`score_news()` 按代码/名称变体命中位置、公司事件词、权威来源打 0~100 分，分为 direct（直接相关，代码/名称信号 ≥ 38）、sector（行业相关）、macro（宏观市场），附最多 3 条依据；`junk_reason()` 识别股吧、问答、行情模板页、荐股广告、垃圾内容（官方/权威来源豁免，广告词只用「带你赚」「翻倍牛股」之类组合词，避免误伤正常标题）；`rank_news()` 去垃圾并按类别、分数排序。`search_stock_news(code, name, config, limit, sector_terms=())` 用它代替原来的名称硬过滤，结果的 `SearchResult.relevance` 带分级。
 - **RSS 资讯源**（`src/collectors/rss.py`）：支持 RSS 2.0、Atom、RSS 1.0（用 xml.etree 和 beautifulsoup4 解析；含 `<!ENTITY` 的内容拒绝）。配置 `intelligence` 段（启用、间隔分钟数最少 5、每源最多条数、保留天数、订阅源 URL 列表）。入库 `finance_news`，`source="rss"`、`category` 为订阅源名称，按 URL（没有时按标题）在 `keep_days` 内去重。接入：定时任务 id="rss"（启用且有启用的源时注册）、`main.py --once` 的 collect 步骤、PyQt6 的 `CollectorOrchestrator`（可选组）。与交易日无关；舆情分析在近 24 小时最多 20 条 RSS 消息前标注 `[RSS·源名称]`。
 
 ### 数据库（`src/database/`）
@@ -226,20 +237,24 @@ cd apps/desktop && npm test                                 # node --test，不�
   - 自学习（`save_config()`）写入完整的合并后配置。
   - `settings_store.save_section()`：Web 设置接口，以及 PyQt6 的 AI 设置、推送设置对话框，按段写回。
 - **search 段配置：** `enabled`（启用联网新闻搜索）、`providers`（优先级列表）、`cache_minutes`（缓存时间）、各 provider 的 Key 配置。Web 设置接口 `/settings/search` 返回时 API Key 显示为 `******` 加后 4 位，保存时按后 4 位还原为原值（找不到对应原值的丢弃）；含 `your-` 的占位 Key 视为未配置。
-- **分享图片**（`src/services/report_image.py`）：`build_share_html()` 纯函数生成 HTML，`render_png()` 用 Playwright 同步 API 每次启动 headless chromium 截图（2 倍清晰度）。结果按标题和内容缓存最近 20 张；渲染失败接口返回 503。测试不能真的启动浏览器，要 monkeypatch `render_png`。Docker 镜像加了 `fonts-noto-cjk`。
+- **分享图片**（`src/services/report_image.py`）：`build_share_html()` 纯函数生成 HTML，`render_png()` 用 Playwright 同步 API 每次启动 headless chromium 截图（2 倍清晰度）。结果按标题、内容和品牌参数缓存最近 20 张；渲染失败接口返回 503。测试不能真的启动浏览器，要 monkeypatch `render_png`。Docker 镜像加了 `fonts-noto-cjk`。
+  - **品牌：** `notifier.image` 的 `brand`（顶部品牌名）、`footer`（底部文字，默认「仅供学习研究，不构成投资建议」）、`qr_url`（底部二维码，只接受 http/https，用 `qrcode[png]` 的纯 Python 工厂生成内嵌 data URI）由 `share_options(config)` 读取，推送分享图、诊断/复盘/仪表盘分享图接口都使用。文本一律 HTML 转义。
+- **AI 输出语言**（`report.language: zh|en`，`src/services/report_language.py`）：`report_language(config)`、`language_directive(lang, enums)`（en 时追加英文输出指令，并要求代码判断用的枚举值保持原样，如 action、信心 高/中/低、观点 看多/中性/看空、姿态 进攻/均衡/防守）、`tr(lang, zh, en)`（护栏说明和报告标签）、`display(lang, value)`（枚举的英文显示名）。zh 输出与原来逐字相同。诊断、基金诊断、多智能体、策略会诊、大盘复盘、问股、深度研究都接入；诊断与复盘结果带 `language`，缓存只复用同语言的结果；日报只翻译标题和主要节标题。
+- **配置校验**（`src/services/config_check.py`）：`check_config(config, raw, example)` 返回 `{ok, errors, warnings, issues}`。检查用户 `settings.yaml` 原文里 example 没有的键（`strategy.adaptive_weights`、`screening.strategies`、`llm.pricing`、`notifier.routes`、各搜索 provider 子键、列表元素等动态键除外）、与 example 默认值类型不符、`scheduler.*_time` 必须是两位小时的 `HH:MM`、`*_minutes`/`*interval` 必须大于 0（example 默认为 0 的项允许 0）、若干取值范围和枚举，以及语义问题（主模型没有可用 Key、启用的推送渠道不完整、对外监听未开登录、搜索启用但没有可用服务、机器人缺凭证、`trading.auto_confirm`）。单项检查出错降级为 warning。**新增配置项要先加到 example**，否则会被报成未知键。
+- **自定义报告模板**（`src/services/report_templates.py`）：`render_report(name, data, fallback)` 在 `config/templates/{name}.md.j2`（`templates_dir()`，相对工作目录）存在时用 Jinja2 `ImmutableSandboxedEnvironment` 渲染（模板不能访问内部属性，也不能修改传入数据；变量 `default` 是内置格式全文），否则或出错/结果为空白时返回 fallback。name 只能是 diagnosis、watchlist、market_review、daily_report。接入点：机器人诊断和复盘回复、诊断 Markdown 下载与分享图、自选股仪表盘、大盘复盘 `result["markdown"]`、日报正文；PyQt6 界面显示不接入。内置示例模板在 `src/services/templates/`。
 
 ### 大盘复盘、AI 研判与策略选股
 
 - `build_market_facts()`（`src/services/market_context.py`）把指数、涨跌家数、成交额、量化大盘环境、题材/行业主线、降温板块和财联社重要快讯汇总成 `MarketFacts`，供各 LLM 提示词共用。`news=False` 时不读快讯。
 - `MarketReviewService`（`src/services/market_review.py`）按趋势结构、资金情绪、主线板块复盘，输出次日姿态、仓位、关注与回避方向、观察要点。
   - **护栏：** 姿态不能比量化大盘环境更激进（冰点、防守最多给防守，均衡最多给均衡），被下调时仓位改用对应档位。
-  - **存储：** 每个交易日一条（`market_review` 表），重新生成覆盖。已有收盘后生成的复盘时直接复用，盘中生成的会在收盘后重新生成。
+  - **存储：** 每个交易日一条（`market_review` 表），重新生成覆盖。已有收盘后生成的同语言复盘时直接复用，盘中生成的会在收盘后重新生成。`result["markdown"]` 经 `render_report("market_review", ...)`，有自定义模板时用模板。
   - **日报：** 日报只读取已生成的复盘，不会调用 LLM。
 - `TradeAdvisor`（`src/services/trade_advisor.py`）给 Top 评分股写入 `ai_verdict`，观望和回避的信号在 `_is_buy_signal()` 中被拦下，不生成订单。评分没有选中的 Top 股票，只补建 `signal_type="hold"` 的参考记录，AI 不能把它们变成买入；AI 涨停预测（`premarket`）信号的研判也不会被覆盖。
 - `StrategyScreener`（`src/strategy/screener.py`）是全市场策略选股：
   - **流程：** 最新交易日行情 → 股票池过滤（`stock_pool.yaml` 的名称关键词、黑名单、股价、流通市值；逐只查库的 `RiskManager._check_stock_pool()` 太慢，这里是批量实现）→ 成交额 3000 万以上的股票取近 60 个交易日日线计算特征 → 各策略规则打分。
   - **策略：** 内置 6 个策略，参数可在 `screening.strategies.<策略>` 覆盖；每个策略标注适配的大盘环境，适配的排在前面；同一只股票被多个策略选中时，取最高分并每多一个策略加 5 分。
-  - **存储与次日表现：** 结果按「交易日 + 策略 + 代码」存入 `strategy_pick`，每行存各策略自己的分数；`performance()` 统计各策略选股的次日表现。
+  - **存储与次日表现：** 结果按「交易日 + 策略 + 代码」存入 `strategy_pick`，每行存各策略自己的分数；`performance()` 统计各策略选股的次日表现。`picks(trade_date, strategy)` 查某天（默认最近一天）的结果并可按策略筛选（`latest()` 等于 `picks()`），`history_dates(limit)` 给出最近有选股的交易日及入选数、次日表现，Web 选股页据此浏览历史。
   - **预测器接入：** 预测器只在盘前、盘后时段调用选股，因为盘中成交额不完整；策略选股归入「全市场」来源，这样自学习的来源统计不用改。
   - **策略权重：** 最近 30 天内有历史回测时，按回测得出的权重（0.8~1.2）乘到各策略得分上（`screening.adaptive_strategy_weights`）。
 - `StrategyBacktester`（`src/strategy/strategy_backtest.py`）对区间内每个全市场交易日（当天行情不少于 1000 只）调用 `StrategyScreener.run(point_in_time=True)` 重新选股，结果存入 `strategy_backtest`。
@@ -248,11 +263,16 @@ cd apps/desktop && npm test                                 # node --test，不�
   - **策略权重：** 样本不少于 30 个的策略按次日平均收益相对全体的差值调整权重。
 - `DiagnosisOutcomeService`（`src/services/diagnosis_outcome.py`）对近 60 天的 AI 诊断做事后验证（只读）：以诊断行情日收盘价为基准统计之后 1/3/5 日涨跌，买入/加仓算看多、减仓/卖出/回避算看空，持有/观望不判方向；同一行情日多次诊断只算最后一次。
 - 自选股：`WatchlistService`（`src/services/watchlist.py`，`watchlist` 表）负责增删和批量导入。批量导入的表格有「代码」列表头时只读取代码列，避免把数量、金额里的 6 位数字当成代码。
-  - **决策仪表盘：** `WatchlistReportService`（`src/services/watchlist_report.py`）并发诊断每只自选股（`watchlist.workers`）。收盘后复用当天收盘后的诊断，盘中复用 30 分钟内的。结果汇总成仪表盘，存入 `watchlist_report` 并推送。
+  - **ETF 和指数：** `resolve(text, include_funds=True)` 也识别 ETF 和指数，表里存规范代码（指数带前缀）；纯 6 位数字优先当个股（000001 是平安银行），加指数要输入带前缀的代码或名称（sh000001、上证指数）。`list()`/`overview()` 每行带 `kind`（stock/etf/index），基金行情取自 `fund_daily`、诊断取自 `FundDiagnosisService`；`contains()`/`remove()` 用 `diagnosis_code`。批量导入、图片导入、实盘记账传 `include_funds=False`。
+  - **决策仪表盘：** `WatchlistReportService`（`src/services/watchlist_report.py`）并发诊断每只自选股（`watchlist.workers`），基金走基金诊断，仪表盘里标注「ETF」「指数」。收盘后复用当天收盘后的诊断，盘中复用 30 分钟内的（只复用同语言的）。结果汇总成仪表盘，存入 `watchlist_report` 并推送。
+    - `watchlist.timeout_minutes`（0 不限，可为小数）：总时长上限，超时后未完成的记入 failed，`shutdown(wait=False, cancel_futures=True)` 不等卡住的线程，仍保存并推送已完成部分，返回 `timed_out`。
+    - `watchlist.single_notify`：每只成功后立即推送一条简版（`render_item_brief()`），最后仍推汇总。
+    - 邮件分组 `notifier.email.groups`（`[{name, stocks, to}]`，`notifier.email_groups()` 解析并规范化代码）：汇总照常 `broadcast`，每组再用 `notifier.send_email()` 收到只含本组股票的仪表盘（子集为空跳过），逐只推送时属于分组的股票也发组邮件。`send_email()` 只要求邮件渠道启用且有 SMTP 服务器，默认收件人可以为空；`EmailNotifier.send/send_image` 的 `to=` 覆盖收件人。
+    - Web：`GET/PUT /settings/watchlist`（daily_report、max_stocks 1~500、workers 1~10、single_notify、timeout_minutes 0~600），自选股页「仪表盘设置」；推送设置的邮件表单可编辑分组。
   - **提醒与问股：** 盘中提醒和问股的 `watchlist` 工具都会读取自选股。
 - AI 问股 `StockChatSession`（`src/services/stock_chat.py`）：
   - **协议：** 每个问题最多 3 轮工具调用。LLM 用 JSON 返回 `{"tool_calls": [...]}` 或 `{"answer": ...}`，不依赖各家模型的 function calling。
-  - **工具：** 工具在 `src/services/chat_tools.py`，全部只读，不能下单；股票参数可以是名称或拼音，会先经 `StockSearch` 解析。新增 `web_search` 工具从博查、Tavily、SerpAPI、Brave、SearXNG 联网搜索资讯（需配置 `search.enabled` 和各源 API Key）。
+  - **工具：** 工具在 `src/services/chat_tools.py`，全部只读，不能下单；股票参数可以是名称或拼音，会先经 `StockSearch` 解析。新增 `web_search` 工具从博查、Tavily、SerpAPI、Brave、SearXNG 联网搜索资讯（需配置 `search.enabled` 和各源 API Key；参数带 `code` 且是个股时按资讯相关度过滤并标注类别）；`shareholders` 工具查股东数据。
   - **策略选择：** `perspective` 参数可传策略名称、中文名或别名；`PERSPECTIVES` 是模块导入时的策略快照。
   - **流式输出**（`POST /chat/sessions/{id}/ask/stream`）：SSE，每个事件一行 `data: JSON`，type 为 status、tool、tool_result、delta、error、done，done 总是最后一个；`StockChatSession.ask_stream()` 边接收边解析 JSON 里的 answer 字符串产出 delta；`POST /chat/sessions/{id}/cancel` 取消；前端可停止，流式失败回退任务轮询。模型没有 `chat_stream` 时退化为一次性回答。
   - **测试：** 通过 `llm=`、`tools=` 注入假对象。
@@ -288,6 +308,7 @@ cd apps/desktop && npm test                                 # node --test，不�
   - 导入 LiteLLM 一律用 `llm_usage.import_litellm()`：它让 LiteLLM 使用本地价格表，否则导入时会联网下载。
   - **用量统计：** 每次调用（含命中缓存和失败）由 `record_usage()` 写进缓存库的 `llm_usage` 表，记录 token 和估算费用（`llm.pricing` 可自定义单价）。功能按调用栈里第一个 `src.`/`api.` 模块归类，映射表是 `FEATURE_LABELS`，新增调用 LLM 的模块要加进去，否则显示为「其他」。`usage_summary()` 供 Web【AI 用量】页使用。
   - 主模型失败时切换到备用模型；备用模型的 Key 仍以 `your-` 开头时会被跳过。
+  - **错误分类与参数恢复：** `classify_llm_error(exc)` 按异常类名、状态码和错误文本把失败分为 auth、quota、rate_limit、model_not_found、context_length、content_filter、unsupported_param、timeout、network、server、unknown，给出中文说明（`LLMErrorInfo`）。模型不支持 `response_format`/`temperature`/`max_tokens` 时，记入进程级 `_PARAM_FIXES`（按路由，`reset_key_state()` 一并清空），去掉该参数或改用 `max_completion_tokens` 后立即重试（不计重试次数、不等待，一次调用最多恢复 3 次）；auth、quota、model_not_found、context_length、content_filter 不在同一路由重试，直接切备用。`LLMClient.last_error` 记最近一次失败，全部失败时异常文案带分类说明；`/settings/llm/test` 失败返回 `kind`，发生参数调整时返回 `note`。
   - 响应缓存在 SQLite 里，缓存键是模型 + 提示词 + 参数的哈希，带 TTL。
   - `reload()` 可热切换模型平台。
   - `chat_json()` 解析失败时依次尝试：提取 markdown 代码块 → 修复截断的 `items` 列表 → 截到最后一个完整对象后交给 `json_repair`。截断的输出不能直接交给 `json_repair`，它会把半截的对象（如半截股票代码）当成有效数据保留下来。
@@ -297,28 +318,34 @@ cd apps/desktop && npm test                                 # node --test，不�
 - 操作建议统一用 `src/analyzers/decision.py`：`normalize_action()` 把文本归一为 buy、add、hold、watch、reduce、sell、avoid、alert 八种。否定说法（「不建议买入」）识别为 avoid；多个关键词同时出现时，取最先出现的；无法识别时返回空字符串。下单只接受 `is_bullish()` 为真的建议。
 - AI 预测保存前会经过 `_validate_predictions()`：剔除在 `stock_daily` 和 `stock_info` 里都查不到的代码（AI 编造的）、ST/退市股和重复代码，名称以数据库为准。行情库为空时无法校验，直接跳过。
 - 个股诊断 `StockDiagnosisService`（`src/services/stock_diagnosis.py`）：
-  - **流程：** 先用 `build_context()` 汇总行情、技术面、涨停记录、主线、大盘、资讯、龙虎榜和持仓，再由 LLM 输出决策仪表盘 JSON。
-  - **护栏：** `_apply_guardrails()` 负责动作归一化，缺失时按评分推断，价格计划用 `sanitize_price_plan()` 校验。以下情况的买入建议降为观望：
+  - **流程：** 先用 `build_context()` 汇总市场阶段、行情、技术面、资金流、筹码、业绩、股东（开启时）、涨停记录、主线、大盘、资讯、龙虎榜和持仓，再由 LLM 输出决策仪表盘 JSON（含 `phase_decision` 和 `signal_attribution`）。
+  - **资讯：** 本地资讯按 `name_variants(name)` 匹配；本地、东方财富个股新闻和联网结果都经 `junk_reason()` 过滤、`score_news()` 分级，【相关资讯】每行带 `[直接]`/`[行业]`/`[宏观]` 前缀并按此排序；另取所属主线和近期涨停题材词（`sector_terms`，最多 3 个）在本地资讯里找最多 3 条不含本股名称的行业背景。context 有 `news_relevance` 计数。基金诊断调用 `_web_search_lines(..., tagged=False)`，格式不变。
+  - **市场阶段**（`src/services/market_phase.py`）：`current_phase(now)` 按交易日历判断 premarket（9:30 前）、intraday、lunch_break（11:30–13:00）、closing_auction（14:57–15:00）、postmarket、non_trading，并给出 `effective_daily_bar_date`（最近一根完整日线：盘后为今天，其余为上一交易日）。`phase_prompt_section()` 生成提示词里的【市场阶段】行；`phase_guardrails()` 规范化 LLM 的 `phase_decision`（操作窗口、立即行动、观察条件、下次检查、数据限制），盘前/非交易日把未被否定的「立即买入/卖出」类表述（en 下也识别 buy now 等）改为开盘后确认并把高信心降为中，盘中且行情是当天时注明 K 线未走完，行情日期早于最近完整交易日时信心降为中、买入降为观望。`build_context` 通过模块属性调用 `market_phase.current_phase()`（便于测试替换，见测试一节的 conftest）。
+  - **信号归因**（`src/analyzers/attribution.py`）：`normalize_attribution()` 把技术面/资讯/基本面/大盘四项贡献度解析为 0~100 的数（「40%」也可），四项都有效时按最大余数法缩放为合计 100，结果为 `signal_attribution`。
+  - **股东：** `diagnosis.shareholders` 开启时加【股东】段，户数环比下降 ≥10% 和机构新进写进利好、户数环比上升 ≥10% 写进风险（前缀「股东：」）；数据完整度权重不变。
+  - **护栏：** `_apply_guardrails()` 负责动作归一化，缺失时按评分推断，价格计划用 `sanitize_price_plan()` 校验；判定本身在 `src/services/decision_profile.py` 的纯函数 `decide()`/`decide_with_phase()`（输入是可 JSON 序列化的快照，见下文决策风格）。均衡风格下以下情况的买入建议降为观望：
     - 评分低于 50；
     - 大盘冰点；
     - 行情或日线不足 20 根；
     - 数据完整度（行情、日线、技术面、资金流、筹码、大盘、资讯、业绩按权重计分）低于 60%；
     - 资金净流出超过成交额的 5%；
     - 与 3 天内上次诊断方向相反，但评分变化不足 15 分；
-    - 近 30 天公告含严重风险（立案、退市风险警示等）。
+    - 近 30 天公告含严重风险（立案、退市风险警示等）；
+    - 行情日期早于最近完整交易日（阶段护栏）。
+  - **决策风格**（`diagnosis.decision_profile`，保守 conservative / 均衡 balanced / 进取 aggressive，`diagnose(..., profile=)` 可覆盖）：`PROFILE_RULES` 定义买入最低评分 65/50/45、最低数据完整度 75/60/50%、资金净流出降级阈值 3/5/8%；保守在大盘防守时不开新仓、信心低不买并追加「单只不超过 2 成」，保守和进取的买入必须有失效条件或止损价。冰点、核心数据不足、严重公告、行情过时、方向反复这些安全护栏不随风格放松，风格专属规则在它们之后判断。均衡与原来的常量和文案逐字一致。结果保存 `decision_profile` 和 `decision_inputs` 快照，缓存只复用同语言、同风格的结果；`reassess(diagnosis_id, profile)` 只用快照按其他风格重算（不调用模型、不联网、不读当前行情），旧记录没有快照时返回错误。诊断结果和 `latest()` 带 `diagnosis_id`。
   - **多智能体：** 由 `diagnosis.mode` 控制，见 `src/services/diagnosis_agents.py`。
     - `standard` 和 `full` 模式下，分析员只拿到按「【标题】」拆出的部分上下文，并发调用；决策员沿用原来的提示词，外加 `DECISION_ADDENDUM`。
     - 分析员观点冲突（看多和看空并存，或评分相差 25 分以上）时，信心最高为「中」。
     - 代码里的默认值是 `single`，示例配置里是 `standard`，所以测试用的最小配置只调用一次 LLM。
   - **历史校准：** 由 `diagnosis.calibration` 控制。`diagnosis_outcome.calibration_stats()` 汇总近 90 天诊断的事后准确率，进程内缓存 30 分钟，写进提示词；看多诊断的 3 日准确率低于 45%（至少 10 次）时，买入信心下调一档。
-  - **测试：** 诊断前会补齐日线，并获取筹码、业绩、个股新闻和公告，这些都会联网。测试要 monkeypatch `fundamentals.fetch_chip_summary`、`EarningsCache.get`、`stock_news.get_stock_news` 和 `daily_history.ensure_daily_history`（参考 `tests/test_stock_diagnosis.py` 的 fixture）。
-  - **缓存：** 结果存入 `stock_diagnosis` 表，30 分钟内复用。
+  - **测试：** 诊断前会补齐日线，并获取筹码、业绩、个股新闻和公告，这些都会联网。测试要 monkeypatch `fundamentals.fetch_chip_summary`、`EarningsCache.get`、`stock_news.get_stock_news` 和 `daily_history.ensure_daily_history`（参考 `tests/test_stock_diagnosis.py` 的 fixture）。股东数据只在配置 `diagnosis.shareholders` 为真时获取（要测时 monkeypatch `shareholders.fetch_shareholders`）；本地资讯只取近 3 天，测试数据的 `collected_at` 要用当前时间附近。
+  - **缓存：** 结果存入 `stock_diagnosis` 表，30 分钟内复用（同语言、同风格）。
   - **多策略会诊**（`src/services/skill_consult.py`，表 `skill_opinion`）：个股诊断时可选择多个策略（`diagnosis.skill_consult`，示例配置 `enabled: true`、`max_skills: 2`；代码缺省关闭）并发咨询各策略给观点后汇总；结果含 `skill_opinions` 和 `skill_consensus`；5 个交易日后评估命中，样本≥20 后按命中率调整权重到 0.8~1.2；决策信号页「策略表现」（`GET /chat/skills/performance`）查看；每次诊断多约 `max_skills` 次模型调用。
   - **运行记录**（`src/services/run_log.py`，存 `stock_diagnosis.run_log`）：记录各数据步骤的结果与耗时、模型调用（名称与耗时，不含 token）和护栏调整；`build_context(code, run_log=None)` 通过参数传入记录器，不能存在服务实例上（自选股诊断多线程共用一个实例）。诊断历史详情可查看；`GET /stocks/{code}/diagnosis-trend` 提供评分与收盘价趋势。
   - **历史查询：** `DataQueryService.list_diagnoses(code, action, days, limit, offset)` 按股票、操作建议、天数筛选诊断记录；`get_diagnosis(id)` 获取单条；`delete_diagnosis(id)` 删除。诊断历史 Web 页面支持下载 Markdown 或分享图（`/stocks/diagnoses/{id}/markdown`、`/stocks/diagnoses/{id}/image`）。
   - **注入假 LLM：** 测试通过构造函数的 `llm=` 参数注入（`MarketReviewService` 也一样）。
 - `LimitUpPredictor`（`src/services/premarket_predictor.py`）按时段选择提示词，时段为 `premarket`（9:25 前）、`morning`、`noon`、`afternoon`、`aftermarket`（15:00 后）。非交易日一律按 `premarket` 处理。预测写入 `TradeSignal` 时，`signal_date` 存的是目标交易日：交易日盘前和盘中是当天，盘后和非交易日是下一个交易日。
-- **决策信号**（`src/services/decision_signals.py`，表 `decision_signal`）：AI 诊断的 buy/add/reduce/sell/avoid 建议转为决策信号，带观察期（1~20 日，默认 5）和失效条件。相反建议使旧信号失效（invalidated），同方向的旧信号被替代（replaced）；收盘后定时任务 `signal_lifecycle`（默认 16:25）评估 1/3/5 日收益、最大不利/有利波动、止损止盈、过期；单票历史复盘（样本≥3）进诊断提示词；Web「决策信号」页（`/signals`）可查看和反馈；API `/signals` 系列。
+- **决策信号**（`src/services/decision_signals.py`，表 `decision_signal`）：AI 诊断的 buy/add/reduce/sell/avoid 建议转为决策信号，带观察期（1~20 日，默认 5）和失效条件。相反建议使旧信号失效（invalidated），同方向的旧信号被替代（replaced）；收盘后定时任务 `signal_lifecycle`（默认 16:25）评估 1/3/5 日收益、最大不利/有利波动、止损止盈、过期；单票历史复盘（样本≥3）进诊断提示词；Web「决策信号」页（`/signals`）可查看和反馈；API `/signals` 系列。信号带 `profile`（决策风格，旧数据为空，按 balanced 处理），失效和替代只在同代码同风格之间发生；`save_reassessed(diagnosis_id, profile)` 把重新评估结果保存为该风格的信号（返回 created/existing/skipped，旧记录 error）；`list()`/`stats()` 支持 `profile`（`unknown` 表示旧数据）。
 - **深度研究**（`src/services/research.py`，表 `research_report`）：按选定议题自动拆解问题 → 联网搜索 + 本地新闻/行情/技术面/主线/大盘取证（证据编号 E1…，每条≤400 字、总计≤12000 字）→ LLM 生成带引用的报告。Web「深度研究」页（`/research`），API `/research` 系列，机器人命令「研究」（别名：深度研究、research）。
 
 ### 交易（`src/trading/`）
@@ -333,13 +360,15 @@ cd apps/desktop && npm test                                 # node --test，不�
 - `RiskManager` 负责仓位限制、ST/*ST 黑名单和 `config/stock_pool.yaml` 股票池过滤。股票池规则只在 `validate_order_intent()`（下单前校验）里执行；`filter_signals()` 目前没有调用方。黑名单和股票池只对买单生效，卖单（止损止盈离场）不能被拦截。
 - 当 `min_listing_days > 0` 时，每个 `RiskManager` 实例第一次校验股票池会调用 `StockInfoCollector.refresh_if_stale()`：如果 `stock_info` 表超过一天没更新，就联网从沪深北交易所列表采集。涉及股票池的测试要 monkeypatch 掉这一步。
 - 实盘记账 `RealPortfolioService`（`src/services/real_portfolio.py`）只记账，不连券商、不下单。
+  - **多账户：** `real_account` 表记账户（名称唯一），四张实盘表都有 `account` 列，空值即默认账户「默认」（`DEFAULT_ACCOUNT`）。`RealPortfolioService(config, account=None)`：None 时只读方法汇总全部账户（同一代码合并：数量相加、成本加权，每行带 `accounts`），写方法写入默认账户；指定账户时成交重放、资金锚点、止损计划、公司行为都只看该账户。非默认账户的导入去重键加「账户|」前缀（默认账户保持原格式）。`accounts()`、`add_account()`、`rename_account()`（同步四张表）、`delete_account()`（默认账户和有记录的账户不能删）。`real_position_plan` 唯一索引是 (account, code)，旧库由 `db._migrate_real_plan_index()` 迁移。盘中提醒、个股诊断、问股、机器人用全部账户汇总。
   - **成交流水：** 存在 `real_trade` 表，手动录入或导入交割单（`parse_trade_rows()` 按常见列名识别）。导入用 `import_key` 去重：有成交编号时按编号，否则按日期+时间+代码+方向+价格+数量+序号。
   - **公司行为**（`real_corporate_action` 表）：分红（现金到账摊薄成本）、送转股（只增加数量）、红利税补缴（计入成本）。同一天先处理公司行为再处理成交；可按每 10 股方案（`add_corporate_action_by_plan`，按除权日前持仓计算）或按到账金额逐笔录入。交割单导入识别「红利入账」「红股入账」「红利税补缴」行并转换为公司行为记录（`parse_import_rows`，`parse_trade_rows` 三元组签名不变）。Web 页面导入先预览后确认（`POST /real/trades/import?preview=true`）。API 支持 `GET/POST/DELETE /real/actions`。**已知限制：** 公司行为（dividend/tax）暂不进 `PortfolioRiskService` 的 fills 重放。
   - **持仓：** 按移动平均成本计算，费用计入成本。
   - **可用资金：** 用 `real_cash` 表记录的锚点，加上锚点之后的成交推算。
   - **止损止盈：** `real_position_plan` 可以逐只覆盖止损价、目标价，没设置时按风控比例从成本计算。
   - **使用方：** 实盘持仓（`account="real"`）会进入盘中提醒、组合风险、个股诊断和问股。
-- 组合风险 `PortfolioRiskService`（`src/services/portfolio_risk.py`，`account="paper"`/`"real"`）只读计算以下几项：
+  - **接口：** `/real` 系列都有 `account` 参数（读为空表示全部账户，写为空表示默认账户），`GET/POST /real/accounts`、`PUT/DELETE /real/accounts/{name}`、`GET /real/risk?account=`；Web 实盘页的账户选择保存在 localStorage `quant-real-account`，只有默认账户时界面与原来一致。
+- 组合风险 `PortfolioRiskService`（`src/services/portfolio_risk.py`，`account="paper"`/`"real"`（全部实盘账户）/`"real:<账户名>"`）只读计算以下几项：
   - 总仓位与大盘环境建议仓位（`risk.market_regime_position`）的比较；
   - 个股和行业集中度，行业取最近一次涨停时的所属行业；
   - 距止损价的距离；
