@@ -27,6 +27,7 @@
   - `--stocks 600519,000858`：只诊断指定股票并推送决策仪表盘（跳过采集、分析等步骤）。
   - `--no-notify`：运行任务但不推送消息。
   - `--check-notify`：检查推送配置后退出（退出码 0 为可用，1 为失败）。
+  - `--check-config`：检查 settings.yaml 的配置项后退出（退出码 0 为通过，1 为失败）；检查内容包括未知键、类型匹配、取值范围、时间格式和语义合法性。
   - `--debug`：打印详细日志。
 - `cd apps/web && npm run dev`：前端开发服务器（:5173，接口代理到 8000）。`cd apps/desktop && npm run dev`：Electron 开发模式。
 - `python run_dashboard.py`：启动 PyQt6 桌面端（旧版）。加 `--headless` 只执行一次完整流程，不打开界面。
@@ -49,6 +50,9 @@ Python 使用 4 空格缩进，遵循 PEP 8。公共函数和服务边界优先�
 - **不导入 Qt：** CI 机器缺少 libEGL，导入 PyQt6 会报错；需要测试的逻辑放在不依赖 Qt 的模块里。
 - **前端与桌面端：** 前端用 Vitest + Testing Library（`apps/web/src/__tests__/`），桌面端用 `node --test`（`apps/desktop/tests/`，替换 `electron` 模块，不需要安装 Electron）。
 - **数据库：** 数据库引擎是模块级单例。涉及数据库的测试要先重置单例（参考 `tests/test_self_learning.py` 里的 `_reset_db_engine()`），再在 `tmp_path` 下创建临时库。
+- **市场阶段：** `tests/conftest.py` 自动把 `market_phase.current_phase` 固定为盘后（不涉及当前时间，`effective_daily_bar_date=None`），真实获取时间的函数是 `market_phase._real_current_phase`。涉及诊断、复盘等时间敏感功能的测试，可以通过 monkeypatch 该函数覆盖时段。
+- **报告模板：** 测试自定义 Jinja2 模板时，要把模板目录 monkeypatch 到临时目录，不能写到 `config/templates/`。
+- **配置校验：** 新增配置项时必须先在 `config/settings.yaml.example` 里给出脱敏后的默认值，否则配置校验会报「未知键」。
 - **回归测试：** 修复 bug 时要补充回归测试。
 
 ## 提交与 Pull Request 规范
