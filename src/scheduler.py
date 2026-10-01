@@ -130,6 +130,10 @@ def _run_stock_data_collection(config: dict):
         logger.error(f"行情数据采集任务异常: {e}")
         _report_error(config, "行情数据采集", e)
         return
+    try:
+        collector.collect_market_overview()  # 首页指数、涨跌家数、成交额随行情更新
+    except Exception as e:
+        logger.warning(f"市场概况刷新失败: {e}")
 
     # 行情更新后检查模拟盘持仓的止损止盈
     try:

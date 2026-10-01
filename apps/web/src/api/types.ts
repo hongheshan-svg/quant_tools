@@ -57,6 +57,7 @@ export interface MarketOverview {
   top_sectors?: { name: string; pct: number }[]
   bottom_sectors?: { name: string; pct: number }[]
   update_time?: string
+  trade_date?: string // 涨跌家数、成交额统计所属的交易日（节假日、开盘前为最近一个交易日）
   ai_market_comment?: string
 }
 

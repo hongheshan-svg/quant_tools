@@ -175,12 +175,20 @@ class StockDataCollector(BaseCollector):
         db_path = self.config.get("database", {}).get("sqlite_path", "data/quant.db")
 
         # ======== 1. 优先从DB的StockDaily统计（已采集的行情数据） ========
+        stat_date = today
         try:
             from src.database.db import get_db_session
             from src.database.models import StockDaily as SD
             with get_db_session(db_path) as session:
                 all_rows = session.query(SD).filter(SD.trade_date == today).all()
                 daily_all = [r for r in all_rows if self._extract_bare_equity_code(r.code)]
+                if len(daily_all) <= MIN_MARKET_OVERVIEW_SAMPLE_SIZE:
+                    # 节假日、开盘前今天还没有行情：用最近一个有行情的交易日（指数接口此时返回的也是它的收盘）
+                    latest = self._latest_overview_date(session, today)
+                    if latest:
+                        stat_date = latest
+                        daily_all = [r for r in session.query(SD).filter(SD.trade_date == latest).all()
+                                     if self._extract_bare_equity_code(r.code)]
                 if daily_all and len(daily_all) > MIN_MARKET_OVERVIEW_SAMPLE_SIZE:
                     total_amount = sum((r.amount or 0) for r in daily_all)
                     overview["total_amount_yi"] = round(total_amount / 1e8, 0)
@@ -216,7 +224,7 @@ class StockDataCollector(BaseCollector):
                 from src.database.models import NorthboundFlow
                 with get_db_session(db_path) as session:
                     nb = session.query(NorthboundFlow).filter(
-                        NorthboundFlow.trade_date == today
+                        NorthboundFlow.trade_date == stat_date
                     ).first()
                     if nb and nb.total_net_inflow is not None:
                         overview["northbound_net_yi"] = round(nb.total_net_inflow / 1e4, 2)
@@ -247,10 +255,26 @@ class StockDataCollector(BaseCollector):
         else:
             emotion = "待开盘"
         overview["market_emotion"] = emotion
+        overview["trade_date"] = stat_date  # 涨跌家数、成交额等统计所属的交易日
         overview["update_time"] = datetime.now().strftime("%H:%M:%S")
 
         StockDataCollector._market_overview_cache = overview
         return overview
+
+    @staticmethod
+    def _latest_overview_date(session, before: str) -> str | None:
+        """before 之前最近一个行情样本足够的交易日（跳过旧版本在节假日写入的重复数据）"""
+        from sqlalchemy import func
+
+        from src import trading_calendar
+        from src.database.models import StockDaily as SD
+
+        dates = (session.query(SD.trade_date, func.count(SD.code)).filter(SD.trade_date < before)
+                 .group_by(SD.trade_date).order_by(SD.trade_date.desc()).limit(10).all())
+        for trade_date, count in dates:
+            if count > MIN_MARKET_OVERVIEW_SAMPLE_SIZE and trading_calendar.is_trade_day(trade_date):
+                return trade_date
+        return None
 
     def _collect_index_and_sectors(self, overview: dict):
         """

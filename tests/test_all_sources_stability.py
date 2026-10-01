@@ -93,6 +93,27 @@ def test_collect_all_marks_failure_when_attempts_exhausted(monkeypatch):
     assert result["collect_attempts"] == 2
 
 
+
+def test_collect_all_computes_overview_after_market(monkeypatch):
+    """市场概况从刚写入的行情统计，必须等行情采集完再算（含重试行情时重新计算）"""
+    orchestrator = _make_orchestrator(monkeypatch, collect_max_attempts=2)
+    order = []
+    markets = iter([{**_ok_market(), "realtime_quotes": "error: x"}, _ok_market()])
+
+    def fake_market():
+        order.append("market")
+        return next(markets)
+
+    monkeypatch.setattr(orchestrator, "collect_news_parallel", lambda: _full_news_counts())
+    monkeypatch.setattr(orchestrator, "collect_market_parallel", fake_market)
+    monkeypatch.setattr(orchestrator, "collect_market_overview", lambda: order.append("overview") or {"n": len(order)})
+    monkeypatch.setattr(orchestrator, "_collect_global_news", lambda: 4)
+    monkeypatch.setattr(orchestrator, "_collect_us_earnings", lambda: 6)
+
+    result = orchestrator.collect_all()
+    assert order == ["market", "overview", "market", "overview"]
+    assert result["overview"] == {"n": 4} and result["all_sources_ok"] is True
+
 def test_collect_global_news_requires_all_core_sources(monkeypatch):
     orchestrator = _make_orchestrator(monkeypatch, collect_max_attempts=1)
 

@@ -35,6 +35,7 @@ export default {
   '涨停原因': 'Limit-up reason',
   '交易决策': 'Trading Desk',
   '评分日期 {a} ｜ 涨停池 {b}': 'Score date {a} | Limit-up pool {b}',
+  ' ｜ 涨跌统计 {c}': ' | Breadth as of {c}',
   '数据采集完成': 'Data collection finished',
   '采集中 {p}': 'Collecting {p}',
   '采集数据': 'Collect data',

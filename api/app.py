@@ -65,6 +65,8 @@ def create_app(config: dict[str, Any] | None = None, *, pipeline=None, start_sch
             from src.services.fund_registry import refresh_etf_list_background
 
             refresh_etf_list_background(db_path)  # 股票和 ETF 列表（搜索用）
+            # 首页市场概况只在行情采集后计算、存在进程内；启动时先算一次，节假日重启后也有最近交易日的数据
+            threading.Thread(target=app.state.pipeline.refresh_market_overview, name="overview-refresh", daemon=True).start()
         yield
         if scheduler:
             app.state.scheduler = None

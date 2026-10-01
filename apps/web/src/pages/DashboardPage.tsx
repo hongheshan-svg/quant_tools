@@ -136,7 +136,8 @@ export function DashboardPage() {
       <SetupBanner />
       <PageHeader
         title={t('交易决策')}
-        description={data ? t('评分日期 {a} ｜ 涨停池 {b}', { a: data.score_date, b: data.limit_up_date }) : undefined}
+        description={data ? t('评分日期 {a} ｜ 涨停池 {b}', { a: data.score_date, b: data.limit_up_date })
+          + (data.market_overview?.trade_date ? t(' ｜ 涨跌统计 {c}', { c: data.market_overview.trade_date }) : '') : undefined}
         actions={
           <>
             <Button loading={collect.running} onClick={() => collect.run(api.collect, { success: t('数据采集完成') }).then(reload).catch(() => {})}>

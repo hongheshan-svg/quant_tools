@@ -153,6 +153,11 @@ class CollectorOrchestrator:
             logger.error(f"市场概况采集失败: {e}")
             return {}
 
+    def _collect_market_and_overview(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        """先采行情再算市场概况：概况的涨跌家数、成交额从刚写入的行情统计，并发执行会读到旧数据"""
+        market = self.collect_market_parallel()
+        return market, self.collect_market_overview()
+
     def collect_all(self) -> dict[str, Any]:
         """一次执行新闻+行情+市场概况+国际+美股并发采集，并强校验全源稳定。"""
         result: dict[str, Any] = {
@@ -164,15 +169,13 @@ class CollectorOrchestrator:
         }
 
         # 首轮：全量并发采集
-        with ThreadPoolExecutor(max_workers=5, thread_name_prefix="collect-all") as executor:
+        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="collect-all") as executor:
             fut_news = executor.submit(self.collect_news_parallel)
-            fut_market = executor.submit(self.collect_market_parallel)
-            fut_overview = executor.submit(self.collect_market_overview)
+            fut_market = executor.submit(self._collect_market_and_overview)
             fut_global = executor.submit(self._collect_global_news)
             fut_us = executor.submit(self._collect_us_earnings)
             result["news"] = fut_news.result()
-            result["market"] = fut_market.result()
-            result["overview"] = fut_overview.result()
+            result["market"], result["overview"] = fut_market.result()
             result["global_news"] = fut_global.result()
             result["us_earnings"] = fut_us.result()
 
@@ -189,7 +192,7 @@ class CollectorOrchestrator:
                 if "news" in retry_groups:
                     futs["news"] = executor.submit(self.collect_news_parallel)
                 if "market" in retry_groups:
-                    futs["market"] = executor.submit(self.collect_market_parallel)
+                    futs["market"] = executor.submit(self._collect_market_and_overview)
                 if "global_news" in retry_groups:
                     futs["global_news"] = executor.submit(self._collect_global_news)
                 if "us_earnings" in retry_groups:
@@ -197,7 +200,10 @@ class CollectorOrchestrator:
 
                 for key, fut in futs.items():
                     try:
-                        result[key] = fut.result()
+                        if key == "market":
+                            result["market"], result["overview"] = fut.result()
+                        else:
+                            result[key] = fut.result()
                     except Exception as e:
                         logger.error(f"重试分组失败 [{key}]: {e}")
             missing = self._check_missing_sources(result)
