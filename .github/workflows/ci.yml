@@ -1,13 +1,30 @@
 name: CI
 
+# 推送 main、提交 PR 时运行；发布工作流（release.yml）打标签时先调用它，测试不过不发布。
+# 只改文档时不运行；同一分支 / PR 有新提交时取消还在跑的旧任务。
+
 on:
   push:
     branches: [main]
+    paths-ignore: ["**.md", "docs/**", "LICENSE", ".github/release-notes/**"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**", "LICENSE", ".github/release-notes/**"]
+  workflow_call:
+  workflow_dispatch:
+
+# 被 release.yml 调用时 github.workflow 是调用方的名称，分组不同，不会和推送 main 触发的 CI 互相取消
+concurrency:
+  group: ${{ github.workflow }}-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  test:
+  backend:
+    name: Backend tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
@@ -15,9 +32,13 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: requirements.txt
 
+      # 测试不导入 PyQt6（CI 机器也没有 libEGL）、不打包，跳过这两个大包
       - name: Install dependencies
-        run: pip install -r requirements.txt pytest
+        run: |
+          grep -viE '^(pyqt6|pyinstaller)' requirements.txt > /tmp/requirements.txt
+          pip install -r /tmp/requirements.txt pytest
 
       # 测试不访问网络，也不需要 Playwright 浏览器
       - name: Run tests
@@ -29,7 +50,9 @@ jobs:
           python tests/test_self_learning.py
 
   web:
+    name: Web (lint, test, build)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: apps/web
@@ -55,7 +78,9 @@ jobs:
         run: npm run build
 
   desktop:
+    name: Desktop tests
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
