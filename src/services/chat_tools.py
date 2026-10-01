@@ -44,6 +44,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec("fund_flow", "资金流", "code", "最近一个交易日的主力资金净流入"),
     ToolSpec("chips", "筹码", "code", "获利盘比例、平均成本、90% 筹码区间和集中度"),
     ToolSpec("earnings", "业绩", "code", "最新业绩预告或业绩快报"),
+    ToolSpec("shareholders", "股东", "code", "股东户数及变化、十大流通股东明细、机构持仓"),
     ToolSpec("news", "新闻公告", "code", "近 7 天个股新闻和近 30 天公告（标注立案、减持等风险）"),
     ToolSpec("web_search", "联网搜索", "query: 搜索词", "搜索最新新闻，需要在设置里配置搜索服务"),
     ToolSpec("limit_up_history", "涨停记录", "code", "近期涨停记录：连板、封板时间、炸板次数、涨停原因"),
@@ -233,6 +234,20 @@ class ChatTools:
         earnings = EarningsCache.get(code)
         risk = earnings_risk(earnings)
         return f"{name}({code}) 业绩：{describe_earnings(earnings) or '近期无业绩预告/快报'}" + (f"（风险：{risk}）" if risk else "")
+
+    def _tool_shareholders(self, args: dict) -> str:
+        from src.collectors import shareholders
+
+        code, name = self._resolve(args)
+        data = shareholders.fetch_shareholders(code)
+        text = shareholders.describe_shareholders(data)
+        if not text:
+            return f"{name}({code}) 股东：暂无数据"
+        lines = [f"{name}({code}) 股东：{text}"]
+        for i, h in enumerate((data or {}).get("top10_float") or [], 1):
+            ratio = f"{h['ratio']:.2f}%" if h.get("ratio") is not None else "-"
+            lines.append(f"{i}. {h['name']}（{h.get('type') or '-'}）占流通股 {ratio}" + (f"，{h['change']}" if h.get("change") else ""))
+        return "\n".join(lines)
 
     def _tool_news(self, args: dict) -> str:
         from src.collectors.stock_news import get_stock_news

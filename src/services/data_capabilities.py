@@ -110,6 +110,10 @@ def capabilities(config: dict) -> list[dict[str, Any]]:
         _source(index, "个股资金流", "东方财富", "东方财富"),
     ]})
 
+    result.append({"dataset": "股东数据", "label": "股东数据（东方财富 F10）", "sources": [
+        _source(index, "股东数据", "东方财富", "东方财富 F10", note="个股诊断和问股按需获取，诊断需开启 diagnosis.shareholders"),
+    ]})
+
     # 联网搜索：只列已配置的 provider
     search_conf = config.get("search") or {}
     enabled = bool(search_conf.get("enabled"))

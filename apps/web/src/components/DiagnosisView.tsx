@@ -148,6 +148,7 @@ export function DiagnosisView({ d }: { d: Diagnosis }) {
         <div><span className="text-muted">{t('大盘：')}</span>{d.market_regime}</div>
         {d.fund_flow && <div><span className="text-muted">{t('资金：')}</span>{d.fund_flow}</div>}
         {d.earnings && <div><span className="text-muted">{t('业绩：')}</span>{d.earnings}</div>}
+        {d.shareholders && <div><span className="text-muted">{t('股东：')}</span>{d.shareholders}</div>}
         {d.valuation && <div><span className="text-muted">{t('估值：')}</span>{d.valuation}</div>}
         {d.calibration && <div><span className="text-muted">{t('历史表现：')}</span>{d.calibration.replace('【历史表现】', '')}</div>}
       </div>

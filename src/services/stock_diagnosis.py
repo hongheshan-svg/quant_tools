@@ -43,6 +43,7 @@ from src.database.models import (
 )
 from src.analyzers.attribution import normalize_attribution
 from src.services import market_phase
+from src.collectors.shareholders import describe_shareholders
 from src.services.run_log import RunLog
 from src.trading.price_plan import sanitize_price_plan
 from src.utils.stock_code import bare_code, board_of, code_candidates, name_variants, normalize_name
@@ -345,7 +346,10 @@ class StockDiagnosisService:
         from src.collectors.fund_flow import latest_fund_flow
         from src.collectors.fundamentals import EarningsCache, describe_chips, describe_earnings, earnings_risk, fetch_chip_summary
         from src.collectors.stock_news import get_stock_news
+        from src.collectors import shareholders
+        from src.collectors.shareholders import holder_signals
 
+        shareholders_on = bool((self.config.get("diagnosis") or {}).get("shareholders", False))
         step = _step_factory(run_log)
         try:  # 本地日线不足时先联网补齐，技术面和筹码估算都依赖它
             with step("补齐日线"):
@@ -432,6 +436,15 @@ class StockDiagnosisService:
         except Exception as e:
             logger.debug(f"业绩数据获取失败: {e}")
             earnings = None
+        holders = None
+        if shareholders_on:
+            try:
+                with step("股东") as s:
+                    holders = shareholders.fetch_shareholders(code)
+                    s.detail = "已获取" if holders else "暂无"
+            except Exception as e:
+                logger.debug(f"股东数据获取失败: {e}")
+                holders = None
         try:
             with step("个股新闻公告") as s:
                 stock_news = get_stock_news(code)
@@ -477,6 +490,7 @@ class StockDiagnosisService:
             f"【资金流】{flow_text or '暂无'}",
             f"【筹码】{describe_chips(chip) or '暂无'}",
             f"【业绩】{describe_earnings(earnings) or '近期无业绩预告/快报'}",
+            *([f"【股东】{describe_shareholders(holders) or '暂无'}"] if shareholders_on else []),
             "【近期涨停】" + ("；".join(limit_up_lines) if limit_up_lines else "近期无涨停"),
             "【主线地位】" + (f"{role['role']}，所属{role['dimension']}{theme.brief()}" if role and theme else "不在近期涨停主线中"),
             f"【大盘环境】{regime.summary()}",
@@ -499,6 +513,7 @@ class StockDiagnosisService:
             "flow_text": flow_text, "flow_ratio": flow_ratio, "chip": chip,
             "earnings_text": describe_earnings(earnings), "earnings_risk": earnings_risk(earnings),
             "risk_notices": risk_notices,
+            "shareholders": holders, "holder_signals": holder_signals(holders),
             "valuation_text": valuation_text(quote.get("pe"), quote.get("pb")) if quote else "",
             "phase": phase_ctx,
         }
@@ -626,8 +641,11 @@ class StockDiagnosisService:
                 "buy_price": plan.entry_price, "stop_loss": plan.stop_loss, "target_price": plan.target_price,
                 "suggested_position": str(plan_raw.get("suggested_position", "")),
             },
-            "catalysts": _as_list(raw.get("catalysts")),
-            "risks": _as_list(raw.get("risks")) + [f"技术面：{r}" for r in context["tech"].risks]
+            "catalysts": _as_list(raw.get("catalysts"))
+            + [f"股东：{t}" for t in context.get("holder_signals") or [] if not t.startswith("股东户数环比上升")],
+            "risks": _as_list(raw.get("risks"))
+            + [f"股东：{t}" for t in context.get("holder_signals") or [] if t.startswith("股东户数环比上升")]
+            + [f"技术面：{r}" for r in context["tech"].risks]
             + ([f"业绩：{context['earnings_risk']}"] if context.get("earnings_risk") else [])
             + [f"公告：{n['date']} {n['title']}" for n in (context.get("risk_notices") or [])[:3]],
             "checklist": checklist,
@@ -639,6 +657,7 @@ class StockDiagnosisService:
             "fund_flow": context.get("flow_text", ""),
             "chips": context.get("chip") or {},
             "earnings": context.get("earnings_text", ""),
+            "shareholders": describe_shareholders(context.get("shareholders")),
             "valuation": context.get("valuation_text", ""),
             "agents": context.get("opinions") or [],
             "disagreement": context.get("disagreement", ""),
@@ -729,7 +748,7 @@ def render_markdown(result: dict[str, Any]) -> str:
     from src.collectors.fundamentals import describe_chips
 
     for label, text in (("资金", result.get("fund_flow")), ("筹码", describe_chips(result.get("chips"))),
-                        ("业绩", result.get("earnings")), ("估值", result.get("valuation"))):
+                        ("业绩", result.get("earnings")), ("股东", result.get("shareholders")), ("估值", result.get("valuation"))):
         if text:
             lines.append(f"**{label}**：{text}")
     agents = [a for a in result.get("agents") or [] if not a.get("error")]

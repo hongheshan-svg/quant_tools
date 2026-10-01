@@ -338,6 +338,7 @@ export interface Diagnosis {
   fund_flow: string
   chips: Dict
   earnings: string
+  shareholders?: string
   valuation: string
   agents: AgentOpinion[]
   disagreement: string
