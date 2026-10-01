@@ -191,6 +191,51 @@ def broadcast(config: dict, title: str, content: str, kind: str | None = None) -
     return results
 
 
+def email_groups(config: dict) -> list[dict[str, Any]]:
+    """邮件分组 [{name, stocks(规范代码集合), to}]；没有收件人或没有股票的组被过滤。"""
+    from src.utils.stock_code import diagnosis_code
+
+    groups = []
+    for g in (_channel_cfg(config, "email").get("groups") or []):
+        if not isinstance(g, dict):
+            continue
+        stocks = g.get("stocks") or []
+        if isinstance(stocks, str):
+            stocks = stocks.replace("，", ",").replace("；", ",").replace(";", ",").replace("\n", ",").split(",")
+        codes = {diagnosis_code(str(c).strip()) for c in stocks if str(c).strip()}
+        to = recipients(g.get("to"))
+        if codes and to:
+            groups.append({"name": str(g.get("name") or "").strip(), "stocks": codes, "to": to})
+    return groups
+
+
+def send_email(config: dict, to: list[str] | str, title: str, content: str) -> bool:
+    """只发给指定收件人（邮件渠道启用且填了 SMTP 服务器时才发，默认收件人可以为空；尊重 QUANT_NO_NOTIFY；notifier.image 对邮件生效时先尝试分享图）。"""
+    if os.environ.get("QUANT_NO_NOTIFY"):
+        logger.info(f"已设置 QUANT_NO_NOTIFY，不推送邮件: {title}")
+        return False
+    to = recipients(to)
+    cfg = _channel_cfg(config, "email")
+    # 分组邮件只需要邮件渠道启用且有 SMTP 服务器；默认收件人可以为空（只给分组发）
+    if not to or not cfg.get("enabled") or not str(cfg.get("smtp_host") or "").strip():
+        return False
+    try:
+        notifier = EmailNotifier(config)
+        if _use_image(config, "email", "watchlist", content):
+            try:
+                from src.services.report_image import render_markdown_image, share_options
+
+                png = render_markdown_image(title, content, **share_options(config))
+                if notifier.send_image(title, png, to=to):
+                    return True
+            except Exception as e:
+                logger.warning(f"[email] 生成分享图失败，回退为文字: {e}")
+        return notifier.send(title, content, to=to)
+    except Exception as e:
+        logger.error(f"[email] 分组邮件推送异常: {e}")
+        return False
+
+
 def _diagnose_fields(name: str, cfg: dict) -> list[str]:
     issues: list[str] = []
     for f in CHANNEL_FIELDS[name]:

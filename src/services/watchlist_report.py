@@ -11,7 +11,9 @@
 from __future__ import annotations
 
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import TimeoutError as FuturesTimeout
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
@@ -75,6 +77,37 @@ def change_text(current: dict[str, Any], previous: dict[str, Any] | None, lang: 
               "Since last (" + previous.get("created_at", "")[5:] + "): " + ", ".join(parts))
 
 
+def _plan_text(it: dict[str, Any], lang: str = "zh") -> str:
+    """价格计划（买入/止损/目标）文字，没有时为空。"""
+    plan = it.get("battle_plan") or {}
+    return tr(lang, "，", ", ").join(
+        f"{label}{plan[k]:.2f}" if lang != "en" else f"{label} {plan[k]:.2f}"
+        for k, label in (("buy_price", tr(lang, "买入", "Buy")), ("stop_loss", tr(lang, "止损", "Stop loss")),
+                         ("target_price", tr(lang, "目标", "Target"))) if plan.get(k))
+
+
+def single_title(it: dict[str, Any], lang: str = "zh") -> str:
+    """逐只推送的标题：自选股诊断 名称(代码)。"""
+    return tr(lang, "自选股诊断 ", "Watchlist Diagnosis ") + _title(it, lang)
+
+
+def render_item_brief(it: dict[str, Any], lang: str = "zh") -> str:
+    """单只股票的简版（逐只推送用）：结论、评分、一句话、作战计划、主要风险。"""
+    lines = [tr(lang, f"**{_title(it)}** {it['action_label']} {it['score']}分",
+                f"**{_title(it, lang)}** {display(lang, it['action_label'])} {it['score']} pts")]
+    if it.get("one_sentence"):
+        lines.append(it["one_sentence"])
+    plan_text = _plan_text(it, lang)
+    if plan_text:
+        lines.append(tr(lang, "- 价格计划：", "- Price plan: ") + plan_text)
+    if it.get("risks"):
+        lines.append(tr(lang, "- 风险：", "- Risks: ") + "；".join(it["risks"][:3]))
+    if it.get("change"):
+        lines.append(f"- {it['change']}")
+    lines.append(tr(lang, "\n> 仅供学习研究，不构成投资建议", "\n> For study and research only; not investment advice"))
+    return "\n\n".join(lines)
+
+
 def render_dashboard(trade_date: str, items: list[dict[str, Any]], failed: list[dict[str, str]], lang: str = "zh") -> str:
     counts = {label: 0 for _, label, _ in BUCKETS}
     for it in items:
@@ -100,11 +133,7 @@ def render_dashboard(trade_date: str, items: list[dict[str, Any]], failed: list[
     for it in ordered:
         detail = [tr(lang, f"**{_title(it)}** {it['action_label']} {it['score']}分",
                      f"**{_title(it, lang)}** {display(lang, it['action_label'])} {it['score']} pts")]
-        plan = it.get("battle_plan") or {}
-        plan_text = tr(lang, "，", ", ").join(
-            f"{label}{plan[k]:.2f}" if lang != "en" else f"{label} {plan[k]:.2f}"
-            for k, label in (("buy_price", tr(lang, "买入", "Buy")), ("stop_loss", tr(lang, "止损", "Stop loss")),
-                             ("target_price", tr(lang, "目标", "Target"))) if plan.get(k))
+        plan_text = _plan_text(it, lang)
         if plan_text:
             detail.append(tr(lang, "- 价格计划：", "- Price plan: ") + plan_text)
         if it.get("catalysts"):
@@ -157,33 +186,108 @@ class WatchlistReportService:
         if not stocks:
             return {"error": "没有可分析的股票" if codes else "自选股为空，先在【自选股】页添加", "total": 0}
         threshold = reuse_threshold(now)
-        items, failed, done = [], [], 0
-        with ThreadPoolExecutor(max_workers=min(self.workers, len(stocks)), thread_name_prefix="watchlist") as pool:
-            futures = {pool.submit(self._diagnose_one, s, threshold): s for s in stocks}
-            for future in as_completed(futures):
-                stock = futures[future]
-                try:
-                    item = future.result()
-                except Exception as e:
-                    logger.warning(f"自选股诊断失败 [{stock['code']}]: {e}")
-                    item = {"error": str(e)[:100]}
-                if item.get("error"):
-                    failed.append({"code": stock["code"], "name": stock["name"], "error": item["error"]})
-                else:
-                    items.append(item)
-                done += 1
-                if progress:
-                    progress(done, len(stocks))
+        lang = report_language(self.config)
+        wl_cfg = self.config.get("watchlist") or {}
+        single_notify = bool(wl_cfg.get("single_notify", False))
+        try:
+            timeout_minutes = max(0.0, float(wl_cfg.get("timeout_minutes") or 0))
+        except (TypeError, ValueError):
+            timeout_minutes = 0.0
+        deadline = time.monotonic() + timeout_minutes * 60 if timeout_minutes > 0 else None
+        groups = self._email_groups() if push else []
+        items, failed, done, timed_out = [], [], 0, False
+
+        def collect(stock: dict[str, Any], future) -> None:
+            nonlocal done
+            try:
+                item = future.result()
+            except Exception as e:
+                logger.warning(f"自选股诊断失败 [{stock['code']}]: {e}")
+                item = {"error": str(e)[:100]}
+            if item.get("error"):
+                failed.append({"code": stock["code"], "name": stock["name"], "error": item["error"]})
+            else:
+                items.append(item)
+                if push and single_notify:
+                    self._push_single(item, groups, lang)
+            done += 1
+            if progress:
+                progress(done, len(stocks))
+
+        pool = ThreadPoolExecutor(max_workers=min(self.workers, len(stocks)), thread_name_prefix="watchlist")
+        futures = {pool.submit(self._diagnose_one, s, threshold): s for s in stocks}
+        try:
+            remaining = None if deadline is None else max(0.0, deadline - time.monotonic())
+            try:
+                for future in as_completed(futures, timeout=remaining):
+                    collect(futures[future], future)
+            except FuturesTimeout:
+                timed_out = True
+                for future, stock in futures.items():
+                    if future.done() and not any(stock["code"] == it["code"] for it in items) \
+                            and not any(stock["code"] == f["code"] for f in failed):
+                        collect(stock, future)
+                logger.warning(f"自选股决策仪表盘超过总时长上限 {timeout_minutes:g} 分钟，只推送已完成的部分")
+                reason = f"超时未完成（总时长上限 {timeout_minutes:g} 分钟）"
+                finished = {it["code"] for it in items} | {f["code"] for f in failed}
+                for stock in stocks:
+                    if stock["code"] not in finished:
+                        failed.append({"code": stock["code"], "name": stock["name"], "error": reason})
+        finally:
+            # 超时后不等待还卡着的线程
+            pool.shutdown(wait=not timed_out, cancel_futures=True)
 
         trade_date = now.strftime("%Y-%m-%d")
-        lang = report_language(self.config)
         markdown = render_dashboard(trade_date, items, failed, lang)
         self._save(trade_date, markdown, items, failed)
         pushed = self._push(trade_date, markdown, lang) if push else False
+        if push:
+            self._push_groups(trade_date, items, failed, groups, lang)
         counts = {label: sum(1 for it in items if bucket_of(it["action"])[1] == label) for _, label, _ in BUCKETS}
         logger.info(f"自选股决策仪表盘 {trade_date}：{len(items)} 只完成，{len(failed)} 只失败，推送 {pushed}")
         return {"trade_date": trade_date, "total": len(stocks), "done": len(items), "failed": failed,
-                "counts": counts, "markdown": markdown, "pushed": pushed}
+                "counts": counts, "markdown": markdown, "pushed": pushed, "timed_out": timed_out}
+
+    def _email_groups(self) -> list[dict[str, Any]]:
+        from src.notifier import email_groups
+
+        try:
+            return email_groups(self.config)
+        except Exception as e:
+            logger.warning(f"读取邮件分组失败: {e}")
+            return []
+
+    def _push_single(self, item: dict[str, Any], groups: list[dict[str, Any]], lang: str) -> None:
+        """逐只推送一条简版；属于邮件分组时同时发给该组。推送失败不影响诊断。"""
+        from src.notifier import broadcast, send_email
+        from src.utils.stock_code import diagnosis_code
+
+        try:
+            title, content = single_title(item, lang), render_item_brief(item, lang)
+            broadcast(self.config, title, content, kind="watchlist")
+            code = diagnosis_code(item["code"])
+            for g in groups:
+                if code in g["stocks"]:
+                    send_email(self.config, g["to"], title, content)
+        except Exception as e:
+            logger.warning(f"逐只推送失败 [{item.get('code')}]: {e}")
+
+    def _push_groups(self, trade_date: str, items: list, failed: list, groups: list[dict[str, Any]], lang: str) -> None:
+        """每个邮件分组收到只含本组股票的仪表盘，子集为空的组跳过。"""
+        from src.notifier import send_email
+        from src.utils.stock_code import diagnosis_code
+
+        for g in groups:
+            sub_items = [it for it in items if diagnosis_code(it["code"]) in g["stocks"]]
+            sub_failed = [f for f in failed if diagnosis_code(f["code"]) in g["stocks"]]
+            if not sub_items and not sub_failed:
+                continue
+            try:
+                title = tr(lang, f"自选股决策仪表盘 {trade_date}", f"Watchlist Decision Dashboard {trade_date}")
+                suffix = f"（{g['name']}）" if g["name"] else ""
+                send_email(self.config, g["to"], title + suffix, render_dashboard(trade_date, sub_items, sub_failed, lang))
+            except Exception as e:
+                logger.warning(f"分组邮件推送失败 [{g['name']}]: {e}")
 
     def _stocks_of(self, codes: list[str]) -> list[dict[str, Any]]:
         """代码列表 → [{code, name, kind}]（去重保序；个股名称从 stock_info/行情库取，ETF/指数从 fund_info/内置指数取）。"""

@@ -9,6 +9,7 @@ import { Button, Card, ErrorBox, Field, Input, PageHeader, Select, Spinner, Tabs
 import { useApi } from '@/hooks/useApi'
 import { useTask } from '@/hooks/useTask'
 import { useT } from '@/i18n'
+import { EmailGroupsEditor } from '@/pages/settings/EmailGroupsEditor'
 import { ReportLanguageSection } from '@/pages/settings/ReportLanguageSection'
 import { toast } from '@/stores/toast'
 import { getDesktop, type DesktopInfo, type QuantDesktop } from '@/utils/desktop'
@@ -455,6 +456,7 @@ export function NotifierForm() {
           <Field label={t('收件人（逗号分隔）')}>
             <Input value={(email.to ?? []).join(', ')} onChange={(e) => set('email', 'to', e.target.value.split(/[,，;；]/).map((x) => x.trim()).filter(Boolean))} />
           </Field>
+          <EmailGroupsEditor groups={email.groups ?? []} onChange={(groups) => set('email', 'groups', groups)} />
           <div className="flex items-end">
             <Button loading={busy === 'email'} onClick={async () => {
               setBusy('email')

@@ -256,6 +256,9 @@ notifier:
     password: ""
     sender: ""               # 为空时使用 username
     to: []                   # 收件人，如 ["me@example.com"]
+    # 按股票分组额外发给其他收件人（只用于自选股决策仪表盘和逐只推送），如
+    # - {name: 家人, stocks: ["600519", "510300"], to: ["a@example.com"]}
+    groups: []
   # Telegram：@BotFather 创建机器人拿 bot_token；chat_id 可给机器人发消息后访问 getUpdates 查看
   telegram:
     enabled: false
@@ -432,6 +435,8 @@ watchlist:
   daily_report: true       # 收盘后（scheduler.watchlist_report_time）逐只 AI 诊断，推送决策仪表盘
   max_stocks: 50           # 自选股上限（每只每天一次 LLM 调用）
   workers: 3               # 同时诊断的股票数
+  single_notify: false     # 每只诊断完成后立即推送一条（最后仍推送汇总仪表盘）
+  timeout_minutes: 0       # 整个仪表盘的总时长上限（分钟），超时后推送已完成的部分；0 表示不限
 
 # --- LLM 大盘复盘 ---
 # 按趋势结构、资金情绪、主线板块复盘，给出次日姿态（不会比量化大盘环境更激进）、仓位、关注与回避方向

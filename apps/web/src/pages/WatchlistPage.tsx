@@ -6,6 +6,7 @@ import { api } from '@/api/endpoints'
 import type { ImageImportResult, ImportResult, WatchlistReport, WatchlistRow } from '@/api/types'
 import { DataTable, type Column } from '@/components/DataTable'
 import { Markdown } from '@/components/Markdown'
+import { WatchlistSettings } from '@/components/WatchlistSettings'
 import { StockSearch } from '@/components/StockSearch'
 import { Button, Card, ErrorBox, Modal, PageHeader, Pct, Textarea } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
@@ -29,6 +30,7 @@ export function WatchlistPage() {
   const list = useApi(api.watchlist)
   const report = useApi<WatchlistReport | null>(api.watchlistReport)
   const [pasteOpen, setPasteOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [pasteText, setPasteText] = useState('')
   const fileInput = useRef<HTMLInputElement>(null)
   const imageTask = useTask<ImageImportResult>()
@@ -137,6 +139,7 @@ export function WatchlistPage() {
           actions={
             <>
               <StockSearch className="w-56" placeholder={t('添加：股票 / ETF / 指数')} onSelect={(s) => void add(s.code)} />
+              <Button onClick={() => setSettingsOpen(true)}>{t('仪表盘设置')}</Button>
               <Button onClick={() => setPasteOpen(true)}>{t('粘贴导入')}</Button>
               <Button onClick={() => fileInput.current?.click()}>{t('文件导入')}</Button>
               <Button loading={imageTask.running} onClick={() => imageInput.current?.click()} title={t('也可以直接在页面上粘贴截图')}>
@@ -182,6 +185,7 @@ export function WatchlistPage() {
           {report.data ? <Markdown text={report.data.markdown} /> : <p className="text-sm text-muted">{t('还没有仪表盘，点「分析全部并推送」生成')}</p>}
         </Card>
       </div>
+      <WatchlistSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <Modal
         open={imageResult !== null}
         title={t('截图识别结果')}

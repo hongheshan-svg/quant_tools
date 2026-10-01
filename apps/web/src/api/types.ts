@@ -1059,3 +1059,17 @@ export interface ResearchReport {
   stocks: { code: string; name: string }[]
   created_at: string
 }
+
+export interface EmailGroup {
+  name: string
+  stocks: string[]
+  to: string[]
+}
+
+export interface WatchlistSettings {
+  daily_report: boolean
+  max_stocks: number
+  workers: number
+  single_notify: boolean
+  timeout_minutes: number
+}

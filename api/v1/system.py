@@ -375,6 +375,62 @@ def save_report_settings(body: ReportSettingsBody, request: Request, config: dic
     return {"language": report_language(new_config)}
 
 
+# ---------- 自选股仪表盘设置 ----------
+
+WATCHLIST_DEFAULTS: dict[str, Any] = {"daily_report": True, "max_stocks": 50, "workers": 3, "single_notify": False, "timeout_minutes": 0}
+
+
+def _watchlist_with_defaults(section: dict[str, Any] | None) -> dict[str, Any]:
+    merged = {**WATCHLIST_DEFAULTS, **{k: v for k, v in (section or {}).items() if k in WATCHLIST_DEFAULTS}}
+    return {**merged, "watchlist": dict(merged)}
+
+
+def _validate_watchlist(incoming: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    """校验自选股仪表盘设置（只保存已知字段），非法时抛 422（中文说明）"""
+    merged = {**WATCHLIST_DEFAULTS, **{k: v for k, v in current.items() if k in WATCHLIST_DEFAULTS},
+              **{k: v for k, v in incoming.items() if k in WATCHLIST_DEFAULTS}}
+    for key, label in (("daily_report", "每日仪表盘"), ("single_notify", "逐只推送")):
+        if not isinstance(merged[key], bool):
+            raise HTTPException(status_code=422, detail=f"{label}必须是布尔值")
+    merged["max_stocks"] = _int_in_range(merged["max_stocks"], "自选股上限", 1, 500)
+    merged["workers"] = _int_in_range(merged["workers"], "并发数", 1, 10)
+    merged["timeout_minutes"] = _int_in_range(merged["timeout_minutes"], "总时长上限", 0, 600)
+    return merged
+
+
+class WatchlistSettingsBody(BaseModel):
+    watchlist: dict[str, Any] | None = None
+    daily_report: Any = None
+    max_stocks: Any = None
+    workers: Any = None
+    single_notify: Any = None
+    timeout_minutes: Any = None
+
+
+@router.get("/settings/watchlist")
+def get_watchlist_settings(config: dict = Depends(get_config)) -> dict[str, Any]:
+    from src.settings_store import read_settings
+
+    saved = read_settings().get("watchlist")
+    return _watchlist_with_defaults(saved if isinstance(saved, dict) else config.get("watchlist"))
+
+
+@router.put("/settings/watchlist")
+def save_watchlist_settings(body: WatchlistSettingsBody, request: Request, config: dict = Depends(get_config)) -> dict[str, Any]:
+    """字段可以直接放在请求体里，也可以包在 watchlist 下"""
+    from src.config_loader import reload_config
+    from src.settings_store import read_settings, save_section
+
+    from api.app import apply_config
+
+    incoming = dict(body.watchlist) if body.watchlist is not None else {
+        k: v for k, v in body.model_dump(exclude={"watchlist"}).items() if v is not None}
+    current = config.get("watchlist") or {}
+    save_section("watchlist", {**current, **_validate_watchlist(incoming, current)})
+    apply_config(request.app, reload_config())
+    return _watchlist_with_defaults(read_settings().get("watchlist"))
+
+
 # ---------- RSS 资讯源设置 ----------
 
 INTELLIGENCE_DEFAULTS: dict[str, Any] = {
