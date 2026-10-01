@@ -414,6 +414,9 @@ report:
 
 # --- 个股 AI 诊断 ---
 diagnosis:
+  # 决策风格：conservative 保守（评分 65、数据完整度 75% 才买入，大盘防守不开仓）/ balanced 均衡（默认）/
+  # aggressive 进取（评分 45、数据完整度 50% 即可）；诊断结果可在页面「按其他风格评估」
+  decision_profile: balanced
   # single：一次 LLM 调用；standard：技术面、情报两位分析员先各自分析，再由决策员综合（3 次调用）；
   # full：再加风险分析员（4 次调用）。分析员有分歧时信心最高为「中」
   mode: standard

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -24,6 +25,7 @@ from loguru import logger
 from src import trading_calendar
 from src.analyzers.decision import ACTION_LABELS
 from src.config_loader import load_config
+from src.services.decision_profile import PROFILE_LABELS, normalize_profile
 from src.database.db import get_db_session
 from src.database.models import DecisionSignal, FundDaily, StockDaily
 
@@ -58,8 +60,9 @@ class DecisionSignalService:
 
     # ---------- 生成 ----------
 
-    def record_from_diagnosis(self, result: dict[str, Any], diagnosis_id: int | None = None) -> dict[str, Any] | None:
-        """从诊断结果生成一条 active 信号；观望/持有、出错的诊断不生成。同代码旧的 active 信号同时收口。"""
+    def record_from_diagnosis(self, result: dict[str, Any], diagnosis_id: int | None = None,
+                              profile: str | None = None) -> dict[str, Any] | None:
+        """从诊断结果生成一条 active 信号；观望/持有、出错的诊断不生成。同代码同风格旧的 active 信号同时收口，不同风格互不影响。"""
         if not result or result.get("error"):
             return None
         action = str(result.get("action") or "")
@@ -76,8 +79,11 @@ class DecisionSignalService:
         trade_date = str(result.get("trade_date") or datetime.now().strftime("%Y-%m-%d"))
         plan = result.get("battle_plan") or {}
         label = ACTION_LABELS.get(action, action)
+        profile = normalize_profile(profile or result.get("decision_profile"))
         with get_db_session(self.db_path) as session:
             for old in session.query(DecisionSignal).filter(DecisionSignal.code == code, DecisionSignal.status == "active").all():
+                if normalize_profile(old.profile or "balanced") != profile:
+                    continue
                 if DIRECTIONS.get(old.action) != direction:
                     old.status, old.status_reason = "invalidated", f"出现相反信号：{label}"
                 else:
@@ -89,10 +95,49 @@ class DecisionSignalService:
                 stop_loss=plan.get("stop_loss"), target_price=plan.get("target_price"),
                 horizon_days=horizon, invalidation=(str(result.get("invalidation") or "")[:200] or None),
                 trade_date=trade_date, status="active", expires_on=self._expires_on(trade_date, horizon),
+                profile=profile,
             )
             session.add(row)
             session.flush()
             return self._to_dict(row)
+
+    def save_reassessed(self, diagnosis_id: int, profile: str) -> dict[str, Any]:
+        """按指定风格重新评估一条诊断并保存为该风格的决策信号。
+        返回 {"status": "created"/"existing"/"skipped"/"error", ...}；同诊断同风格已有信号时返回已有的。"""
+        from src.services.stock_diagnosis import StockDiagnosisService
+
+        profile = normalize_profile(profile)
+        with get_db_session(self.db_path) as session:
+            existing = (
+                session.query(DecisionSignal).filter(DecisionSignal.diagnosis_id == diagnosis_id, DecisionSignal.profile == profile)
+                .order_by(DecisionSignal.id.desc()).first()
+            )
+            if existing:
+                return {"status": "existing", "signal": self._to_dict(existing)}
+        service = StockDiagnosisService(self.config)
+        reassessed = service.reassess(diagnosis_id, profile)
+        if reassessed.get("error"):
+            return {"status": "error", "reason": reassessed["error"]}
+        action = reassessed["action"]
+        if action not in DIRECTIONS:
+            return {"status": "skipped", "reason": f"该风格下的建议为「{reassessed['action_label']}」，不生成决策信号"}
+        with get_db_session(self.db_path) as session:
+            from src.database.models import StockDiagnosis
+
+            row = session.get(StockDiagnosis, diagnosis_id)
+            try:
+                saved = json.loads(row.result_json or "{}") if row else {}
+            except ValueError:
+                saved = {}
+        result = {
+            **saved, "code": reassessed["code"], "name": reassessed["name"], "action": action,
+            "confidence": reassessed["confidence"], "decision_profile": profile,
+            "trade_date": saved.get("trade_date") or "",
+        }
+        signal = self.record_from_diagnosis(result, diagnosis_id, profile)
+        if not signal:
+            return {"status": "skipped", "reason": "不是方向性建议"}
+        return {"status": "created", "signal": signal}
 
     @staticmethod
     def _expires_on(trade_date: str, horizon: int) -> str | None:
@@ -261,11 +306,12 @@ class DecisionSignalService:
         out["text"] = text
         return out
 
-    def stats(self, days: int = 90) -> dict[str, Any]:
-        """近 N 天信号的状态分布、各建议的命中率与后验表现。"""
+    def stats(self, days: int = 90, profile: str | None = None) -> dict[str, Any]:
+        """近 N 天信号的状态分布、各建议的命中率与后验表现；profile 按决策风格过滤（unknown 为旧数据）。"""
         since = datetime.now() - timedelta(days=days)
         with get_db_session(self.db_path) as session:
-            rows = session.query(DecisionSignal).filter(DecisionSignal.created_at >= since).all()
+            query = session.query(DecisionSignal).filter(DecisionSignal.created_at >= since)
+            rows = self._filter_profile(query, profile).all()
             signals = [self._to_dict(r) for r in rows]
         by_status: dict[str, int] = {}
         groups: dict[str, list[tuple[dict, bool | None]]] = {}
@@ -296,7 +342,7 @@ class DecisionSignalService:
     # ---------- 查询与反馈 ----------
 
     def list(self, status: str | None = None, action: str | None = None, code: str | None = None,
-             days: int = 90, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+             days: int = 90, limit: int = 50, offset: int = 0, profile: str | None = None) -> dict[str, Any]:
         with get_db_session(self.db_path) as session:
             query = session.query(DecisionSignal)
             if days:
@@ -307,12 +353,22 @@ class DecisionSignalService:
                 query = query.filter(DecisionSignal.action == action)
             if code:
                 query = query.filter(DecisionSignal.code == code.strip().lower())
+            query = self._filter_profile(query, profile)
             total = query.count()
             rows = query.order_by(DecisionSignal.created_at.desc(), DecisionSignal.id.desc()).offset(offset).limit(limit).all()
             items = [self._to_dict(r) for r in rows]
         for item in items:
             item["hit"] = self.is_hit(item)
         return {"total": total, "items": items}
+
+    @staticmethod
+    def _filter_profile(query, profile: str | None):
+        """按决策风格过滤：空不过滤，"unknown" 为旧数据（NULL）。"""
+        if not profile:
+            return query
+        if profile == "unknown":
+            return query.filter(DecisionSignal.profile.is_(None))
+        return query.filter(DecisionSignal.profile == normalize_profile(profile))
 
     def get(self, signal_id: int) -> dict[str, Any] | None:
         with get_db_session(self.db_path) as session:
@@ -351,6 +407,7 @@ class DecisionSignalService:
             "status_reason": row.status_reason, "expires_on": row.expires_on,
             "ret_1d": row.ret_1d, "ret_3d": row.ret_3d, "ret_5d": row.ret_5d,
             "max_adverse_pct": row.max_adverse_pct, "max_favorable_pct": row.max_favorable_pct,
+            "profile": row.profile, "profile_label": PROFILE_LABELS.get(row.profile or "", ""),
             "evaluated_at": fmt(row.evaluated_at), "feedback": row.feedback, "feedback_note": row.feedback_note,
             "created_at": fmt(row.created_at), "updated_at": fmt(row.updated_at),
         }

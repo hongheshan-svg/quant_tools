@@ -1,10 +1,15 @@
 // AI 诊断结果：结论、价格计划、分析员观点、资金/筹码/业绩、利好风险、检查清单
-import type { Diagnosis, PhaseDecision, SignalAttribution } from '@/api/types'
+import { useEffect, useState } from 'react'
+import { api } from '@/api/endpoints'
+import type { DecisionProfile, Diagnosis, PhaseDecision, ReassessResult, SignalAttribution } from '@/api/types'
 import { useT } from '@/i18n'
 import { cn } from '@/utils/cn'
 import { fmtNum, verdictClass } from '@/utils/format'
 import { FUND_LABELS } from '@/utils/fund'
-import { Badge } from './ui'
+import { Badge, Button, Modal, Spinner } from './ui'
+
+const PROFILES: DecisionProfile[] = ['conservative', 'balanced', 'aggressive']
+export const PROFILE_LABELS: Record<DecisionProfile, string> = { conservative: '保守', balanced: '均衡', aggressive: '进取' }
 
 const CHECK = { pass: '✅', warn: '⚠️', fail: '❌' } as Record<string, string>
 
@@ -62,8 +67,79 @@ function AttributionCard({ attr }: { attr: SignalAttribution }) {
   )
 }
 
-export function DiagnosisView({ d }: { d: Diagnosis }) {
+type Column = { data?: ReassessResult; error?: string; saving?: boolean; saved?: string }
+
+// 按三种决策风格重新评估：只用诊断时保存的快照，不重新调用模型；每列可保存为该风格的决策信号
+function ReassessModal({ id, onClose }: { id: number; onClose: () => void }) {
   const t = useT()
+  const [cols, setCols] = useState<Partial<Record<DecisionProfile, Column>>>({})
+  const patch = (p: DecisionProfile, v: Column) => setCols((c) => ({ ...c, [p]: { ...c[p], ...v } }))
+
+  useEffect(() => {
+    let alive = true
+    for (const p of PROFILES) {
+      api.reassessDiagnosis(id, p).then(
+        (data) => alive && patch(p, { data }),
+        (e) => alive && patch(p, { error: e instanceof Error ? e.message : String(e) }),
+      )
+    }
+    return () => { alive = false }
+  }, [id])
+
+  async function save(p: DecisionProfile) {
+    patch(p, { saving: true })
+    try {
+      const r = await api.reassessDiagnosis(id, p, true)
+      const text = r.status === 'created' ? t('已保存为决策信号')
+        : r.status === 'existing' ? t('该风格的决策信号已存在')
+          : t('该风格下的建议不是方向性建议，不生成决策信号')
+      patch(p, { saving: false, saved: text })
+    } catch (e) {
+      patch(p, { saving: false, saved: e instanceof Error ? e.message : String(e) })
+    }
+  }
+
+  return (
+    <Modal open wide title="按其他风格评估" onClose={onClose}>
+      <p className="mb-3 text-xs text-muted">{t('只使用诊断时保存的数据快照重新计算护栏，不会重新调用 AI；与原结论不同的会高亮。')}</p>
+      <div className="grid gap-3 md:grid-cols-3">
+        {PROFILES.map((p) => {
+          const col = cols[p]
+          const r = col?.data
+          return (
+            <div key={p} className={cn('rounded-md border p-3', r?.changed ? 'border-warn/60 bg-warn/5' : 'border-line')} data-testid={`reassess-${p}`}>
+              <div className="mb-2 flex items-center gap-2 font-medium">
+                {t(PROFILE_LABELS[p])}
+                {r?.changed && <Badge tone="warn">{t('与原结论不同')}</Badge>}
+              </div>
+              {col?.error && <p className="text-xs text-danger">{col.error}</p>}
+              {!col?.error && !r && <Spinner />}
+              <div className="space-y-2">
+                {r && (
+                  <>
+                  <div className="flex items-center gap-2">
+                    <span className={cn('text-lg font-semibold', verdictClass(r.action_label))}>{t(r.action_label)}</span>
+                    <Badge>{t('信心')} {t(r.confidence || '-')}</Badge>
+                  </div>
+                  {r.guardrails.length > 0
+                    ? <ul className="list-disc pl-4 text-xs text-warn">{r.guardrails.map((g) => <li key={g}>{g}</li>)}</ul>
+                    : <p className="text-xs text-muted">{t('没有触发护栏')}</p>}
+                  </>
+                )}
+                <Button loading={col?.saving} disabled={!r} onClick={() => void save(p)}>{t('保存为决策信号')}</Button>
+                {col?.saved && <p className="text-xs text-accent">{col.saved}</p>}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </Modal>
+  )
+}
+
+export function DiagnosisView({ d, diagnosisId }: { d: Diagnosis; diagnosisId?: number }) {
+  const t = useT()
+  const [compare, setCompare] = useState(false)
   if (d.error) return <p className="text-sm text-danger">{t('诊断失败：')}{d.error}</p>
   const plan = d.battle_plan ?? {}
   const agents = (d.agents ?? []).filter((a) => !a.error)
@@ -71,6 +147,7 @@ export function DiagnosisView({ d }: { d: Diagnosis }) {
   const hasPhase = !!pd && !!(pd.trading_window || pd.immediate_action || pd.next_check_time || pd.watch_conditions?.length || pd.data_limitations?.length)
   const attr = d.signal_attribution
   const hasAttr = !!attr && Object.keys(attr).length > 0
+  const recordId = diagnosisId ?? d.diagnosis_id ?? d.id
   return (
     <div className="space-y-4 text-sm">
       <div className="flex flex-wrap items-center gap-3">
@@ -79,6 +156,8 @@ export function DiagnosisView({ d }: { d: Diagnosis }) {
         <Badge>{t('信心')} {t(d.confidence || '-')}</Badge>
         {d.kind && <Badge>{t(FUND_LABELS[d.kind])}</Badge>}
         {d.trend_prediction && <Badge tone="accent">{d.trend_prediction}</Badge>}
+        {d.decision_profile && <span title={t('决策风格')}><Badge tone="accent">{t(PROFILE_LABELS[d.decision_profile] ?? d.decision_profile)}</Badge></span>}
+        {recordId != null && d.decision_profile && <Button onClick={() => setCompare(true)}>{t('按其他风格评估')}</Button>}
         <span className="text-xs text-muted">{t('诊断于 {a}（行情 {b}）', { a: d.created_at, b: d.trade_date })}{d.cached ? t('，30 分钟内的结果') : ''}</span>
       </div>
       {d.one_sentence && <p className="text-base font-medium">{d.one_sentence}</p>}
@@ -170,6 +249,7 @@ export function DiagnosisView({ d }: { d: Diagnosis }) {
       )}
       {d.analysis && <p className="leading-relaxed text-muted">{d.analysis}</p>}
       <p className="text-xs text-muted">{t('仅供学习研究，不构成投资建议')}</p>
+      {compare && recordId != null && <ReassessModal id={recordId} onClose={() => setCompare(false)} />}
     </div>
   )
 }

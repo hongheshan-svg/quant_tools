@@ -128,7 +128,7 @@ function DetailModal({ id, onClose, onDeleted }: { id: number; onClose: () => vo
     >
       {error ? <ErrorBox message={error} /> : loading || !data ? <Spinner /> : (
         <>
-          <DiagnosisView d={data.result} />
+          <DiagnosisView d={data.result} diagnosisId={data.id} />
           <details className="mt-4 rounded border border-line p-3" onToggle={(e) => setLogOpen(e.currentTarget.open)}>
             <summary className="cursor-pointer text-sm font-medium">{t('运行记录')}</summary>
             {logOpen && <div className="mt-3"><RunLogView log={data.run_log ?? data.result.run_log} /></div>}

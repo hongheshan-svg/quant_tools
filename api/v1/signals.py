@@ -22,15 +22,18 @@ class FeedbackBody(BaseModel):
 @router.get("")
 def list_signals(
     status: str | None = None, action: str | None = None, code: str | None = None,
+    profile: Literal["conservative", "balanced", "aggressive", "unknown"] | None = None,
     days: int = Query(90, ge=0, le=3650), limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0),
     config: dict[str, Any] = Depends(get_config),
 ):
-    return DecisionSignalService(config).list(status=status, action=action, code=code, days=days, limit=limit, offset=offset)
+    return DecisionSignalService(config).list(status=status, action=action, code=code, days=days, limit=limit, offset=offset, profile=profile)
 
 
 @router.get("/stats")
-def signal_stats(days: int = Query(90, ge=1, le=3650), config: dict[str, Any] = Depends(get_config)):
-    return DecisionSignalService(config).stats(days=days)
+def signal_stats(days: int = Query(90, ge=1, le=3650),
+                 profile: Literal["conservative", "balanced", "aggressive", "unknown"] | None = None,
+                 config: dict[str, Any] = Depends(get_config)):
+    return DecisionSignalService(config).stats(days=days, profile=profile)
 
 
 @router.get("/review/{code}")

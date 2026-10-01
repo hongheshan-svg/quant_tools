@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
+from pydantic import BaseModel
 from loguru import logger
 
 from api.deps import get_config, get_pipeline, get_tasks
@@ -56,6 +57,30 @@ def delete_diagnosis(diagnosis_id: int, pipeline: PipelineService = Depends(get_
     if not pipeline.delete_diagnosis(diagnosis_id):
         raise HTTPException(status_code=404, detail="诊断记录不存在")
     return {"ok": True}
+
+
+class ReassessBody(BaseModel):
+    profile: Literal["conservative", "balanced", "aggressive"]
+    persist: bool = False
+
+
+@router.post("/diagnoses/{diagnosis_id}/reassess")
+def reassess_diagnosis(diagnosis_id: int, body: ReassessBody, pipeline: PipelineService = Depends(get_pipeline),
+                       config: dict[str, Any] = Depends(get_config)) -> dict[str, Any]:
+    """按另一种决策风格重新评估一条诊断（只用保存的快照，不调用模型）；persist=true 同时保存为该风格的决策信号。"""
+    from src.services.stock_diagnosis import StockDiagnosisService
+
+    if pipeline.get_diagnosis(diagnosis_id) is None:
+        raise HTTPException(status_code=404, detail="诊断记录不存在")
+    result = StockDiagnosisService(config).reassess(diagnosis_id, body.profile)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    if body.persist:
+        from src.services.decision_signals import DecisionSignalService
+
+        saved = DecisionSignalService(config).save_reassessed(diagnosis_id, body.profile)
+        result = {**result, **saved}
+    return result
 
 
 def _diagnosis_markdown(row: dict[str, Any]) -> tuple[str, str]:

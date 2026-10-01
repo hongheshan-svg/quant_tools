@@ -12,6 +12,7 @@ import { useT } from '@/i18n'
 import { EmailGroupsEditor } from '@/pages/settings/EmailGroupsEditor'
 import { ConfigCheckSection } from '@/pages/settings/ConfigCheckSection'
 import { TemplatesPanel } from '@/pages/settings/TemplatesPanel'
+import { DiagnosisSettingsSection } from '@/pages/settings/DiagnosisSettingsSection'
 import { ReportLanguageSection } from '@/pages/settings/ReportLanguageSection'
 import { toast } from '@/stores/toast'
 import { getDesktop, type DesktopInfo, type QuantDesktop } from '@/utils/desktop'
@@ -43,7 +44,7 @@ export function SettingsPage() {
       <Card bodyClassName="p-3">
         <Tabs value={tab} onChange={setTab} tabs={tabs} />
         <div className="mb-2 flex justify-end"><HelpButton helpKey={tab} /></div>
-        {tab === 'llm' && <><LLMSettingsForm /><ReportLanguageSection /></>}
+        {tab === 'llm' && <><LLMSettingsForm /><ReportLanguageSection /><DiagnosisSettingsSection /></>}
         {tab === 'notifier' && <NotifierForm />}
         {tab === 'bot' && <BotForm />}
         {tab === 'search' && <SearchForm />}

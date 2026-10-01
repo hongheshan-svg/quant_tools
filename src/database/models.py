@@ -410,6 +410,7 @@ class DecisionSignal(Base):
     evaluated_at = Column(DateTime, comment="最近评估时间")
     feedback = Column(String(12), comment="用户反馈 useful/not_useful")
     feedback_note = Column(Text, comment="反馈备注")
+    profile = Column(String(15), comment="决策风格；空表示旧数据")
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 

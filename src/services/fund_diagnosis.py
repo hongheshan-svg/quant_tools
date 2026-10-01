@@ -22,6 +22,7 @@ from src.database.models import FinanceNews, FundDaily, StockDiagnosis
 from src.services import market_phase
 from src.services.report_language import language_directive, report_language
 from src.services.run_log import RunLog
+from src.services.decision_profile import normalize_profile
 from src.services.stock_diagnosis import (
     CACHE_MINUTES,
     DIAGNOSIS_ENUMS,
@@ -83,7 +84,7 @@ FUND_SYSTEM_PROMPT = """你是一位 A 股 ETF / 指数分析师，负责对单�
 class FundDiagnosisService(StockDiagnosisService):
     """ETF / 指数的 AI 诊断；护栏、落库和 Markdown 渲染复用个股诊断。"""
 
-    def diagnose(self, code: str, force: bool = False) -> dict[str, Any]:
+    def diagnose(self, code: str, force: bool = False, profile: str | None = None) -> dict[str, Any]:
         """诊断一个 ETF/指数（传规范代码或任意可识别的写法）；30 分钟内的结果直接复用。"""
         from src.services.diagnosis_agents import DECISION_ADDENDUM, disagreement, opinions_text, run_analysts
         from src.services.fund_registry import resolve_fund
@@ -93,9 +94,10 @@ class FundDiagnosisService(StockDiagnosisService):
             return {"code": code, "error": "不是已知的 ETF 或指数"}
         code = info["code"]
         lang = report_language(self.config)
+        profile = self._profile(profile)
         if not force:
             cached = self.latest(code, max_age_minutes=CACHE_MINUTES)
-            if cached and (cached.get("language") or "zh") == lang:
+            if cached and (cached.get("language") or "zh") == lang and normalize_profile(cached.get("decision_profile")) == profile:
                 return {**cached, "cached": True}
 
         run_log = RunLog()
@@ -119,13 +121,14 @@ class FundDiagnosisService(StockDiagnosisService):
         if not raw:
             return {"code": code, "name": context["name"], "kind": info["kind"], "error": "AI 未返回有效结果，请检查 AI 设置或稍后重试"}
         previous = self.latest(code, max_age_minutes=STABILITY_DAYS * 24 * 60)
-        context = {**context, "opinions": opinions, "disagreement": conflict, "calibration": {}}
+        context = {**context, "opinions": opinions, "disagreement": conflict, "calibration": {}, "profile": profile}
         result = self._apply_guardrails(raw, context, previous)
         result["kind"] = info["kind"]
         note_guardrail_change(run_log, raw, result)
         result["run_log"] = run_log.to_dict()
         diagnosis_id = self._save(result)
         self._record_signal(result, diagnosis_id)
+        result["diagnosis_id"] = diagnosis_id
         return result
 
     def latest(self, code: str, max_age_minutes: int | None = None) -> dict[str, Any] | None:
@@ -134,7 +137,7 @@ class FundDiagnosisService(StockDiagnosisService):
             if max_age_minutes is not None:
                 query = query.filter(StockDiagnosis.created_at >= datetime.now() - timedelta(minutes=max_age_minutes))
             row = query.order_by(StockDiagnosis.created_at.desc(), StockDiagnosis.id.desc()).first()
-            return json.loads(row.result_json) if row else None
+            return {**json.loads(row.result_json), "diagnosis_id": row.id} if row else None
 
     def history(self, code: str, limit: int = 5) -> list[dict[str, Any]]:
         with get_db_session(self.db_path) as session:

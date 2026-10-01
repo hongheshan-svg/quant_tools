@@ -16,6 +16,8 @@
 - 价格计划按最新价和涨跌幅限制校验
 - 决策信号（diagnosis.signal_review）：买入/加仓/减仓/卖出/回避的诊断保存后生成决策信号（见 decision_signals），
   该代码历史信号复盘（样本 ≥ 3）写进提示词，判断偏乐观/偏悲观时要相应调整信心
+- 决策风格（diagnosis.decision_profile：conservative/balanced/aggressive）：护栏阈值见 decision_profile.PROFILE_RULES，判定逻辑是纯函数
+  decide(inputs, profile, lang)；诊断结果保存 decision_inputs 快照，reassess() 可按其他风格重新评估（不调用模型）
 结果写入 stock_diagnosis 表，同一只股票 30 分钟内重复诊断直接返回上次结果。
 """
 
@@ -43,6 +45,18 @@ from src.database.models import (
 )
 from src.analyzers.attribution import normalize_attribution
 from src.services import market_phase
+from src.services.decision_profile import (
+    BEARISH_ACTIONS,
+    LOW_CALIBRATION_ACCURACY,
+    MIN_CALIBRATION_SAMPLES,
+    PROFILE_LABELS,
+    PROFILE_RULES,
+    STABILITY_DAYS,
+    STABILITY_SCORE_DELTA,
+    decide,
+    decide_with_phase,
+    normalize_profile,
+)
 from src.collectors.shareholders import describe_shareholders
 from src.services.report_language import display, language_directive, report_language, tr
 from src.services.run_log import RunLog
@@ -58,18 +72,13 @@ NEWS_CATEGORY_ORDER = {"direct": 0, "sector": 1, "macro": 2}
 STOCK_NEWS_LIMIT = 6   # 东方财富个股新闻最多取几条
 NOTICE_LIMIT = 8       # 公告最多取几条
 LIMIT_UP_DAYS = 10
-MIN_BUY_SCORE = 50
-MIN_DATA_QUALITY = 60
+MIN_BUY_SCORE = PROFILE_RULES["balanced"]["min_score"]
+MIN_DATA_QUALITY = PROFILE_RULES["balanced"]["min_data_quality"]
 MIN_DAILY_BARS = 20
-FLOW_OUTFLOW_RATIO = -5.0   # 资金净流出占成交额超过 5% 视为与买入矛盾
-STABILITY_DAYS = 3
-STABILITY_SCORE_DELTA = 15
-MIN_CALIBRATION_SAMPLES = 10       # 历史校准：看多诊断至少验证过 10 次才生效
-LOW_CALIBRATION_ACCURACY = 45.0    # 看多诊断 3 日准确率低于该值时下调买入信心
+FLOW_OUTFLOW_RATIO = PROFILE_RULES["balanced"]["flow_outflow_ratio"]   # 资金净流出占成交额超过 5% 视为与买入矛盾（各风格阈值见 decision_profile）
 DEFAULT_HORIZON = 5
 MAX_HORIZON = 20
 MAX_INVALIDATION_LEN = 200
-BEARISH_ACTIONS = frozenset({"reduce", "sell", "avoid"})
 DIAGNOSIS_ENUMS = ('"action" must be one of buy/add/hold/watch/reduce/sell/avoid; "confidence" one of 高/中/低; '
                    'checklist "status" one of pass/warn/fail; "trend_prediction" keeps its Chinese values '
                    '(强烈看多/看多/震荡/看空/强烈看空) (keep these values verbatim)')
@@ -174,13 +183,15 @@ class StockDiagnosisService:
             self._llm = LLMClient(self.config.get("llm", {}))
         return self._llm
 
-    def diagnose(self, code: str, force: bool = False, skills: list[str] | None = None) -> dict[str, Any]:
-        """诊断一只股票；30 分钟内的诊断结果直接复用（force=True 时重新诊断）。"""
+    def diagnose(self, code: str, force: bool = False, skills: list[str] | None = None,
+                 profile: str | None = None) -> dict[str, Any]:
+        """诊断一只股票；30 分钟内同语言、同决策风格的诊断结果直接复用（force=True 时重新诊断）。"""
         code = bare_code(code)
         lang = report_language(self.config)
+        profile = self._profile(profile)
         if not force:
             cached = self.latest(code, max_age_minutes=CACHE_MINUTES)
-            if cached and (cached.get("language") or "zh") == lang:
+            if cached and (cached.get("language") or "zh") == lang and normalize_profile(cached.get("decision_profile")) == profile:
                 return {**cached, "cached": True}
 
         from src.services.diagnosis_agents import DECISION_ADDENDUM, disagreement, opinions_text, run_analysts
@@ -217,7 +228,7 @@ class StockDiagnosisService:
         if not raw:
             return {"code": code, "name": context["name"], "error": "AI 未返回有效结果，请检查 AI 设置或稍后重试"}
         previous = self.latest(code, max_age_minutes=STABILITY_DAYS * 24 * 60)
-        context = {**context, "opinions": opinions, "disagreement": conflict, "calibration": calibration}
+        context = {**context, "opinions": opinions, "disagreement": conflict, "calibration": calibration, "profile": profile}
         result = self._apply_guardrails(raw, context, previous)
         result["skill_opinions"], result["skill_consensus"] = skill_opinions, skill_consensus
         note_guardrail_change(run_log, raw, result)
@@ -225,7 +236,41 @@ class StockDiagnosisService:
         diagnosis_id = self._save(result)
         self._record_opinions(result, diagnosis_id)
         self._record_signal(result, diagnosis_id)
+        result["diagnosis_id"] = diagnosis_id
         return result
+
+    def _profile(self, profile: str | None = None) -> str:
+        """决策风格：显式传入优先，其次 diagnosis.decision_profile，缺省 balanced。"""
+        return normalize_profile(profile or (self.config.get("diagnosis") or {}).get("decision_profile"))
+
+    def reassess(self, diagnosis_id: int, profile: str) -> dict[str, Any]:
+        """按另一种决策风格重新评估一条诊断：只用保存的 decision_inputs 重算护栏，不调用模型、不联网。"""
+        with get_db_session(self.db_path) as session:
+            row = session.get(StockDiagnosis, diagnosis_id)
+            if row is None:
+                return {"error": "诊断记录不存在"}
+            code, name = row.code, row.name or ""
+            try:
+                saved = json.loads(row.result_json or "{}")
+            except ValueError:
+                saved = {}
+        inputs = saved.get("decision_inputs") if isinstance(saved, dict) else None
+        if not isinstance(inputs, dict) or not inputs:
+            return {"error": "该诊断是旧版本生成的，缺少重新评估所需的快照"}
+        profile = normalize_profile(profile)
+        lang = saved.get("language") or "zh"
+        action, confidence, guardrails = decide(inputs, profile, lang)
+        original_profile = normalize_profile(saved.get("decision_profile"))
+        return {
+            "diagnosis_id": diagnosis_id, "code": code, "name": name,
+            "profile": profile, "profile_label": PROFILE_LABELS[profile],
+            "action": action, "action_label": ACTION_LABELS[action], "confidence": confidence, "guardrails": guardrails,
+            "original": {
+                "profile": original_profile, "action": saved.get("action"), "action_label": saved.get("action_label"),
+                "confidence": saved.get("confidence"),
+            },
+            "changed": action != saved.get("action") or confidence != saved.get("confidence"),
+        }
 
     def _record_signal(self, result: dict[str, Any], diagnosis_id: int | None) -> None:
         """诊断保存后生成决策信号；异常只记日志，不影响诊断。"""
@@ -295,8 +340,8 @@ class StockDiagnosisService:
             query = session.query(StockDiagnosis).filter(StockDiagnosis.code == bare_code(code))
             if max_age_minutes is not None:
                 query = query.filter(StockDiagnosis.created_at >= datetime.now() - timedelta(minutes=max_age_minutes))
-            row = query.order_by(StockDiagnosis.created_at.desc()).first()
-            return json.loads(row.result_json) if row else None
+            row = query.order_by(StockDiagnosis.created_at.desc(), StockDiagnosis.id.desc()).first()
+            return {**json.loads(row.result_json), "diagnosis_id": row.id} if row else None
 
     def _calibration(self) -> dict[str, Any]:
         try:
@@ -629,77 +674,34 @@ class StockDiagnosisService:
         except (TypeError, ValueError):
             score = 50.0
         lang = context.get("lang") or report_language(self.config)
-        action = normalize_action(str(raw.get("action", ""))) or score_to_action(score)
-        guardrails: list[str] = []
-        if action in BULLISH_ACTIONS and score < MIN_BUY_SCORE:
-            guardrails.append(tr(lang, f"评分 {score:.0f} 与「{ACTION_LABELS[action]}」不一致，降级为观望",
-                                 f"Score {score:.0f} is inconsistent with \"{display(lang, ACTION_LABELS[action])}\", downgraded to Watch"))
-            action = "watch"
+        profile = normalize_profile(context.get("profile") or (self.config.get("diagnosis") or {}).get("decision_profile"))
         regime = context["regime"]
-        if action in BULLISH_ACTIONS and regime.regime == "冰点":
-            guardrails.append(tr(lang, "大盘处于冰点，暂停开新仓，降级为观望",
-                                 "Market is at freezing point; new positions suspended, downgraded to Watch"))
-            action = "watch"
-        elif action in BULLISH_ACTIONS and regime.regime == "防守":
-            guardrails.append(tr(lang, f"大盘防守，新开仓仓位按 ×{regime.position_factor:.1f} 控制",
-                                 f"Market is defensive; new position size scaled by x{regime.position_factor:.1f}"))
-
-        confidence = str(raw.get("confidence", ""))
         quality = context["data_quality"]
-        if action in BULLISH_ACTIONS and not quality["core_ok"]:
-            guardrails.append(tr(lang, f"行情或日线数据不足（日线 {quality['bar_count']} 根），无法确认买点，降级为观望",
-                                 f"Quote or daily data insufficient ({quality['bar_count']} daily bars); entry cannot be confirmed, downgraded to Watch"))
-            action = "watch"
-        if quality["score"] < MIN_DATA_QUALITY:
-            confidence = "低"
-            if action in BULLISH_ACTIONS:
-                guardrails.append(tr(lang, f"数据完整度 {quality['score']}%（缺少{'、'.join(quality['missing'])}），不足以支撑买入，降级为观望",
-                                     f"Data completeness {quality['score']}% (missing: {', '.join(quality['missing'])}) is not enough to support a buy, downgraded to Watch"))
-                action = "watch"
-        flow_ratio = context.get("flow_ratio")
-        if action in BULLISH_ACTIONS and flow_ratio is not None and flow_ratio <= FLOW_OUTFLOW_RATIO:
-            guardrails.append(tr(lang, f"资金净流出占成交额 {abs(flow_ratio):.1f}%，与买入建议矛盾，降级为观望",
-                                 f"Net fund outflow is {abs(flow_ratio):.1f}% of turnover, contradicting the buy advice, downgraded to Watch"))
-            action = "watch"
-        severe = next((n for n in context.get("risk_notices") or [] if n.get("severe")), None)
-        if action in BULLISH_ACTIONS and severe:
-            guardrails.append(tr(lang, f"近 30 天公告含「{severe['risk']}」（{severe['date']} {severe['title'][:40]}），不建议买入，降级为观望",
-                                 f"A notice in the past 30 days contains \"{severe['risk']}\" ({severe['date']} {severe['title'][:40]}); buying not advised, downgraded to Watch"))
-            action = "watch"
-        if context.get("disagreement") and confidence == "高":
-            guardrails.append(tr(lang, f"分析员观点分歧（{context['disagreement']}），信心下调为中",
-                                 f"Analysts disagree ({context['disagreement']}); confidence lowered to Medium"))
-            confidence = "中"
-        bullish_history = (context.get("calibration") or {}).get("看多") or {}
-        if (action in BULLISH_ACTIONS and bullish_history.get("n", 0) >= MIN_CALIBRATION_SAMPLES
-                and bullish_history.get("accuracy") is not None and bullish_history["accuracy"] < LOW_CALIBRATION_ACCURACY):
-            lowered = {"高": "中", "中": "低"}.get(confidence, "低")
-            guardrails.append(tr(lang, f"近 90 天看多诊断 3 日准确率仅 {bullish_history['accuracy']}%（{bullish_history['n']} 次），信心下调为{lowered}",
-                                 f"Bullish diagnoses in the past 90 days hit only {bullish_history['accuracy']}% at 3 days ({bullish_history['n']} runs); "
-                                 f"confidence lowered to {display(lang, lowered)}"))
-            confidence = lowered
-        if previous and not previous.get("error"):
-            prev_action, prev_score = previous.get("action"), float(previous.get("score") or 0)
-            flipped_up = action in BULLISH_ACTIONS and prev_action in BEARISH_ACTIONS
-            flipped_down = action in BEARISH_ACTIONS and prev_action in BULLISH_ACTIONS
-            if (flipped_up or flipped_down) and abs(score - prev_score) < STABILITY_SCORE_DELTA:
-                note = tr(lang, f"与 {previous.get('created_at')} 的诊断（{previous.get('action_label')}，{prev_score:.0f}分）方向相反，但评分变化不足 {STABILITY_SCORE_DELTA} 分",
-                          f"Opposite direction to the {previous.get('created_at')} diagnosis ({display(lang, previous.get('action_label'))}, {prev_score:.0f} pts), "
-                          f"but the score changed by less than {STABILITY_SCORE_DELTA} pts")
-                if flipped_up:
-                    guardrails.append(note + tr(lang, "，暂按观望处理，避免反复", "; treated as Watch to avoid flip-flopping"))
-                    action = "watch"
-                else:
-                    guardrails.append(note + tr(lang, "，风险优先，保留减仓/回避建议", "; risk first, keeping the reduce/avoid advice"))
-
-        phase_ctx = context.get("phase")
-        phase_decision: dict = {}
-        if phase_ctx:
-            action, confidence, phase_decision, phase_notes = market_phase.phase_guardrails(
-                action, confidence, raw.get("phase_decision"), phase_ctx, (context["quote"] or {}).get("trade_date", ""), lang)
-            guardrails.extend(phase_notes)
-
         plan_raw = raw.get("battle_plan") or {}
+        phase_ctx = context.get("phase")
+        severe = next((n for n in context.get("risk_notices") or [] if n.get("severe")), None)
+        bullish_history = (context.get("calibration") or {}).get("看多") or {}
+        inputs = {
+            "score": score,
+            "action": normalize_action(str(raw.get("action", ""))) or score_to_action(score),
+            "confidence": str(raw.get("confidence", "")),
+            "regime": {"regime": regime.regime, "position_factor": regime.position_factor},
+            "data_quality": {"score": quality["score"], "missing": list(quality["missing"]),
+                             "core_ok": bool(quality["core_ok"]), "bar_count": quality["bar_count"]},
+            "flow_ratio": context.get("flow_ratio"),
+            "severe_notice": {k: severe.get(k) for k in ("date", "title", "risk")} if severe else None,
+            "disagreement": context.get("disagreement") or "",
+            "calibration_bullish": {"n": bullish_history.get("n", 0), "accuracy": bullish_history.get("accuracy")} if bullish_history else None,
+            "previous": ({k: previous.get(k) for k in ("action", "score", "created_at", "action_label")}
+                         if previous and not previous.get("error") else None),
+            "phase": {k: phase_ctx.get(k) for k in ("phase", "label", "now", "effective_daily_bar_date")} if phase_ctx else None,
+            "quote_trade_date": (context["quote"] or {}).get("trade_date", ""),
+            "phase_decision": raw.get("phase_decision") if isinstance(raw.get("phase_decision"), dict) else {},
+            "invalidation": str(raw.get("invalidation") or "")[:MAX_INVALIDATION_LEN].strip(),
+            "stop_loss": plan_raw.get("stop_loss"),
+        }
+        action, confidence, guardrails, phase_decision = decide_with_phase(inputs, profile, lang)
+
         plan = sanitize_price_plan(
             context["code"], context["name"], (context["quote"] or {}).get("close"),
             plan_raw.get("buy_price"), plan_raw.get("stop_loss"), plan_raw.get("target_price"),
@@ -748,6 +750,8 @@ class StockDiagnosisService:
             "signal_attribution": normalize_attribution(raw.get("signal_attribution")),
             "market_phase": {k: phase_ctx.get(k) for k in ("phase", "label", "now", "effective_daily_bar_date")} if phase_ctx else {},
             "language": lang,
+            "decision_profile": profile,
+            "decision_inputs": inputs,
         }
 
     def _save(self, result: dict[str, Any]) -> int | None:

@@ -7,7 +7,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api.auth import COOKIE_NAME, AuthStore
 from api.deps import bad_request, get_auth, get_config, get_pipeline, get_tasks, not_found
@@ -529,6 +529,68 @@ def test_intelligence_source(body: IntelligenceTestBody, config: dict = Depends(
     from src.collectors import rss
 
     return rss.test_feed(body.url, config)
+
+
+# ---------- 诊断设置 ----------
+
+class SkillConsultBody(BaseModel):
+    enabled: bool
+    max_skills: int = Field(ge=1, le=5)
+
+
+class DiagnosisSettingsBody(BaseModel):
+    decision_profile: Literal["conservative", "balanced", "aggressive"]
+    mode: Literal["single", "standard", "full"]
+    shareholders: bool
+    calibration: bool
+    signal_review: bool
+    skill_consult: SkillConsultBody
+
+
+class DiagnosisSettingsRequest(BaseModel):
+    diagnosis: DiagnosisSettingsBody
+
+
+def _diagnosis_settings(config: dict) -> dict[str, Any]:
+    from src.services.decision_profile import normalize_profile
+
+    cfg = config.get("diagnosis") or {}
+    consult = cfg.get("skill_consult") or {}
+    mode = str(cfg.get("mode") or "single")
+    try:
+        max_skills = min(5, max(1, int(consult.get("max_skills", 2))))
+    except (TypeError, ValueError):
+        max_skills = 2
+    return {
+        "decision_profile": normalize_profile(cfg.get("decision_profile")),
+        "mode": mode if mode in ("single", "standard", "full") else "single",
+        "shareholders": bool(cfg.get("shareholders", True)),
+        "calibration": bool(cfg.get("calibration", True)),
+        "signal_review": bool(cfg.get("signal_review", True)),
+        "skill_consult": {"enabled": bool(consult.get("enabled", False)), "max_skills": max_skills},
+    }
+
+
+@router.get("/settings/diagnosis")
+def get_diagnosis_settings(config: dict = Depends(get_config)) -> dict[str, Any]:
+    return {"diagnosis": _diagnosis_settings(config)}
+
+
+@router.put("/settings/diagnosis")
+def save_diagnosis_settings(body: DiagnosisSettingsRequest, request: Request, config: dict = Depends(get_config)) -> dict[str, Any]:
+    from src.config_loader import reload_config
+    from src.settings_store import save_section
+
+    from api.app import apply_config
+
+    current = config.get("diagnosis") or {}
+    new = body.diagnosis
+    merged = {**current, **new.model_dump(exclude={"skill_consult"}),
+              "skill_consult": {**(current.get("skill_consult") or {}), **new.skill_consult.model_dump()}}
+    save_section("diagnosis", merged)
+    new_config = reload_config()
+    apply_config(request.app, new_config)
+    return {"diagnosis": _diagnosis_settings(new_config)}
 
 
 # ---------- 推送设置 ----------

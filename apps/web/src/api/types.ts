@@ -348,6 +348,38 @@ export interface Diagnosis {
   kind?: 'etf' | 'index'
   error?: string
   cached?: boolean
+  id?: number
+  diagnosis_id?: number | null
+  decision_profile?: DecisionProfile
+}
+
+export type DecisionProfile = 'conservative' | 'balanced' | 'aggressive'
+
+export interface ReassessResult {
+  diagnosis_id: number
+  code: string
+  name: string
+  profile: DecisionProfile
+  profile_label: string
+  action: string
+  action_label: string
+  confidence: string
+  guardrails: string[]
+  original: { profile: DecisionProfile; action: string; action_label: string; confidence: string }
+  changed: boolean
+  /** persist=true 时附带：created 新建、existing 已存在、skipped 不是方向性建议 */
+  status?: 'created' | 'existing' | 'skipped' | 'error'
+  signal?: DecisionSignal
+  reason?: string
+}
+
+export interface DiagnosisSettings {
+  decision_profile: DecisionProfile
+  mode: 'single' | 'standard' | 'full'
+  shareholders: boolean
+  calibration: boolean
+  signal_review: boolean
+  skill_consult: { enabled: boolean; max_skills: number }
 }
 
 export interface SkillOpinion {
@@ -527,6 +559,8 @@ export interface DecisionSignal {
   evaluated_at?: string | null
   feedback: string | null
   feedback_note: string | null
+  profile?: DecisionProfile | null
+  profile_label?: string
   created_at?: string
   hit?: boolean | null
 }

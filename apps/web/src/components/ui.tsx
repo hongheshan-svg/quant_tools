@@ -1,6 +1,7 @@
 // 基础界面组件：按钮、卡片、标签、输入框、页签、弹窗、空状态等
 import { Loader2, X } from 'lucide-react'
-import { useEffect, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
+import { createPortal } from 'react-dom'
+import { useEffect, useId, useSyncExternalStore, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react'
 import { useT } from '@/i18n'
 import { cn } from '@/utils/cn'
 import { fmtPct, trendClass } from '@/utils/format'
@@ -151,6 +152,13 @@ export function Tabs<K extends string>({ tabs, value, onChange }: { tabs: { key:
   )
 }
 
+// 弹窗叠放：只有最上层的弹窗对辅助技术可见，下层弹窗标记为 aria-hidden
+let modalStack: string[] = []
+const modalListeners = new Set<() => void>()
+const emitModals = () => modalListeners.forEach((l) => l())
+const subscribeModals = (l: () => void) => { modalListeners.add(l); return () => { modalListeners.delete(l) } }
+const topModal = () => modalStack[modalStack.length - 1] ?? ''
+
 export function Modal({ open, title, onClose, children, footer, wide }: {
   open: boolean
   title: string
@@ -160,18 +168,27 @@ export function Modal({ open, title, onClose, children, footer, wide }: {
   wide?: boolean
 }) {
   const t = useT()
+  const id = useId()
+  const top = useSyncExternalStore(subscribeModals, topModal)
   useEffect(() => {
     if (!open) return
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    modalStack = [...modalStack, id]
+    emitModals()
+    return () => { modalStack = modalStack.filter((x) => x !== id); emitModals() }
+  }, [open, id])
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && (!top || top === id) && onClose()
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open, onClose, top, id])
   if (!open) return null
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onMouseDown={onClose}>
       <div
         role="dialog"
         aria-label={t(title)}
+        aria-hidden={top && top !== id ? true : undefined}
         className={cn('max-h-[90vh] w-full overflow-auto rounded-lg border border-line bg-panel shadow-xl', wide ? 'max-w-3xl' : 'max-w-lg')}
         onMouseDown={(e) => e.stopPropagation()}
       >
@@ -184,7 +201,8 @@ export function Modal({ open, title, onClose, children, footer, wide }: {
         <div className="p-4">{children}</div>
         {footer && <footer className="flex justify-end gap-2 border-t border-line px-4 py-2.5">{footer}</footer>}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

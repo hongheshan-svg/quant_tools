@@ -127,7 +127,7 @@ class DataQueryService:
                 "action": normalize_action(r.action) or normalize_action(detail.get("action_label")) or "",
                 "score": r.score,
                 "created_at": r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "",
-                "result": detail,
+                "result": {**detail, "diagnosis_id": r.id} if detail else detail,
                 "run_log": self._parse_run_log(r.run_log) or detail.get("run_log") or None,
             }
 

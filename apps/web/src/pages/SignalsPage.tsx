@@ -14,6 +14,8 @@ import { toast } from '@/stores/toast'
 import { cn } from '@/utils/cn'
 import { fmtNum, fmtPct, isNum, verdictClass } from '@/utils/format'
 
+const PROFILE_FILTERS: Record<string, string> = { conservative: '保守', balanced: '均衡', aggressive: '进取', unknown: '旧数据' }
+
 const PAGE_SIZE = 50
 const ACTIONS: Record<string, string> = { buy: '买入', add: '加仓', reduce: '减仓', sell: '卖出', avoid: '回避' }
 const STATUSES: Record<string, string> = {
@@ -31,14 +33,15 @@ export function SignalsPage() {
   const code = params.get('code') ?? ''
   const [status, setStatus] = useState('')
   const [action, setAction] = useState('')
+  const [profile, setProfile] = useState('')
   const [days, setDays] = useState(90)
   const [limit, setLimit] = useState(PAGE_SIZE)
   const [open, setOpen] = useState<DecisionSignal | null>(null)
   const task = useTask<Record<string, number>>()
-  const stats = useApi(() => api.signalStats(days || 3650), [days])
+  const stats = useApi(() => api.signalStats(days || 3650, profile || undefined), [days, profile])
   const list = useApi(
-    () => api.signals({ status: status || undefined, action: action || undefined, code: code || undefined, days, limit, offset: 0 }),
-    [status, action, code, days, limit],
+    () => api.signals({ status: status || undefined, action: action || undefined, code: code || undefined, profile: profile || undefined, days, limit, offset: 0 }),
+    [status, action, code, profile, days, limit],
   )
 
   const setCode = (c: string) => {
@@ -58,6 +61,7 @@ export function SignalsPage() {
       key: 'action', title: t('建议'),
       render: (r) => <Badge className={cn(verdictClass(ACTIONS[r.action]))}>{t(ACTIONS[r.action] ?? r.action)}</Badge>,
     },
+    { key: 'profile', title: t('风格'), render: (r) => <span className="text-xs">{r.profile ? t(PROFILE_FILTERS[r.profile] ?? r.profile_label ?? r.profile) : '--'}</span> },
     { key: 'score', title: t('评分'), align: 'right', render: (r) => <span className="num">{r.score ?? '--'}</span> },
     { key: 'horizon', title: t('观察期'), render: (r) => <span className="text-xs">{t('{n} 日', { n: r.horizon_days })}{r.expires_on ? ` · ${t('至 {date}', { date: r.expires_on })}` : ''}</span> },
     { key: 'status', title: t('状态'), render: (r) => <Badge tone={STATUS_TONE[r.status] ?? 'default'}>{t(STATUSES[r.status] ?? r.status)}</Badge> },
@@ -105,6 +109,10 @@ export function SignalsPage() {
           <Select aria-label={t('建议')} value={action} onChange={(e) => { setAction(e.target.value); setLimit(PAGE_SIZE) }}>
             <option value="">{t('全部建议')}</option>
             {Object.entries(ACTIONS).map(([k, v]) => <option key={k} value={k}>{t(v)}</option>)}
+          </Select>
+          <Select aria-label={t('风格')} value={profile} onChange={(e) => { setProfile(e.target.value); setLimit(PAGE_SIZE) }}>
+            <option value="">{t('全部风格')}</option>
+            {Object.entries(PROFILE_FILTERS).map(([k, v]) => <option key={k} value={k}>{t(v)}</option>)}
           </Select>
           <Select aria-label={t('时间范围')} value={days} onChange={(e) => { setDays(Number(e.target.value)); setLimit(PAGE_SIZE) }}>
             {DAYS.map((d) => <option key={d.v} value={d.v}>{t(d.t)}</option>)}
