@@ -1,5 +1,5 @@
 """
-桌面端/脚本通用的数据查询服务。
+Web 接口和脚本通用的数据查询服务。
 将原 FastAPI dashboard 的查询辅助函数抽离到此处。
 """
 
@@ -11,7 +11,6 @@ from src.config_loader import load_config
 from src.database.db import get_db_session
 from src.database.models import (
     FinanceNews,
-    GlobalImpactAnalysis,
     GlobalNews,
     LimitUpStock,
     SentimentAnalysis,
@@ -191,7 +190,7 @@ class DataQueryService:
         return True
 
     def get_dashboard_snapshot(self, for_date: str | None = None) -> dict:
-        """获取桌面首页所需的完整数据快照。"""
+        """首页（交易决策）所需的数据快照；资讯流单独由 get_unified_news() 提供。"""
         target_date = for_date or date.today().strftime("%Y-%m-%d")
 
         # 智能回退：如果今天没有评分数据，回退到最近有数据的日期
@@ -212,12 +211,7 @@ class DataQueryService:
             "top_stocks": self.get_top_stocks(score_date),
             "limit_up_count": len(limit_up_stocks),
             "limit_up_stocks": limit_up_stocks,
-            "global_impact": self.get_global_impact(),
             "signals": self.get_signals(score_date),
-            "xueqiu_data": self.get_xueqiu_data(),
-            "jiuyan_data": self.get_jiuyan_data(),
-            "global_news": self.get_global_news(),
-            "unified_news": self.get_unified_news(),
             "trade_focus": self.get_trade_focus_rows(score_date, target_date),
             "premarket_predictions": self.get_premarket_predictions(),
             "market_overview": self.get_market_overview(),
@@ -344,50 +338,6 @@ class DataQueryService:
             logger.error(f"获取涨停列表失败: {e}")
             return []
 
-    def get_cailianshe_data(self) -> dict:
-        """获取财联社快讯数据并按重要性分组。"""
-        result = {"red": [], "important": [], "normal": [], "total": 0}
-        try:
-            with get_db_session(self.db_path) as session:
-                cutoff = datetime.now() - timedelta(hours=24)
-                records = (
-                    session.query(FinanceNews)
-                    .filter(
-                        FinanceNews.source == "cailianshe",
-                        FinanceNews.collected_at >= cutoff,
-                    )
-                    .order_by(FinanceNews.news_time.desc().nullslast(), FinanceNews.collected_at.desc())
-                    .limit(100)
-                    .all()
-                )
-                seen = set()
-                for r in records:
-                    key = (r.title or "")[:80]
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    item = {
-                        "title": r.title,
-                        "content": r.content or "",
-                        "importance": r.category or "normal",
-                        "tags": r.tags or "",
-                        "url": r.url or "",
-                        "time": r.news_time.strftime("%H:%M") if r.news_time else (
-                            r.collected_at.strftime("%H:%M") if r.collected_at else ""
-                        ),
-                    }
-                    imp = r.category or "normal"
-                    if imp == "red":
-                        result["red"].append(item)
-                    elif imp == "important":
-                        result["important"].append(item)
-                    else:
-                        result["normal"].append(item)
-                result["total"] = len(result["red"]) + len(result["important"]) + len(result["normal"])
-        except Exception as e:
-            logger.error(f"获取财联社数据失败: {e}")
-        return result
-
     def get_signals(self, signal_date: str) -> list[dict]:
         try:
             with get_db_session(self.db_path) as session:
@@ -412,128 +362,6 @@ class DataQueryService:
                 ]
         except Exception as e:
             logger.error(f"获取交易信号失败: {e}")
-            return []
-
-    def get_global_impact(self) -> dict:
-        try:
-            with get_db_session(self.db_path) as session:
-                record = (
-                    session.query(GlobalImpactAnalysis)
-                    .order_by(GlobalImpactAnalysis.analysis_date.desc())
-                    .first()
-                )
-                if record:
-                    return {
-                        "date": record.analysis_date,
-                        "direction": record.overall_direction,
-                        "impact_score": record.overall_impact_score,
-                        "detail": record.analysis_detail,
-                    }
-        except Exception as e:
-            logger.error(f"获取国际因子失败: {e}")
-        return {}
-
-    def get_xueqiu_data(self) -> list[dict]:
-        try:
-            with get_db_session(self.db_path) as session:
-                cutoff = datetime.now() - timedelta(hours=24)
-                records = (
-                    session.query(FinanceNews)
-                    .filter(
-                        FinanceNews.source == "xueqiu",
-                        FinanceNews.collected_at >= cutoff,
-                    )
-                    .order_by(FinanceNews.collected_at.desc())
-                    .limit(30)
-                    .all()
-                )
-                seen = set()
-                result = []
-                for r in records:
-                    if r.title in seen:
-                        continue
-                    seen.add(r.title)
-                    result.append(
-                        {
-                            "title": r.title,
-                            "content": r.content or "",
-                            "category": r.category or "",
-                            "stock_code": r.tags or "",
-                            "url": r.url or "",
-                            "time": r.collected_at.strftime("%H:%M") if r.collected_at else "",
-                        }
-                    )
-                return result
-        except Exception as e:
-            logger.error(f"获取雪球数据失败: {e}")
-            return []
-
-    def get_jiuyan_data(self) -> list[dict]:
-        try:
-            with get_db_session(self.db_path) as session:
-                cutoff = datetime.now() - timedelta(hours=24)
-                records = (
-                    session.query(FinanceNews)
-                    .filter(
-                        FinanceNews.source == "jiuyan",
-                        FinanceNews.collected_at >= cutoff,
-                    )
-                    .order_by(FinanceNews.collected_at.desc())
-                    .limit(30)
-                    .all()
-                )
-                seen = set()
-                result = []
-                for r in records:
-                    if r.title in seen:
-                        continue
-                    seen.add(r.title)
-                    result.append(
-                        {
-                            "title": r.title,
-                            "content": r.content or "",
-                            "category": r.category or "",
-                            "url": r.url or "",
-                            "time": r.collected_at.strftime("%H:%M") if r.collected_at else "",
-                        }
-                    )
-                return result
-        except Exception as e:
-            logger.error(f"获取韭研数据失败: {e}")
-            return []
-
-    def get_global_news(self) -> list[dict]:
-        try:
-            with get_db_session(self.db_path) as session:
-                cutoff = datetime.now() - timedelta(hours=48)
-                records = (
-                    session.query(GlobalNews)
-                    .filter(GlobalNews.collected_at >= cutoff)
-                    .order_by(GlobalNews.collected_at.desc())
-                    .limit(20)
-                    .all()
-                )
-                seen = set()
-                result = []
-                for r in records:
-                    if r.title in seen:
-                        continue
-                    seen.add(r.title)
-                    imp = r.importance or 0
-                    imp_label = "high" if imp >= HIGH_IMPORTANCE_THRESHOLD else ("medium" if imp >= MEDIUM_IMPORTANCE_THRESHOLD else "low")
-                    result.append(
-                        {
-                            "title": r.title,
-                            "source": r.source or "",
-                            "category": r.category or "",
-                            "importance": imp_label,
-                            "direction": r.a_share_impact_direction or "",
-                            "time": r.collected_at.strftime("%m-%d %H:%M") if r.collected_at else "",
-                        }
-                    )
-                return result
-        except Exception as e:
-            logger.error(f"获取国际新闻失败: {e}")
             return []
 
     # 美股头部公司关键词（用于判断是否为头部企业财报/研报）

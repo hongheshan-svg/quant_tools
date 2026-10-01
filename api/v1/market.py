@@ -23,10 +23,7 @@ def _query(pipeline: PipelineService):
 @router.get("/dashboard")
 def dashboard(pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
     """交易决策首页：Top 评分、涨停池、信号、交易焦点、AI 预测、市场概况（资讯流单独取）。"""
-    snapshot = _query(pipeline).get_dashboard_snapshot()
-    for key in ("unified_news", "xueqiu_data", "jiuyan_data", "global_news"):
-        snapshot.pop(key, None)
-    return snapshot
+    return _query(pipeline).get_dashboard_snapshot()
 
 
 # 统一资讯流里需要置顶标红的级别（level 是给旧桌面端显示的中文）
