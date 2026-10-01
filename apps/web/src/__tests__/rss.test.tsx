@@ -18,14 +18,14 @@ const intelligence = {
   },
 }
 
-function stub(calls: Call[], news: unknown[] = []) {
+function stub(calls: Call[], news: unknown[] = [], templates: unknown[] = []) {
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     const method = (init?.method ?? 'GET').toUpperCase()
     calls.push({ url, method, body: typeof init?.body === 'string' ? init.body : undefined })
     let body: unknown = []
     if (url.includes('/settings/intelligence/test')) body = { ok: true, title: '测试频道', count: 3, samples: ['样例一'], error: '' }
-    else if (url.includes('/settings/intelligence/templates')) body = []
+    else if (url.includes('/settings/intelligence/templates')) body = templates
     else if (url.includes('/settings/intelligence')) body = method === 'PUT' ? { ok: true } : intelligence
     else if (url.includes('/settings/llm')) body = { llm: { primary: {}, fallback: {} }, platforms: {} }
     else if (url.includes('/news')) body = news
@@ -122,19 +122,12 @@ describe('page crash', () => {
 
 describe('SettingsPage intelligence templates', () => {
   it('adds a source from a template and hides templates already added', async () => {
-    const calls: Call[] = []
-    stub(calls)
-    const tpl = [
+    stub([], [], [
       { id: 'newsnow-jin10', name: '金十数据', url: 'https://newsnow.busiyi.world/api/s?id=jin10', description: 'x' },
       { id: 'reuters', name: '路透中文', url: 'https://feeds.example.com/reuters.xml', description: 'y' },
-    ]
-    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
-    const base = fetchMock.getMockImplementation()!
-    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) =>
-      String(input).includes('/settings/intelligence/templates')
-        ? new Response(JSON.stringify(tpl), { status: 200, headers: { 'content-type': 'application/json' } })
-        : base(input, init))
+    ])
     await openTab()
+    await screen.findByDisplayValue('路透中文')                                     // 等已保存的资讯源载入
     const select = await screen.findByRole('combobox', { name: '从模板添加' })
     expect(screen.queryByRole('option', { name: '路透中文' })).toBeNull()        // 已添加的地址不再列出
     fireEvent.change(select, { target: { value: 'newsnow-jin10' } })
