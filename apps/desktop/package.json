@@ -52,8 +52,9 @@
     },
     "mac": {
       "target": "dmg",
-      "identity": null,
-      "artifactName": "AStockQuant-${version}-macos-${arch}.${ext}"
+      "identity": "-",
+      "artifactName": "AStockQuant-${version}-macos-${arch}.${ext}",
+      "hardenedRuntime": false
     },
     "linux": {
       "target": "AppImage",
