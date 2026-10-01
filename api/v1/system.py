@@ -161,6 +161,14 @@ def data_sources(pipeline: PipelineService = Depends(get_pipeline)) -> list[dict
     return pipeline.data_source_status()
 
 
+@router.get("/system/config-check")
+def config_check(config: dict = Depends(get_config)) -> dict[str, Any]:
+    """完整配置校验：未知键、类型、格式与范围、语义。"""
+    from src.services.config_check import check_current
+
+    return check_current(config)
+
+
 @router.get("/system/capabilities")
 def data_capabilities(config: dict = Depends(get_config)) -> list[dict[str, Any]]:
     """各数据集的回退顺序、配置情况与健康状态"""
@@ -667,4 +675,25 @@ def import_settings_file(body: ImportBody, request: Request) -> dict[str, Any]:
     except ValueError as e:
         raise bad_request(str(e))
     apply_config(request.app, reload_config())
+    check = _import_check(body.yaml)
+    if check:
+        result = {**result, "check": check}
+        if check["errors"]:
+            result["warnings"] = [*result.get("warnings", []), f"导入的配置有 {check['errors']} 个错误，请到设置页检查"]
     return result
+
+
+def _import_check(text: str) -> dict[str, Any]:
+    """校验导入后的配置（示例默认值 + 导入内容，只提示不拦截）。"""
+    import yaml
+
+    from src.config_loader import _deep_merge_dict
+    from src.services.config_check import check_config, load_example
+
+    try:
+        raw = yaml.safe_load(text) or {}
+        if not isinstance(raw, dict):
+            return {}
+        return check_config(_deep_merge_dict(load_example(), raw), raw)
+    except Exception:
+        return {}

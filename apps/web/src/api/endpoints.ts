@@ -13,6 +13,7 @@ export const api = {
   task: (id: string) => http.get<T.Task>(`/tasks/${id}`),
   tasks: () => http.get<T.Task[]>('/tasks'),
   sources: () => http.get<T.SourceStatus[]>('/system/sources'),
+  configCheck: () => http.get<T.ConfigCheckResult>('/system/config-check'),
   capabilities: () => http.get<T.DataCapability[]>('/system/capabilities'),
   scheduler: () => http.get<T.SchedulerStatus>('/system/scheduler'),
   runJob: (id: string) => http.post<T.Task>(`/system/scheduler/${id}/run`),

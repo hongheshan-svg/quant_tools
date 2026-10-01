@@ -10,6 +10,7 @@ import { useApi } from '@/hooks/useApi'
 import { useTask } from '@/hooks/useTask'
 import { useT } from '@/i18n'
 import { EmailGroupsEditor } from '@/pages/settings/EmailGroupsEditor'
+import { ConfigCheckSection } from '@/pages/settings/ConfigCheckSection'
 import { ReportLanguageSection } from '@/pages/settings/ReportLanguageSection'
 import { toast } from '@/stores/toast'
 import { getDesktop, type DesktopInfo, type QuantDesktop } from '@/utils/desktop'
@@ -793,6 +794,7 @@ function BackupPanel() {
   }
   return (
     <div className="space-y-6">
+      <ConfigCheckSection />
       <section className="space-y-2">
         <h3 className="text-sm font-medium">{t('导出配置')}</h3>
         <label className="flex items-center gap-2 text-sm">

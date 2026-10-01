@@ -924,10 +924,24 @@ export interface SchedulerStatus {
   jobs: SchedulerJob[]
 }
 
+export interface ConfigIssue {
+  level: 'error' | 'warning'
+  path: string
+  message: string
+}
+
+export interface ConfigCheckResult {
+  ok: boolean
+  errors: number
+  warnings: number
+  issues: ConfigIssue[]
+}
+
 export interface SettingsImportResult {
   sections: string[]
   restored: number
   warnings: string[]
+  check?: ConfigCheckResult
 }
 
 export interface LLMRole {

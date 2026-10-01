@@ -60,6 +60,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--stocks", help="只对这些股票执行 AI 诊断并推送决策仪表盘后退出，逗号分隔，代码、名称、拼音首字母均可，支持 ETF 和指数，如 600519,贵州茅台,510300,沪深300；不受交易日限制")
     parser.add_argument("--no-notify", action="store_true", help="不推送任何消息（对 --once、--stocks 和常驻调度都生效）")
     parser.add_argument("--check-notify", action="store_true", help="检查推送渠道配置，打印结果后退出（全部正常时退出码为 0）")
+    parser.add_argument("--check-config", action="store_true", help="校验 settings.yaml（未知键、类型、格式、语义），打印问题列表后退出（没有错误时退出码为 0）")
     parser.add_argument("--debug", action="store_true", help="日志级别改为 DEBUG（控制台和文件）")
     return parser.parse_args(argv)
 
@@ -144,6 +145,13 @@ def main():
         print(text)
         sys.exit(0 if ok else 1)
 
+    if args.check_config:
+        from src.services.config_check import check_current, format_check
+
+        result = check_current(load_config())
+        print(format_check(result))
+        sys.exit(0 if result["ok"] else 1)
+
     logger.info("=" * 60)
     logger.info("A股舆情驱动量化交易系统 启动中...")
     logger.info("=" * 60)
@@ -157,6 +165,9 @@ def main():
     # 2. 配置日志
     setup_logging(config, args.debug)
     logger.info("日志系统初始化完成")
+    from src.services.config_check import log_startup_issues
+
+    log_startup_issues(config)
 
     # 3. 初始化数据库
     db_cfg = config.get("database", {})

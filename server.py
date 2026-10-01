@@ -102,6 +102,9 @@ def main() -> None:
     args = parser.parse_args()
 
     setup_logging(config)
+    from src.services.config_check import log_startup_issues
+
+    log_startup_issues(config)
     init_db(config.get("database", {}).get("sqlite_path", "data/quant.db"))
     if args.host not in LOCAL_HOSTS and not web.get("auth_enabled"):
         logger.warning(f"监听 {args.host} 但没有开启 Web 登录：局域网内其他设备的请求会被拒绝，需要时在 web.auth_enabled 开启登录")
