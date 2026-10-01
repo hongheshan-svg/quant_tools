@@ -148,6 +148,10 @@ export const api = {
   realActions: (account = '') => http.get<T.RealCorporateAction[]>(account ? `/real/actions?account=${encodeURIComponent(account)}` : '/real/actions'),
   addRealAction: (body: Record<string, unknown>) => http.post<{ ok: boolean }>('/real/actions', body),
   deleteRealAction: (id: number) => http.del<{ ok: boolean }>(`/real/actions/${id}`),
+  realCashFlows: (account = '') => http.get<T.RealCashFlow[]>(account ? `/real/cash-flows?account=${encodeURIComponent(account)}` : '/real/cash-flows'),
+  addRealCashFlow: (body: { flow_date: string; direction: 'in' | 'out'; amount: number; note?: string; account?: string }) =>
+    http.post<{ ok: boolean; id: number }>('/real/cash-flows', body),
+  deleteRealCashFlow: (id: number) => http.del<{ ok: boolean }>(`/real/cash-flows/${id}`),
   setRealCash: (cash: number, account = '') => http.put<{ ok: boolean }>('/real/cash', { cash, account }),
   setRealPlan: (code: string, stop_loss: number | null, target_price: number | null, account = '') =>
     http.put<{ ok: boolean }>(`/real/plans/${code}`, { stop_loss, target_price, account }),

@@ -281,6 +281,19 @@ class RealCash(Base):
     account = Column(String(30), comment="账户名称；空表示默认账户")
 
 
+class RealCashFlow(Base):
+    """实盘出入金流水（银证转账）：没有设置可用资金时，按全部出入金和成交从零重放可用资金"""
+    __tablename__ = "real_cash_flow"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    flow_date = Column(String(10), nullable=False, comment="日期 YYYY-MM-DD")
+    direction = Column(String(4), nullable=False, comment="in 入金 / out 出金")
+    amount = Column(Float, nullable=False, comment="金额（元，正数）")
+    note = Column(String(200), comment="备注")
+    account = Column(String(30), comment="账户名称；空表示默认账户")
+    created_at = Column(DateTime, default=datetime.now)
+
+
 class RealPositionPlan(Base):
     """实盘持仓的止损价、目标价（未设置时按 risk.stop_loss_pct / take_profit_pct 从成本计算）"""
     __tablename__ = "real_position_plan"

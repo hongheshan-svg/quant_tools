@@ -26,12 +26,13 @@ from sqlalchemy import or_
 
 from src.config_loader import load_config
 from src.database.db import get_db_session
-from src.database.models import RealAccount, RealCash, RealCorporateAction, RealPositionPlan, RealTrade, StockDaily
+from src.database.models import RealAccount, RealCash, RealCashFlow, RealCorporateAction, RealPositionPlan, RealTrade, StockDaily
 from src.utils.stock_code import bare_code, code_candidates
 
 DEFAULT_ACCOUNT = "默认"
 ALL_ACCOUNTS_LABEL = "全部"
-ACCOUNT_TABLES = (RealTrade, RealCash, RealPositionPlan, RealCorporateAction)
+ACCOUNT_TABLES = (RealTrade, RealCash, RealPositionPlan, RealCorporateAction, RealCashFlow)
+FLOW_LABELS = {"in": "入金", "out": "出金"}
 
 COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
     "date": ("成交日期", "发生日期", "交收日期", "交易日期", "日期"),
@@ -426,6 +427,43 @@ class RealPortfolioService:
 
     # ---- 资金与计划 ----
 
+    # ---- 出入金 ----
+
+    def add_cash_flow(self, flow_date: str, direction: str, amount: float, note: str = "") -> dict[str, Any]:
+        """记一笔入金（in）或出金（out），金额为正数。"""
+        flow_date = _date(flow_date)
+        if not flow_date:
+            return {"ok": False, "error": "日期格式不对，应为 YYYY-MM-DD"}
+        if direction not in FLOW_LABELS:
+            return {"ok": False, "error": "方向只能是入金或出金"}
+        amount = float(amount or 0)
+        if amount <= 0:
+            return {"ok": False, "error": "金额必须大于 0"}
+        with get_db_session(self.db_path) as session:
+            row = RealCashFlow(flow_date=flow_date, direction=direction, amount=round(amount, 2), note=(note or "")[:200],
+                               account=self._write_account)
+            session.add(row)
+            session.flush()
+            return {"ok": True, "id": row.id}
+
+    def delete_cash_flow(self, flow_id: int) -> bool:
+        with get_db_session(self.db_path) as session:
+            return self._scoped(session.query(RealCashFlow).filter(RealCashFlow.id == flow_id), RealCashFlow).delete() > 0
+
+    def cash_flows(self, limit: int = 500) -> list[dict[str, Any]]:
+        with get_db_session(self.db_path) as session:
+            rows = (self._scoped(session.query(RealCashFlow), RealCashFlow)
+                    .order_by(RealCashFlow.flow_date.desc(), RealCashFlow.id.desc()).limit(limit).all())
+            return [{"id": r.id, "flow_date": r.flow_date, "direction": r.direction, "direction_label": FLOW_LABELS.get(r.direction, r.direction),
+                     "amount": r.amount, "note": r.note or "", "account": _norm_account(r.account)} for r in rows]
+
+    def _flows(self, account: str) -> list[RealCashFlow]:
+        with get_db_session(self.db_path) as session:
+            rows = (session.query(RealCashFlow).filter(_account_filter(RealCashFlow, account))
+                    .order_by(RealCashFlow.flow_date, RealCashFlow.id).all())
+            session.expunge_all()   # 退出会话提交前先脱离，否则对象过期、之后读属性报 DetachedInstanceError
+            return rows
+
     def set_cash(self, cash: float, as_of: datetime | None = None) -> None:
         with get_db_session(self.db_path) as session:
             session.add(RealCash(cash=float(cash), as_of=as_of or datetime.now(), account=self._write_account))
@@ -543,35 +581,54 @@ class RealPortfolioService:
         cash = self.cash()
         cash_known = cash is not None and not self._missing_cash_accounts(names)
         if not cash_known:
-            warnings.append("还没有设置可用资金，总资产只按持仓市值计算")
+            warnings.append("还没有设置可用资金，也没有记出入金，总资产只按持仓市值计算")
+        flows = [f for a in names for f in self._flows(a)]
+        net_deposit = round(sum(f.amount if f.direction == "in" else -f.amount for f in flows), 2)
+        # 出入金模式：都没有设置可用资金、全靠出入金重放时，累计收益 = 总资产 − 净入金
+        ledger_mode = bool(flows) and cash_known and not any(self._has_anchor(a) for a in names)
+        total_assets = (cash or 0.0) + market_value
         return {
-            "account": {"broker": "real", "cash": cash or 0.0, "market_value": market_value, "total_assets": (cash or 0.0) + market_value,
+            "account": {"broker": "real", "cash": cash or 0.0, "market_value": market_value, "total_assets": total_assets,
                         "unrealized_pnl": sum(p["unrealized_pnl"] for p in positions), "realized_pnl": realized,
-                        "cash_known": cash_known},
+                        "cash_known": cash_known, "net_deposit": net_deposit, "ledger_mode": ledger_mode,
+                        "total_return": round(total_assets - net_deposit, 2) if ledger_mode else None},
             "positions": positions, "warnings": warnings,
         }
 
     def _missing_cash_accounts(self, names: list[str]) -> list[str]:
-        """有成交但没有设置可用资金的账户（只在多账户汇总时有意义，单账户语义由 cash() 是否为空决定）。"""
+        """有成交但既没有设置可用资金、也没有记出入金的账户（只在多账户汇总时有意义，单账户语义由 cash() 是否为空决定）。"""
         if len(names) <= 1:
             return []
         missing = []
         with get_db_session(self.db_path) as session:
             for account in names:
                 has_trade = session.query(RealTrade.id).filter(_account_filter(RealTrade, account)).first() is not None
-                has_cash = session.query(RealCash.id).filter(_account_filter(RealCash, account)).first() is not None
+                has_cash = any(session.query(m.id).filter(_account_filter(m, account)).first() is not None for m in (RealCash, RealCashFlow))
                 if has_trade and not has_cash:
                     missing.append(account)
         return missing
 
+    def _has_anchor(self, account: str) -> bool:
+        with get_db_session(self.db_path) as session:
+            return session.query(RealCash.id).filter(_account_filter(RealCash, account)).first() is not None
+
     def _account_cash(self, account: str) -> float | None:
-        """某个账户的可用资金 = 最近一次设置的金额 + 之后成交带来的资金变化。"""
+        """某个账户的可用资金：
+        - 设置过可用资金：最近一次设置的金额 + 之后的出入金、成交和分红带来的变化（出入金按当天结束时计，
+          设置当天及之后日期的出入金都算在设置之后）
+        - 没设置但记了出入金：从零开始按全部出入金、成交和分红重放
+        - 都没有：None"""
         with get_db_session(self.db_path) as session:
             anchor = (session.query(RealCash).filter(_account_filter(RealCash, account))
                       .order_by(RealCash.as_of.desc(), RealCash.id.desc()).first())
-            if anchor is None:
-                return None
-            cash, as_of = anchor.cash, anchor.as_of
+            anchor_value = (anchor.cash, anchor.as_of) if anchor is not None else None
+        flows = self._flows(account)
+        if anchor_value is None and not flows:
+            return None
+        cash, as_of = anchor_value if anchor_value else (0.0, datetime.min)
+        for f in flows:
+            if _when(f.flow_date, "23:59:59") > as_of:
+                cash += f.amount if f.direction == "in" else -f.amount
         for t in self._ordered_trades(account):
             if _when(t.trade_date, t.trade_time) > as_of:
                 amount = t.price * t.quantity
@@ -684,8 +741,9 @@ class RealPortfolioService:
         with get_db_session(self.db_path) as session:
             trades = session.query(RealTrade.id).filter(RealTrade.account == name).count()
             actions = session.query(RealCorporateAction.id).filter(RealCorporateAction.account == name).count()
-            if trades or actions:
-                return {"ok": False, "error": f"账户「{name}」还有 {trades} 笔成交、{actions} 条分红送转记录，请先删除或改到其他账户"}
+            flows = session.query(RealCashFlow.id).filter(RealCashFlow.account == name).count()
+            if trades or actions or flows:
+                return {"ok": False, "error": f"账户「{name}」还有 {trades} 笔成交、{actions} 条分红送转、{flows} 笔出入金记录，请先删除或改到其他账户"}
             for model in (RealCash, RealPositionPlan, RealAccount):
                 col = model.name if model is RealAccount else model.account
                 session.query(model).filter(col == name).delete(synchronize_session=False)

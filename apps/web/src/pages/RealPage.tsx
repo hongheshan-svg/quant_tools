@@ -3,7 +3,7 @@ import { Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '@/api/endpoints'
-import type { Position, RealAccount, RealCorporateAction, RealImportPreview, RealTrade } from '@/api/types'
+import type { Position, RealAccount, RealCashFlow, RealCorporateAction, RealImportPreview, RealTrade } from '@/api/types'
 import { actionBody, CorporateActionForm, emptyActionForm, type ActionForm } from '@/components/CorporateActionForm'
 import { DataTable, type Column } from '@/components/DataTable'
 import { RiskPanel } from '@/components/RiskPanel'
@@ -53,6 +53,9 @@ export function RealPage() {
   const [plan, setPlan] = useState<{ code: string; name: string; stop: string; target: string; accounts: string[]; account: string } | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
   const actionsApi = useApi(() => api.realActions(account), [account])
+  const flowsApi = useApi(() => api.realCashFlows(account), [account])
+  const [flowOpen, setFlowOpen] = useState(false)
+  const [flow, setFlow] = useState<{ flow_date: string; direction: 'in' | 'out'; amount: string; note: string }>({ flow_date: today(), direction: 'in', amount: '', note: '' })
   const [actionOpen, setActionOpen] = useState(false)
   const [actionForm, setActionForm] = useState<ActionForm>(emptyActionForm)
   const [importPreview, setImportPreview] = useState<{ file: File; preview: RealImportPreview; account: string } | null>(null)
@@ -84,6 +87,19 @@ export function RealPage() {
       .catch((err) => toast.error(err.message))
   }
 
+  const submitFlow = async () => {
+    try {
+      await api.addRealCashFlow({ ...flow, amount: Number(flow.amount), account: formAccount === DEFAULT_ACCOUNT ? '' : formAccount })
+      toast.success(t('已记录'))
+      setFlowOpen(false)
+      setFlow({ flow_date: today(), direction: 'in', amount: '', note: '' })
+      void reload()
+      void flowsApi.reload()
+      void accountsApi.reload()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    }
+  }
   const submitTrade = async () => {
     try {
       await api.addRealTrade({ ...trade, account: formAccount === DEFAULT_ACCOUNT ? '' : formAccount, price: Number(trade.price), quantity: Number(trade.quantity), fee: Number(trade.fee || 0) })
@@ -151,7 +167,24 @@ export function RealPage() {
       ),
     },
   ]
+  const flowColumns: Column<RealCashFlow>[] = [
+    { key: 'date', title: t('日期'), render: (f) => <span className="num">{f.flow_date}</span> },
+    { key: 'dir', title: t('方向'), render: (f) => <span className={f.direction === 'in' ? 'text-up' : 'text-down'}>{t(f.direction_label)}</span> },
+    { key: 'amount', title: t('金额'), align: 'right', render: (f) => <span className="num">{`${f.direction === 'in' ? '+' : '-'}${fmtNum(f.amount)}`}</span> },
+    ...(showAccounts ? [{ key: 'account', title: t('账户'), render: (f: RealCashFlow) => <span className="text-xs text-muted">{f.account}</span> }] : []),
+    { key: 'note', title: t('备注'), className: 'text-xs text-muted', render: (f) => f.note },
+    {
+      key: 'del', title: '', align: 'right', render: (f) => (
+        <button type="button" aria-label={t('删除出入金')} className="text-muted hover:text-danger" onClick={() => {
+          if (window.confirm(t('删除 {date} 这笔{dir}？', { date: f.flow_date, dir: t(f.direction_label) }))) void api.deleteRealCashFlow(f.id).then(() => { void reload(); void flowsApi.reload(); void accountsApi.reload() })
+        }}>
+          <Trash2 className="size-4" />
+        </button>
+      ),
+    },
+  ]
   const summary = data?.snapshot.account
+  const hasFlows = (flowsApi.data ?? []).length > 0
   // 某个账户当前的可用资金（没设置过为空）；选中单个账户时用持仓快照里的数
   const cashOf = (name: string) => {
     if (account === name && summary) return summary.cash_known ? String(summary.cash) : ''
@@ -175,6 +208,7 @@ export function RealPage() {
             )}
             <Button variant="primary" onClick={() => { setFormAccount(targetAccount); setTradeOpen(true) }}>{t('记一笔')}</Button>
             <Button onClick={() => { setActionForm((f) => ({ ...f, account: targetAccount })); setActionOpen(true) }}>{t('记一笔分红送转')}</Button>
+            <Button onClick={() => { setFormAccount(targetAccount); setFlowOpen(true) }}>{t('记一笔出入金')}</Button>
             <Button onClick={() => fileInput.current?.click()}>{t('导入交割单')}</Button>
             <Button onClick={() => { setFormAccount(targetAccount); setCash(cashOf(targetAccount)); setCashOpen(true) }}>{t('设置可用资金')}</Button>
             <Button onClick={() => setManageOpen(true)}>{t('管理账户')}</Button>
@@ -195,18 +229,30 @@ export function RealPage() {
       />
       {error && <ErrorBox message={error} onRetry={reload} />}
       {summary && (
-        <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-5">
+        <div className={`mb-4 grid grid-cols-2 gap-2 ${hasFlows ? 'md:grid-cols-6' : 'md:grid-cols-5'}`}>
           <Stat label={t('总资产')} value={fmtMoney(summary.total_assets)} />
           <Stat label={t('可用资金')} value={summary.cash_known ? fmtMoney(summary.cash) : t('未设置')} />
           <Stat label={t('持仓市值')} value={fmtMoney(summary.market_value)} />
           <Stat label={t('浮动盈亏')} value={<span className={trendClass(summary.unrealized_pnl)}>{fmtMoney(summary.unrealized_pnl, true)}</span>} />
           <Stat label={t('已实现盈亏')} value={<span className={trendClass(summary.realized_pnl)}>{fmtMoney(summary.realized_pnl, true)}</span>} />
+          {hasFlows && (
+            <Stat
+              label={summary.ledger_mode ? t('累计收益') : t('净入金')}
+              value={summary.ledger_mode && summary.total_return != null
+                ? <span className={trendClass(summary.total_return)}>{fmtMoney(summary.total_return, true)}</span>
+                : fmtMoney(summary.net_deposit ?? 0)}
+              sub={summary.ledger_mode ? t('净入金 {v}', { v: fmtMoney(summary.net_deposit ?? 0) }) : undefined}
+            />
+          )}
         </div>
       )}
       <div className="space-y-4">
         {data?.risk && <Card title={t('组合风险')}><RiskPanel risk={data.risk} /></Card>}
         <Card title={t('持仓')} bodyClassName="p-0">
           <DataTable columns={positions} rows={data?.snapshot.positions ?? []} rowKey={(p) => p.code} empty={t('暂无持仓，记一笔或导入交割单')} />
+        </Card>
+        <Card title={t('出入金')} bodyClassName="p-0">
+          <DataTable columns={flowColumns} rows={flowsApi.data ?? []} rowKey={(f) => f.id} maxHeight="30vh" empty={t('暂无出入金记录；只记出入金和成交、不设置可用资金时，按全部流水算出可用资金和累计收益')} />
         </Card>
         <Card title={t('分红送转')} bodyClassName="p-0">
           <DataTable columns={actionColumns} rows={actionsApi.data ?? []} rowKey={(a) => a.id} maxHeight="40vh" empty={t('暂无分红送转记录')} />
@@ -241,6 +287,26 @@ export function RealPage() {
           </div>
         )}
         {importPreview && <ImportPreviewView preview={importPreview.preview} />}
+      </Modal>
+      <Modal open={flowOpen} title={t('记一笔出入金')} onClose={() => setFlowOpen(false)} footer={<Button variant="primary" onClick={submitFlow}>{t('保存')}</Button>}>
+        <div className="grid grid-cols-2 gap-3">
+          {multi && (
+            <Field label={t('账户')}>
+              <Select className="w-full" value={formAccount} onChange={(e) => setFormAccount(e.target.value)}>
+                {accountNames.map((n) => <option key={n} value={n}>{n}</option>)}
+              </Select>
+            </Field>
+          )}
+          <Field label={t('日期')}><Input type="date" value={flow.flow_date} onChange={(e) => setFlow({ ...flow, flow_date: e.target.value })} /></Field>
+          <Field label={t('方向')}>
+            <Select className="w-full" value={flow.direction} onChange={(e) => setFlow({ ...flow, direction: e.target.value as 'in' | 'out' })}>
+              <option value="in">{t('入金（银行转证券）')}</option>
+              <option value="out">{t('出金（证券转银行）')}</option>
+            </Select>
+          </Field>
+          <Field label={t('金额（元）')}><Input type="number" step="0.01" value={flow.amount} onChange={(e) => setFlow({ ...flow, amount: e.target.value })} /></Field>
+          <Field label={t('备注')}><Input value={flow.note} onChange={(e) => setFlow({ ...flow, note: e.target.value })} /></Field>
+        </div>
       </Modal>
       <Modal open={tradeOpen} title={t('记一笔实盘成交')} onClose={() => setTradeOpen(false)} footer={<Button variant="primary" onClick={submitTrade}>{t('保存')}</Button>}>
         <div className="grid grid-cols-2 gap-3">
@@ -279,7 +345,7 @@ export function RealPage() {
             </Select>
           </Field>
         )}
-        <Field label={t('券商账户当前的可用资金（元）')} hint={t('之后发生的成交会自动增减')}>
+        <Field label={t('券商账户当前的可用资金（元）')} hint={t('之后发生的成交和出入金会自动增减；设置之前日期的出入金视为已包含在内')}>
           <Input type="number" value={cash} onChange={(e) => setCash(e.target.value)} />
         </Field>
       </Modal>
@@ -316,6 +382,7 @@ export function RealPage() {
           void accountsApi.reload()
           void reload()
           void actionsApi.reload()
+          void flowsApi.reload()
         }}
       />
     </div>

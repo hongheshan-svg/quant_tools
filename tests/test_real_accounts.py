@@ -483,3 +483,66 @@ def test_api_import_with_account(env):
     assert up(account="招商").json()["added"] == 1
     assert len(client.get(f"{P}/real", params={"account": "招商"}).json()["trades"]) == 1
     assert len(client.get(f"{P}/real").json()["trades"]) == 2
+
+
+# ---------- 出入金流水 ----------
+
+def test_cash_flows_ledger_mode(config):
+    """没设置可用资金、只记出入金：从零按出入金、成交、分红重放；累计收益 = 总资产 − 净入金"""
+    svc = _svc(config)
+    assert svc.add_cash_flow("2026-09-01", "in", 100000)["ok"]
+    assert svc.add_trade("2026-09-02", CODE, "buy", 10.0, 1000, fee=5)["ok"]
+    assert svc.add_trade("2026-09-03", CODE, "sell", 11.0, 500, fee=5)["ok"]
+    assert svc.add_cash_flow("2026-09-04", "out", 10000, note="转出")["ok"]
+    assert svc.cash() == 100000 - 10005 + 5495 - 10000
+    acct = svc.snapshot()["account"]
+    assert acct["cash_known"] and acct["ledger_mode"] and acct["net_deposit"] == 90000
+    assert acct["total_assets"] == pytest.approx(85490 + 500 * 10.0)
+    assert acct["total_return"] == pytest.approx(acct["total_assets"] - 90000)
+    rows = svc.cash_flows()
+    assert [r["direction_label"] for r in rows] == ["出金", "入金"] and rows[0]["note"] == "转出"   # 按日期倒序
+
+
+def test_cash_flows_after_anchor(config):
+    """设置过可用资金后，只计入设置当天及之后日期的出入金（之前的已包含在设置的金额里）"""
+    svc = _svc(config)
+    svc.set_cash(50000, as_of=datetime(2026, 9, 10, 14, 0))
+    svc.add_cash_flow("2026-09-09", "in", 1000)        # 设置之前：不计
+    svc.add_cash_flow("2026-09-10", "in", 2000)        # 设置当天：计入
+    svc.add_cash_flow("2026-09-12", "out", 500)
+    assert svc.cash() == 50000 + 2000 - 500
+    acct = svc.snapshot()["account"]
+    assert acct["ledger_mode"] is False and acct["total_return"] is None and acct["net_deposit"] == 2500
+
+
+def test_cash_flow_validation_accounts_and_delete(config):
+    svc = _svc(config)
+    assert svc.add_cash_flow("2026/9/1", "in", 100)["ok"]                          # 日期写法宽松
+    assert svc.add_cash_flow("昨天", "in", 100) == {"ok": False, "error": "日期格式不对，应为 YYYY-MM-DD"}
+    assert not svc.add_cash_flow("2026-09-01", "transfer", 100)["ok"]
+    assert svc.add_cash_flow("2026-09-01", "in", 0)["error"] == "金额必须大于 0"
+    assert svc.add_account("华泰")["ok"]
+    fid = _svc(config, "华泰").add_cash_flow("2026-09-05", "in", 3000)["id"]
+    assert _svc(config, "华泰").cash() == 3000 and _svc(config).cash() == 3100       # 全部账户汇总
+    assert not _svc(config, DEFAULT_ACCOUNT).delete_cash_flow(fid)                   # 别的账户删不到
+    err = svc.delete_account("华泰")["error"]
+    assert "1 笔出入金" in err
+    assert svc.rename_account("华泰", "华泰证券")["ok"]
+    assert _svc(config, "华泰证券").cash_flows()[0]["account"] == "华泰证券"
+    assert _svc(config, "华泰证券").delete_cash_flow(fid) and svc.delete_account("华泰证券")["ok"]
+
+
+def test_api_cash_flows(env):
+    client, _ = env
+    assert client.post("/api/v1/real/accounts", json={"name": "华泰"}).status_code == 200
+    r = client.post("/api/v1/real/cash-flows", json={"flow_date": "2026-09-01", "direction": "in", "amount": 20000, "account": "华泰"})
+    assert r.status_code == 200 and r.json()["ok"]
+    assert client.post("/api/v1/real/cash-flows", json={"flow_date": "2026-09-01", "direction": "bank", "amount": 1}).status_code == 422
+    assert client.post("/api/v1/real/cash-flows", json={"flow_date": "坏日期", "direction": "in", "amount": 1}).status_code == 400
+    rows = client.get("/api/v1/real/cash-flows", params={"account": "华泰"}).json()
+    assert len(rows) == 1 and rows[0]["direction_label"] == "入金"
+    assert client.get("/api/v1/real/cash-flows").json()[0]["account"] == "华泰"                 # 全部账户
+    snap = client.get("/api/v1/real", params={"account": "华泰"}).json()["snapshot"]["account"]
+    assert snap["cash"] == 20000 and snap["ledger_mode"] and snap["net_deposit"] == 20000
+    assert client.delete(f"/api/v1/real/cash-flows/{rows[0]['id']}").json() == {"ok": True}
+    assert client.delete(f"/api/v1/real/cash-flows/{rows[0]['id']}").status_code == 404

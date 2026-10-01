@@ -38,6 +38,7 @@ function stubFetch() {
       return json(accounts)
     }
     if (url.includes('/real/actions')) return json([])
+    if (url.includes('/real/cash-flows')) return json([])
     if (/\/real(\?|$)/.test(url)) {
       const m = /account=([^&]*)/.exec(url)
       const account = m ? decodeURIComponent(m[1]) : ''

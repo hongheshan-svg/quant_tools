@@ -798,6 +798,16 @@ export interface RealAccount {
   cash: number | null
 }
 
+export interface RealCashFlow {
+  id: number
+  flow_date: string
+  direction: 'in' | 'out'
+  direction_label: string
+  amount: number
+  note: string
+  account?: string
+}
+
 export interface RealCorporateAction {
   id: number
   code: string
@@ -826,7 +836,12 @@ export interface RealImportPreview {
 
 export interface RealPortfolio {
   snapshot: {
-    account: { cash: number; market_value: number; total_assets: number; unrealized_pnl: number; realized_pnl: number; cash_known: boolean }
+    account: {
+      cash: number; market_value: number; total_assets: number; unrealized_pnl: number; realized_pnl: number; cash_known: boolean
+      net_deposit?: number
+      ledger_mode?: boolean        // 没设置可用资金、按出入金和成交重放
+      total_return?: number | null // 出入金模式下：总资产 − 净入金
+    }
     positions: Position[]
     warnings: string[]
   }

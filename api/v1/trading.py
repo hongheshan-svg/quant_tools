@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
@@ -197,6 +197,35 @@ def add_action(body: ActionBody, pipeline: PipelineService = Depends(get_pipelin
     if not result["ok"]:
         raise bad_request(result["error"])
     return result
+
+
+class CashFlowBody(BaseModel):
+    flow_date: str
+    direction: Literal["in", "out"]
+    amount: float = Field(gt=0)
+    note: str = ""
+    account: str = ""
+
+
+@router.get("/real/cash-flows")
+def list_cash_flows(account: str = "", pipeline: PipelineService = Depends(get_pipeline)) -> list[dict[str, Any]]:
+    return RealPortfolioService(pipeline.config, account=account or None).cash_flows()
+
+
+@router.post("/real/cash-flows")
+def add_cash_flow(body: CashFlowBody, pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
+    result = RealPortfolioService(pipeline.config, account=body.account or None).add_cash_flow(
+        body.flow_date, body.direction, body.amount, body.note)
+    if not result["ok"]:
+        raise bad_request(result["error"])
+    return result
+
+
+@router.delete("/real/cash-flows/{flow_id}")
+def delete_cash_flow(flow_id: int, pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
+    if not RealPortfolioService(pipeline.config).delete_cash_flow(flow_id):
+        raise HTTPException(status_code=404, detail="出入金记录不存在")
+    return {"ok": True}
 
 
 @router.delete("/real/actions/{action_id}")

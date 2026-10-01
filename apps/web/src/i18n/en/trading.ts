@@ -208,7 +208,6 @@ export default {
   '数量（股）': 'Quantity (shares)',
   '费用合计': 'Total fees',
   '券商账户当前的可用资金（元）': 'Current available cash in your broker account (CNY)',
-  '之后发生的成交会自动增减': 'Later trades will adjust it automatically',
   '止损止盈：{name}': 'Stop-loss / Take-profit: {name}',
   '止损价（0 表示按风控比例）': 'Stop-loss price (0 = use risk-control ratio)',
   '目标价（0 表示按风控比例）': 'Target price (0 = use risk-control ratio)',

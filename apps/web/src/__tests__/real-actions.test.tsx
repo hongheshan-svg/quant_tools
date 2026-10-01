@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -37,6 +37,10 @@ function stubFetch() {
       return url.includes('preview=true') ? json(PREVIEW) : json({ added: 1, duplicate: 0, skipped: 2, actions_added: 1, error: '' })
     }
     if (url.includes('/real/actions')) return method === 'GET' ? json(ACTIONS) : json({ ok: true, id: 3 })
+    if (url.includes('/real/cash-flows')) {
+      if (method === 'GET') return json(FLOWS)
+      return json({ ok: true, id: 9 })
+    }
     if (url.includes('/real')) return json(REAL)
     return json([])
   })
@@ -48,6 +52,8 @@ afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
+
+let FLOWS: unknown[] = []
 
 const renderReal = () => render(<MemoryRouter initialEntries={['/real']}><AppRoutes authEnabled={false} /></MemoryRouter>)
 
@@ -97,5 +103,31 @@ describe('实盘记账：分红送转与导入预览', () => {
     expect(await screen.findByText(/新增/)).toBeInTheDocument()
     await userEvent.click(await screen.findByRole('button', { name: /确认导入/ }))
     await waitFor(() => expect(importCalls().some((c) => !String(c[0]).includes('preview=true'))).toBe(true))
+  })
+})
+
+describe('RealPage cash flows', () => {
+  it('records a deposit and shows net deposit and cumulative return in ledger mode', async () => {
+    FLOWS = [{ id: 1, flow_date: '2026-09-01', direction: 'in', direction_label: '入金', amount: 100000, note: '首次入金', account: '默认' }]
+    const original = REAL.snapshot.account
+    REAL.snapshot.account = { ...original, net_deposit: 100000, ledger_mode: true, total_return: 2345.5 } as typeof original
+    try {
+      const fetchMock = stubFetch()
+      renderReal()
+      expect(await screen.findByText('首次入金')).toBeInTheDocument()
+      expect(screen.getByText('累计收益')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: '记一笔出入金' }))
+      fireEvent.change(await screen.findByLabelText('金额（元）'), { target: { value: '5000' } })
+      fireEvent.change(screen.getByLabelText('方向'), { target: { value: 'out' } })
+      fireEvent.click(screen.getAllByRole('button', { name: '保存' }).at(-1)!)
+      await waitFor(() => {
+        const post = fetchMock.mock.calls.find((c) => String(c[0]).includes('/real/cash-flows') && c[1]?.method === 'POST')
+        expect(post).toBeTruthy()
+        expect(JSON.parse(String(post![1]!.body))).toMatchObject({ direction: 'out', amount: 5000 })
+      })
+    } finally {
+      REAL.snapshot.account = original
+      FLOWS = []
+    }
   })
 })
