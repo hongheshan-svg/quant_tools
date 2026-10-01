@@ -79,7 +79,10 @@ export function ChatPage() {
     }).catch(() => navigate('/chat'))
   }, [sessionId, navigate])
 
-  useEffect(() => bottom.current?.scrollIntoView?.({ behavior: 'smooth' }), [session?.turns.length, pending, live?.answer])
+  // 新版 Chromium 的 scrollIntoView 返回 Promise，不能直接作为 effect 的返回值（React 会把它当清理函数调用而报错）
+  useEffect(() => {
+    bottom.current?.scrollIntoView?.({ behavior: 'smooth' })
+  }, [session?.turns.length, pending, live?.answer])
 
   const send = async (text = question) => {
     const q = text.trim()

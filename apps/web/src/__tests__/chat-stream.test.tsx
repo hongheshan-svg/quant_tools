@@ -117,3 +117,22 @@ describe('ChatPage streaming', () => {
     expect(fetchMock.mock.calls.some((c) => /\/chat\/sessions\/s1\/ask$/.test(String(c[0])))).toBe(true)
   })
 })
+
+describe('ChatPage in Chromium', () => {
+  it('does not crash when scrollIntoView returns a Promise', async () => {
+    // 新版 Chromium 的 scrollIntoView 返回 Promise；effect 直接返回它会被 React 当清理函数调用而整页报错
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { configurable: true, value: () => Promise.resolve() })
+    try {
+      const s = controlledStream()
+      stubFetch((url) => (url.includes('/chat/sessions/s1/ask/stream') ? s.response() : undefined))
+      await ask()
+      s.push(ev({ type: 'delta', text: '观望' }))
+      s.push(DONE('观望'))
+      s.close()
+      await waitFor(() => expect(screen.getByText(/观望/)).toBeInTheDocument())
+      expect(screen.queryByText('页面出错')).toBeNull()
+    } finally {
+      delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
+    }
+  })
+})
