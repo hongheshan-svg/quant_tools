@@ -259,7 +259,7 @@ class StockDataCollector(BaseCollector):
         else:
             emotion = "待开盘"
         overview["market_emotion"] = emotion
-        overview["trade_date"] = stat_date  # 涨跌家数、成交额等统计所属的交易日
+        overview["trade_date"] = stat_date if amount else ""  # 涨跌家数、成交额等统计所属的交易日（没有统计时为空）
         overview["update_time"] = datetime.now().strftime("%H:%M:%S")
 
         StockDataCollector._market_overview_cache = overview

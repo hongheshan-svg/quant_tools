@@ -83,6 +83,13 @@ def test_overview_uses_today_when_available(collector):
     assert overview["trade_date"] == today and overview["down_count"] == 110
 
 
+def test_overview_without_stats_has_no_trade_date(collector):
+    service, _ = collector
+    trading_calendar._set_days({date.today().isoformat()})
+    overview = service.collect_market_overview()
+    assert overview["trade_date"] == "" and overview["up_count"] == 0
+
+
 def _quotes(rows: list[tuple[str, str]]) -> pd.DataFrame:
     return pd.DataFrame([{"代码": code, "名称": f"股票{code}", "最新价": 10.0, "涨跌幅": 1.0, "今开": 9.9, "最高": 10.1,
                           "最低": 9.8, "成交量": 1000.0, "成交额": 1e7, "行情日期": day} for code, day in rows])

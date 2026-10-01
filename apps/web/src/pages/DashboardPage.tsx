@@ -58,6 +58,8 @@ const REGIME_TONE: Record<string, 'up' | 'warn' | 'down' | 'default'> = { 进攻
 
 function OverviewStats({ ov }: { ov: MarketOverview }) {
   const t = useT()
+  // 没有全市场行情时（成交额为 0）家数都是 0，显示为 -- 而不是 0 / 0
+  const breadth = (n?: number) => (ov.total_amount_yi ? n ?? '--' : '--')
   const indices: [string, unknown, unknown][] = [
     ['上证指数', ov.sh_index, ov.sh_change_pct],
     ['深证成指', ov.sz_index, ov.sz_change_pct],
@@ -68,8 +70,8 @@ function OverviewStats({ ov }: { ov: MarketOverview }) {
       {indices.map(([label, value, pct]) => (
         <Stat key={label} label={t(label)} value={String(value ?? '--')} sub={<Pct value={pct} />} />
       ))}
-      <Stat label={t('涨 / 跌')} value={<><span className="text-up">{ov.up_count ?? '--'}</span> / <span className="text-down">{ov.down_count ?? '--'}</span></>} />
-      <Stat label={t('涨停 / 跌停')} value={<><span className="text-up">{ov.limit_up_count ?? '--'}</span> / <span className="text-down">{ov.limit_down_count ?? '--'}</span></>} />
+      <Stat label={t('涨 / 跌')} value={<><span className="text-up">{breadth(ov.up_count)}</span> / <span className="text-down">{breadth(ov.down_count)}</span></>} />
+      <Stat label={t('涨停 / 跌停')} value={<><span className="text-up">{breadth(ov.limit_up_count)}</span> / <span className="text-down">{breadth(ov.limit_down_count)}</span></>} />
       <Stat label={t('两市成交额')} value={ov.total_amount_yi ? t('{v}万亿', { v: (ov.total_amount_yi / 10000).toFixed(2) }) : '--'} />
       <Stat label={t('北向资金')} value={ov.northbound_net_yi != null ? t('{v}亿', { v: ov.northbound_net_yi.toFixed(1) }) : '--'} />
       <Stat label={t('市场情绪')} value={ov.market_emotion || '--'} />
