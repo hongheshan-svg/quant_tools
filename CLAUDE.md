@@ -83,7 +83,7 @@ cd apps/desktop && npm test                                 # node --test，不�
 
 ## 打包
 
-- **桌面端安装包：** `python scripts/build_desktop.py`（`--backend-only`、`--skip-web`、`--dir`）。依次构建前端 → 用 PyInstaller 把 `server.py` 打成 onedir 的 `dist/backend/quant_server`（内置 `settings.yaml.example`、`stock_pool.yaml`、策略技能（`src/services/skills`）和前端，排除 PyQt6）→ electron-builder 打包（Windows NSIS、macOS dmg、Linux AppImage，产物在 `apps/desktop/dist/`）。只能打包当前系统的安装包；推送 `v*` 标签时 `desktop-release.yml` 在 Windows、macOS、Linux（ubuntu-22.04，兼容 glibc 2.35+）上打包，先用 `scripts/smoke_backend.py` 启动打包的后台服务请求几个接口做冒烟测试，再上传到 Release。
+- **桌面端安装包：** `python scripts/build_desktop.py`（`--backend-only`、`--skip-web`、`--dir`）。依次构建前端 → 用 PyInstaller 把 `server.py` 打成 onedir 的 `dist/backend/quant_server`（内置 `settings.yaml.example`、`stock_pool.yaml`、策略技能（`src/services/skills`）和前端，排除 PyQt6）→ electron-builder 打包（Windows NSIS、macOS dmg、Linux AppImage，产物在 `apps/desktop/dist/`）。只能打包当前系统的安装包；推送 `v*` 标签时 `release.yml` 在 Windows、macOS、Linux（ubuntu-22.04，兼容 glibc 2.35+）上打包，先用 `scripts/smoke_backend.py` 启动打包的后台服务请求几个接口做冒烟测试，再上传到 Release。
   - macOS 没有 Developer ID：`mac.identity: "-"` 对整个 .app 做 ad-hoc 签名（需要 `hardenedRuntime: false`），否则签名不完整，下载后提示「已损坏」；有效的 ad-hoc 签名只需在「隐私与安全性」里允许一次。
   - Linux AppImage 挂载为 nosuid，Ubuntu 23.10+ 又限制非特权 user namespace，Chromium 沙箱不可用，`needsNoSandbox()` 为真时（AppImage）主进程追加 `--no-sandbox`。
   - 打包时用 `build_desktop.py` 的 `--add-data` 把 `src/services/skills` 和内置报告模板 `src/services/templates` 内置，用户自定义策略放在 `config/strategies/`、自定义报告模板放在 `config/templates/`（数据目录）。
@@ -412,11 +412,11 @@ cd apps/desktop && npm test                                 # node --test，不�
 - Docker：多阶段构建（先构建前端），以 UID 1000 的 `quant` 用户运行，默认 `python server.py --host 0.0.0.0`。默认配置放在镜像的 `/app/defaults/config`，`entrypoint.sh` 启动时复制进挂载的 `/app/config`（示例配置覆盖、股票池缺失才复制），并修复挂载目录属主。compose 用环境变量开启 Web 登录，因为容器外的请求不算本机。因为 `COPY src/` 会自然包含 `src/services/skills`，所以 Docker 镜像内置有策略技能。
 - **桌面端自动更新：** 使用 electron-updater，检查 GitHub Release（hongheshan-svg/quant_tools）；启动时检查（可在设置禁用，偏好文件 `desktop-prefs.json`），菜单「帮助 → 检查更新」手动触发；Windows 和 Linux（AppImage）下载后重启安装，macOS 未签名只提示前往下载。发布工作流需上传 `latest*.yml` 和 `*.blockmap`（旧版本发布没有这些文件时检查不到更新）。
 - 工作流：
-  - `ci.yml`（后端测试、前端 lint/测试/构建、桌面端测试）。
+  - `ci.yml`（后端测试、前端 lint/测试/构建、桌面端测试）：推送 main、PR 时运行，只改文档（`*.md` 等）不运行，同一分支有新提交时取消旧任务；后端测试不安装 PyQt6 和 PyInstaller。也作为 `release.yml` 的前置（`workflow_call`）。
   - `daily-analysis.yml`（工作日 16:40 `main.py --once`）：需要仓库变量 `ENABLE_DAILY_ANALYSIS=true`。配置来自 Secret `SETTINGS_YAML` 或按段映射为 `QUANT__` 环境变量的单独 Secret（LLM、各推送渠道、搜索源都支持）。支持 workflow_dispatch 新增 `stocks` 输入诊断指定股票、`no_notify` 不推送。数据库用 actions/cache 保留到下一次运行。
   - `network-smoke.yml`（`check_sources.py`，`ENABLE_NETWORK_SMOKE=true`）。
-  - `docker-publish.yml`（`v*` 标签发布 GHCR 镜像）。
-  - `desktop-release.yml`（`v*` 标签打包桌面端并上传 Release，需要 electron-builder 生成 latest*.yml 和 *.blockmap）。
+  - `release.yml`（`v*` 标签发布）：先调用 CI，通过后并行打包桌面端（Windows、macOS、Linux，各自冒烟测试后台服务）和 Docker 镜像（amd64、arm64 分别在原生 runner 上构建，按 digest 推送后合并成多架构镜像，标签为版本号、主.次版本、latest、sha），最后创建 Release：说明由 `scripts/release_notes.py` 生成（版本亮点写在 `.github/release-notes/<tag>.md`，发版前补上），后面追加 GitHub 自动生成的变更列表；需要 electron-builder 生成的 latest*.yml 和 *.blockmap。手动运行是演练：桌面端只上传为构建产物，Docker 只构建不推送，不创建 Release。
+  - GitHub 上显示的工作流、任务、步骤名称、手动运行的输入说明和 CI 脚本输出用英文，YAML 注释仍用中文。
 - Actions 里给布尔配置映射 Secret 时要写成 `${{ secrets.X != '' && 'true' || '' }}`：直接写比较表达式在 Secret 为空时得到字符串 `false`，会覆盖 `SETTINGS_YAML` 里的设置；空字符串才会被忽略。
 
 ## 约定

@@ -39,7 +39,7 @@
 - **桌面端自动更新：** Electron 桌面端启动时检查 GitHub Release 上的新版本（可在设置禁用），发现新版本时下载并在 Windows 上重启安装、macOS 上提示下载；菜单可手动检查更新。
 - **AI 用量统计：** 大模型通过 LiteLLM 接入，每个模型可填多个 API Key（被拒绝或限流时自动换下一个，该 Key 冷却 10 分钟），支持 Claude、Gemini、Ollama 本地模型和所有兼容 OpenAI 接口的平台；每次调用的 token 和估算费用按天、功能、模型汇总；设置页「获取模型列表」按需联网获取指定 API 的可用模型；模型不支持某参数时自动调整后重试（无需手动设置），「测试连接」返回中文诊断说明。
 - **定时任务与配置备份：** Web【设置】可查看各定时任务的触发规则和下次运行时间并立即运行；配置可导出备份（默认隐藏密钥）和导入恢复。
-- **多种运行方式：** Web 界面（React + FastAPI，可在手机上用）、Electron 桌面端（Windows 安装包、macOS dmg，支持自动更新）、Docker、GitHub Actions 定时运行、无界面定时任务；原 PyQt6 桌面端仍可使用。
+- **多种运行方式：** Web 界面（React + FastAPI，可在手机上用）、Electron 桌面端（Windows 安装包、macOS dmg、Linux AppImage，支持自动更新）、Docker、GitHub Actions 定时运行、无界面定时任务；原 PyQt6 桌面端仍可使用。
 - **国际化：** 界面支持中文/英文切换（顶栏和登录页的语言按钮，浏览器会记住选择），设置和帮助按界面语言切换；AI 输出语言独立配置（【设置 → AI 模型 → AI 输出语言】），诊断、复盘、问股等 AI 回答可选中文或英文输出。
 
 ## 数据源
@@ -176,7 +176,16 @@ docker compose -f docker/docker-compose.yml up -d
 docker compose -f docker/docker-compose.yml run --rm quant python main.py --once
 ```
 
-推送 `v*` 标签时，GitHub Actions 会把镜像发布到 `ghcr.io/<owner>/<repo>`。
+也可以直接用发布好的镜像（`linux/amd64`、`linux/arm64`，标签为版本号、主.次版本和 `latest`），不需要克隆仓库：
+
+```bash
+docker run -d --name quant-tools -p 8000:8000 \
+  -e QUANT__WEB__AUTH_ENABLED=true \
+  -v "$PWD/config:/app/config" -v "$PWD/data:/app/data" -v "$PWD/logs:/app/logs" \
+  ghcr.io/hongheshan-svg/quant_tools:latest
+```
+
+推送 `v*` 标签时，发布工作流（`.github/workflows/release.yml`）先跑 CI，再并行打包三个平台的桌面端和 Docker 镜像，最后创建 GitHub Release，发布说明由 `scripts/release_notes.py` 生成（版本亮点写在 `.github/release-notes/<tag>.md`）。
 
 ## 环境变量配置
 
