@@ -17,6 +17,7 @@ from src.database.models import (
     SentimentAnalysis,
     StockDaily,
     StockDiagnosis,
+    StockInfo,
     StockScore,
     TradeSignal,
 )
@@ -1125,6 +1126,12 @@ class DataQueryService:
                 rows = [by_date[k] for k in sorted(by_date.keys())]
                 for row in rows:
                     row.pop("_priority", None)
+                # 历史回补、按需补齐的日线没有名称（个股页标题会只显示代码），用股票列表或最近一条带名称的行补上
+                if any(not row["name"] for row in rows):
+                    info = session.query(StockInfo.name).filter(StockInfo.code == bare_code).first()
+                    fallback = (info[0] if info and info[0] else "") or next((r["name"] for r in reversed(rows) if r["name"]), "")
+                    for row in rows:
+                        row["name"] = row["name"] or fallback
 
                 if limit and limit > 0 and len(rows) > limit:
                     rows = rows[-limit:]

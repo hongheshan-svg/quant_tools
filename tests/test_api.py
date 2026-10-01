@@ -161,6 +161,15 @@ def test_dashboard_with_scores_and_daily(env):
     focus = resp.json()["trade_focus"]
     assert focus[0]["code"] == "600519" and focus[0]["change_pct"] == 1.0
 
+
+def test_daily_fills_missing_names(env):
+    """历史回补的日线没有名称，接口用股票列表补上，个股页标题才有名称"""
+    client, _, config = env
+    with get_db_session(config["database"]["sqlite_path"]) as s:
+        s.add(StockDaily(code="600519", name="", trade_date="2026-09-24", close=9.8, change_pct=-0.5))
+    bars = client.get("/api/v1/stocks/600519/daily").json()
+    assert [b["name"] for b in bars] == ["贵州茅台", "贵州茅台"]
+
 def test_watchlist_and_real_endpoints(env):
     client, _, _ = env
     assert client.post("/api/v1/watchlist", json={"text": "gzmt"}).json()["ok"] is True
