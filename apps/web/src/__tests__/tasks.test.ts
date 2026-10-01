@@ -1,7 +1,9 @@
+import { act, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/endpoints'
 import { request } from '@/api/client'
-import { progressText, waitForTask } from '@/hooks/useTask'
+import { progressText, taskResultError, useTask, waitForTask } from '@/hooks/useTask'
+import { toast } from '@/stores/toast'
 import type { Task } from '@/api/types'
 
 const task = (status: Task['status'], extra: Partial<Task> = {}): Task => ({
@@ -44,5 +46,26 @@ describe('request', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ detail: [{ msg: '价格必须大于 0' }] }), { status: 422, headers: { 'content-type': 'application/json' } })))
     await expect(request('/real/trades', { method: 'POST' })).rejects.toThrow('价格必须大于 0')
     vi.unstubAllGlobals()
+  })
+})
+
+describe('useTask result errors', () => {
+  it('detects non-empty error fields only', () => {
+    expect(taskResultError({ error: '所有LLM模型均调用失败' })).toBe('所有LLM模型均调用失败')
+    expect(taskResultError({ added: 1, error: '' })).toBe('')
+    expect(taskResultError(null)).toBe('')
+    expect(taskResultError([1, 2])).toBe('')
+  })
+
+  it('shows an error toast instead of the success message and still returns the result', async () => {
+    const ok = vi.spyOn(toast, 'success')
+    const bad = vi.spyOn(toast, 'error')
+    vi.spyOn(api, 'task').mockResolvedValueOnce(task('done', { result: { error: '自选股为空，先在【自选股】页添加' } }))
+    const { result } = renderHook(() => useTask<{ error: string }>())
+    let value: unknown
+    await act(async () => { value = await result.current.run(async () => task('running'), { success: '已完成' }) })
+    expect(value).toEqual({ error: '自选股为空，先在【自选股】页添加' })
+    expect(bad).toHaveBeenCalledWith('自选股为空，先在【自选股】页添加')
+    expect(ok).not.toHaveBeenCalled()
   })
 })

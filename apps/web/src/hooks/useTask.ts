@@ -19,7 +19,15 @@ export async function waitForTask<R>(task: Task<R>, onUpdate?: (t: Task<R>) => v
   return current.result as R
 }
 
-/** 提交后台任务并等待结果；running 为 true 时按钮应禁用，progress 为最新进度 */
+/** 任务正常结束、但结果里带非空 error 时（模型未配置、自选股为空等）返回该错误，否则返回空字符串 */
+export function taskResultError(result: unknown): string {
+  if (!result || typeof result !== 'object') return ''
+  const error = (result as { error?: unknown }).error
+  return typeof error === 'string' ? error.trim() : ''
+}
+
+/** 提交后台任务并等待结果；running 为 true 时按钮应禁用，progress 为最新进度。
+ * 结果带 error 时提示错误而不是成功，结果照常返回（页面可以自己展示错误） */
 export function useTask<R = unknown>() {
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState<Task['progress']>(null)
@@ -36,7 +44,12 @@ export function useTask<R = unknown>() {
           setProgress(t.progress)
           upsert(t as Task)
         })
-        if (options.success) toast.success(typeof options.success === 'function' ? options.success(result) : options.success)
+        const failure = taskResultError(result)
+        if (failure) {
+          if (!options.silent) toast.error(failure)
+        } else if (options.success) {
+          toast.success(typeof options.success === 'function' ? options.success(result) : options.success)
+        }
         return result
       } catch (e) {
         if (!options.silent) toast.error(e instanceof Error ? e.message : String(e))
