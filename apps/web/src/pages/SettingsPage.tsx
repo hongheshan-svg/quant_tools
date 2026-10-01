@@ -591,7 +591,7 @@ export function NotifierForm() {
   )
 }
 
-const SEARCH_KEY_PROVIDERS = ['bocha', 'tavily', 'serpapi', 'brave'] as const
+const SEARCH_KEY_PROVIDERS = ['bocha', 'tavily', 'serpapi', 'brave', 'anspire', 'minimax'] as const
 
 const splitLines = (text: string) => text.split(/[\n,]/).map((s) => s.trim()).filter(Boolean)
 

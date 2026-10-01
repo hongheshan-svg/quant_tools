@@ -18,7 +18,7 @@ name: Daily analysis
 #     Bark：Secret BARK_DEVICE_KEY，Variable BARK_SERVER（自建服务器，可空）
 #     自定义 Webhook：Secret CUSTOM_WEBHOOK_URL
 #   联网搜索（任一配置即启用，多个 Key 用逗号分隔）：
-#     Secret BOCHA_API_KEYS、TAVILY_API_KEYS、SERPAPI_API_KEYS、BRAVE_API_KEYS；Variable SEARXNG_BASE_URLS
+#     Secret BOCHA_API_KEYS、TAVILY_API_KEYS、SERPAPI_API_KEYS、BRAVE_API_KEYS、ANSPIRE_API_KEYS、MINIMAX_API_KEYS；Variable SEARXNG_BASE_URLS
 # 手动运行（workflow_dispatch）可以填 stocks 只诊断指定股票并推送，或勾选 no_notify 不推送。
 # 数据库通过 actions/cache 保留到下一次运行。GitHub 的服务器在境外，部分国内数据源可能访问失败或变慢。
 
@@ -104,11 +104,13 @@ jobs:
       QUANT__NOTIFIER__WEBHOOK__ENABLED: ${{ secrets.CUSTOM_WEBHOOK_URL != '' && 'true' || '' }}
       QUANT__NOTIFIER__WEBHOOK__URL: ${{ secrets.CUSTOM_WEBHOOK_URL }}
       # 联网搜索（任一搜索服务配置了就启用）
-      QUANT__SEARCH__ENABLED: ${{ (secrets.BOCHA_API_KEYS != '' || secrets.TAVILY_API_KEYS != '' || secrets.SERPAPI_API_KEYS != '' || secrets.BRAVE_API_KEYS != '' || vars.SEARXNG_BASE_URLS != '') && 'true' || '' }}
+      QUANT__SEARCH__ENABLED: ${{ (secrets.BOCHA_API_KEYS != '' || secrets.TAVILY_API_KEYS != '' || secrets.SERPAPI_API_KEYS != '' || secrets.BRAVE_API_KEYS != '' || secrets.ANSPIRE_API_KEYS != '' || secrets.MINIMAX_API_KEYS != '' || vars.SEARXNG_BASE_URLS != '') && 'true' || '' }}
       QUANT__SEARCH__BOCHA__API_KEYS: ${{ secrets.BOCHA_API_KEYS }}
       QUANT__SEARCH__TAVILY__API_KEYS: ${{ secrets.TAVILY_API_KEYS }}
       QUANT__SEARCH__SERPAPI__API_KEYS: ${{ secrets.SERPAPI_API_KEYS }}
       QUANT__SEARCH__BRAVE__API_KEYS: ${{ secrets.BRAVE_API_KEYS }}
+      QUANT__SEARCH__ANSPIRE__API_KEYS: ${{ secrets.ANSPIRE_API_KEYS }}
+      QUANT__SEARCH__MINIMAX__API_KEYS: ${{ secrets.MINIMAX_API_KEYS }}
       QUANT__SEARCH__SEARXNG__BASE_URLS: ${{ vars.SEARXNG_BASE_URLS }}
     steps:
       - uses: actions/checkout@v7

@@ -341,7 +341,7 @@ data_sources:
 # 也可用环境变量 QUANT__SEARCH__BOCHA__API_KEYS=key1,key2 覆盖（逗号分隔）
 search:
   enabled: false
-  providers: [bocha, tavily, serpapi, brave, searxng]
+  providers: [bocha, tavily, serpapi, brave, anspire, minimax, searxng]
   max_results: 8          # 每次搜索最多返回条数
   days: 7                 # 只保留最近多少天的结果（日期未知的保留）
   cache_minutes: 30       # 相同搜索词的缓存时间
@@ -352,6 +352,10 @@ search:
   serpapi:                # https://serpapi.com ，Google 新闻搜索
     api_keys: []
   brave:                  # https://brave.com/search/api ，Brave 新闻搜索
+    api_keys: []
+  anspire:                # https://open.anspire.cn ，覆盖全球区域；同一个 Key 也可以用作大模型平台
+    api_keys: []
+  minimax:                # https://platform.minimaxi.com ，MiniMax 联网搜索
     api_keys: []
   searxng:                # 自建 SearXNG（需在 settings.yml 的 search.formats 里开启 json），填实例地址，如 http://127.0.0.1:8080
     base_urls: []

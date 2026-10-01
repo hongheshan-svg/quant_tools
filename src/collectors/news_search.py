@@ -23,8 +23,9 @@ from loguru import logger
 from src.collectors.source_chain import NO_DATA, fetch_with_fallback
 
 DATASET = "news_search"
-PROVIDERS: dict[str, str] = {"bocha": "博查", "tavily": "Tavily", "serpapi": "SerpAPI", "brave": "Brave", "searxng": "SearXNG"}
-KEY_PROVIDERS = ("bocha", "tavily", "serpapi", "brave")
+PROVIDERS: dict[str, str] = {"bocha": "博查", "tavily": "Tavily", "serpapi": "SerpAPI", "brave": "Brave",
+                             "anspire": "Anspire", "minimax": "MiniMax", "searxng": "SearXNG"}
+KEY_PROVIDERS = ("bocha", "tavily", "serpapi", "brave", "anspire", "minimax")
 DEFAULT_TIMEOUT = 10.0
 KEY_COOLDOWN_SECONDS = 600
 REJECT_STATUS = (401, 403, 429)
@@ -228,6 +229,57 @@ def _brave(key: str, query: str, limit: int, days: int, config: dict) -> list[Se
     return out
 
 
+def _host(url: str) -> str:
+    return re.sub(r"^https?://(www\.)?", "", url or "").split("/")[0]
+
+
+def _anspire(key: str, query: str, limit: int, days: int, config: dict) -> list[SearchResult]:
+    """Anspire 搜索（plugin.anspire.cn）；region_mode=2 覆盖全球区域（与 daily_stock_analysis 一致）"""
+    now = datetime.now()
+    resp = httpx.get(
+        "https://plugin.anspire.cn/api/ntsearch/search",
+        headers={"Authorization": f"Bearer {key}"},
+        params={"query": query, "top_k": min(limit, 50), "region_mode": 2,
+                "FromTime": (now - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S"), "ToTime": now.strftime("%Y-%m-%d %H:%M:%S")},
+        timeout=DEFAULT_TIMEOUT,
+    )
+    _check(resp)
+    body = resp.json() or {}
+    if "results" not in body:
+        raise RuntimeError(f"Anspire 返回错误：{body.get('message') or body.get('msg') or '缺少 results'}")
+    return [
+        SearchResult(_clip(r.get("title")), r.get("url") or "", _clip(r.get("content")), _host(r.get("url") or ""),
+                     parse_date(r.get("date")), "anspire")
+        for r in body.get("results") or []
+    ]
+
+
+def _minimax_time_hint(query: str, days: int) -> str:
+    """MiniMax 搜索没有时间参数，在查询词后加时间提示（结果再按日期过滤）"""
+    if any("\u4e00" <= ch <= "\u9fff" for ch in query):
+        return "今天" if days <= 1 else "最近三天" if days <= 3 else "最近一周" if days <= 7 else "最近一个月"
+    return "today" if days <= 1 else "past 3 days" if days <= 3 else "past week" if days <= 7 else "past month"
+
+
+def _minimax(key: str, query: str, limit: int, days: int, config: dict) -> list[SearchResult]:
+    resp = httpx.post(
+        "https://api.minimaxi.com/v1/coding_plan/search",
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "MM-API-Source": "Minimax-MCP"},
+        json={"q": f"{query} {_minimax_time_hint(query, days)}"},
+        timeout=DEFAULT_TIMEOUT,
+    )
+    _check(resp)
+    body = resp.json() or {}
+    base = body.get("base_resp") or {}
+    if base.get("status_code", 0) != 0:
+        raise RuntimeError(f"MiniMax 返回错误：{base.get('status_msg') or base.get('status_code')}")
+    return [
+        SearchResult(_clip(r.get("title")), r.get("link") or "", _clip(r.get("snippet")), _host(r.get("link") or ""),
+                     parse_date(r.get("date")), "minimax")
+        for r in (body.get("organic") or [])[: max(limit, 1)]
+    ]
+
+
 def _searxng(base_url: str, query: str, limit: int, days: int, config: dict) -> list[SearchResult]:
     conf = _section(config).get("searxng") or {}
     try:
@@ -250,7 +302,8 @@ def _searxng(base_url: str, query: str, limit: int, days: int, config: dict) -> 
 
 
 _FETCHERS: dict[str, Callable[[str, str, int, int, dict], list[SearchResult]]] = {
-    "bocha": _bocha, "tavily": _tavily, "serpapi": _serpapi, "brave": _brave, "searxng": _searxng,
+    "bocha": _bocha, "tavily": _tavily, "serpapi": _serpapi, "brave": _brave,
+    "anspire": _anspire, "minimax": _minimax, "searxng": _searxng,
 }
 
 

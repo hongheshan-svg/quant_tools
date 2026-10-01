@@ -105,7 +105,9 @@ def bocha_ok(items=None):
 # ---------- 配置 ----------
 
 def test_providers_registry():
-    assert news_search.PROVIDERS == {"bocha": "博查", "tavily": "Tavily", "serpapi": "SerpAPI", "brave": "Brave", "searxng": "SearXNG"}
+    assert news_search.PROVIDERS == {"bocha": "博查", "tavily": "Tavily", "serpapi": "SerpAPI", "brave": "Brave",
+                                     "anspire": "Anspire", "minimax": "MiniMax", "searxng": "SearXNG"}
+    assert set(news_search.KEY_PROVIDERS) == set(news_search.PROVIDERS) - {"searxng"}
 
 
 def test_configured_providers_order_and_filtering():
@@ -561,3 +563,46 @@ def test_diagnosis_marks_failed_web_search(tmp_path, monkeypatch, offline_diag):
     assert step["ok"] is False and "HTTP 500" in step["detail"]
     from tests.test_stock_diagnosis import _reset_db_engine
     _reset_db_engine()
+
+
+
+def test_anspire_parse_and_request(net):
+    net.on("anspire.cn", Resp({"results": [
+        {"title": "比亚迪发布新车", "url": "https://www.cls.cn/detail/1", "content": "正文" * 400, "date": _day(1) + " 08:00:00"},
+        {"title": "", "url": "https://x/2"},
+    ]}))
+    results = news_search.search("比亚迪", cfg(("anspire",), keys={"anspire": "ak-1"}))
+    assert [r.title for r in results] == ["比亚迪发布新车"]
+    r = results[0]
+    assert r.source == "cls.cn" and r.provider == "anspire" and r.published == _day(1) and len(r.snippet) <= 300
+    call = net.calls[0]
+    assert call["method"] == "GET" and call["url"] == "https://plugin.anspire.cn/api/ntsearch/search"
+    params = call["kw"]["params"]
+    assert params["query"] == "比亚迪" and params["region_mode"] == 2 and params["top_k"] <= 50
+    assert call["kw"]["headers"]["Authorization"] == "Bearer ak-1"
+
+
+def test_anspire_error_and_key_rejected(net):
+    net.on("anspire.cn", Resp({"message": "quota exceeded"}))
+    assert news_search.search("q", cfg(("anspire",), keys={"anspire": "ak"}, cache_minutes=0)) == []
+    assert "quota exceeded" in news_search.last_search_status()[1]
+    net.on("anspire.cn", Resp({}, status=401))
+    news_search.search("q2", cfg(("anspire",), keys={"anspire": "bad"}, cache_minutes=0))
+    assert news_search.last_search_status()[0] == news_search.STATUS_FAILED
+
+
+def test_minimax_parse_and_request(net):
+    net.on("minimaxi.com", Resp({"base_resp": {"status_code": 0}, "organic": [
+        {"title": "宁德时代公告", "link": "https://www.stcn.com/a", "snippet": "摘要", "date": _day(2)},
+        {"title": "旧闻", "link": "https://old.com/b", "snippet": "", "date": _day(60)},
+    ]}))
+    results = news_search.search("宁德时代", cfg(("minimax",), keys={"minimax": "mk"}))
+    assert [r.title for r in results] == ["宁德时代公告"]                 # 超出天数的被过滤
+    assert results[0].source == "stcn.com" and results[0].provider == "minimax"
+    call = net.calls[0]
+    assert call["method"] == "POST" and call["url"] == "https://api.minimaxi.com/v1/coding_plan/search"
+    assert call["kw"]["json"] == {"q": "宁德时代 最近一周"} and call["kw"]["headers"]["MM-API-Source"] == "Minimax-MCP"
+    net.on("minimaxi.com", Resp({"base_resp": {"status_code": 1004, "status_msg": "invalid key"}}))
+    news_search.search("q", cfg(("minimax",), keys={"minimax": "mk"}, cache_minutes=0))
+    assert "invalid key" in news_search.last_search_status()[1]
+    assert news_search._minimax_time_hint("byd", 1) == "today"

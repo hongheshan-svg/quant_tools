@@ -284,7 +284,7 @@ def llm_models(body: LLMModelsBody, config: dict = Depends(get_config)) -> dict[
 
 # ---------- 联网搜索设置 ----------
 
-SEARCH_KEY_PROVIDERS = ("bocha", "tavily", "serpapi", "brave")
+SEARCH_KEY_PROVIDERS = ("bocha", "tavily", "serpapi", "brave", "anspire", "minimax")
 
 
 def _key_list(value: Any) -> list[str]:

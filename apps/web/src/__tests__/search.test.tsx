@@ -14,7 +14,7 @@ const SEARCH = {
     days: 7,
     cache_minutes: 30,
   },
-  providers: { bocha: '博查', tavily: 'Tavily', serpapi: 'SerpAPI', brave: 'Brave', searxng: 'SearXNG' },
+  providers: { bocha: '博查', tavily: 'Tavily', serpapi: 'SerpAPI', brave: 'Brave', anspire: 'Anspire', minimax: 'MiniMax', searxng: 'SearXNG' },
 }
 
 const TEST_RESULT = {
