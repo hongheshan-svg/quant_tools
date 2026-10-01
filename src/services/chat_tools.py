@@ -270,8 +270,26 @@ class ChatTools:
         results = news_search.search(query, self.config, max_results=8)
         if not results:
             return f"联网搜索「{query}」没有找到结果"
+        code = name = ""
+        if args.get("code"):  # 只给 query 时不做相关度标注
+            try:
+                code, name, kind = self._resolve_kind({"code": args["code"]})
+                if kind != "stock":
+                    code = name = ""
+            except Exception:
+                code = name = ""
+        tags: dict[int, str] = {}
+        if code:
+            from src.collectors.news_relevance import rank_news
+
+            items = [{"title": r.title, "snippet": r.snippet, "url": r.url, "source": r.source, "_r": r} for r in results]
+            ranked = rank_news(items, code, name)
+            results = [it["_r"] for it in ranked]
+            tags = {id(it["_r"]): f"[{it['relevance']['label']}] " for it in ranked}
+            if not results:
+                return f"联网搜索「{query}」没有找到与 {name}({code}) 相关的结果"
         return "\n".join(
-            f"{r.published or '-'} [{r.source or news_search.PROVIDERS.get(r.provider, r.provider)}] {r.title} — {r.snippet[:80]}"
+            f"{tags.get(id(r), '')}{r.published or '-'} [{r.source or news_search.PROVIDERS.get(r.provider, r.provider)}] {r.title} — {r.snippet[:80]}"
             for r in results[:8]
         )
 

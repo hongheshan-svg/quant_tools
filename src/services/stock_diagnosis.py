@@ -51,6 +51,10 @@ from src.utils.stock_code import bare_code, board_of, code_candidates, name_vari
 
 CACHE_MINUTES = 30
 NEWS_DAYS = 3
+SECTOR_TERM_LIMIT = 3          # 行业背景资讯的题材词个数
+BACKGROUND_NEWS_LIMIT = 3      # 行业背景资讯条数上限
+CATEGORY_LABELS_SHORT = {"direct": "直接", "sector": "行业", "macro": "宏观"}
+NEWS_CATEGORY_ORDER = {"direct": 0, "sector": 1, "macro": 2}
 STOCK_NEWS_LIMIT = 6   # 东方财富个股新闻最多取几条
 NOTICE_LIMIT = 8       # 公告最多取几条
 LIMIT_UP_DAYS = 10
@@ -322,14 +326,17 @@ class StockDiagnosisService:
 
     # ---------- 上下文 ----------
 
-    def _web_search_lines(self, code: str, name: str, existing: list[str]) -> list[str]:
-        """联网搜索的个股新闻（未启用搜索时不调用）；与已有资讯按标题去重，最多 5 条。"""
+    def _web_search_lines(self, code: str, name: str, existing: list[str], sector_terms: list[str] | None = None,
+                          tagged: bool = False) -> list[str]:
+        """联网搜索的个股新闻（未启用搜索时不调用）；与已有资讯按标题去重，最多 5 条。
+        tagged 为真时每行加 [直接]/[行业]/[宏观] 前缀，并在末尾附最主要的一条依据。"""
         from src.collectors import news_search
+        from src.collectors.news_relevance import score_news
 
         if not news_search.is_enabled(self.config):
             return []
         try:
-            results = news_search.search_stock_news(code, name, self.config, limit=5)
+            results = news_search.search_stock_news(code, name, self.config, limit=5, sector_terms=sector_terms or ())
         except Exception as e:
             logger.debug(f"联网搜索个股新闻失败: {e}")
             return []
@@ -338,7 +345,11 @@ class StockDiagnosisService:
             if any(r.title in line for line in existing):
                 continue
             label = r.source or news_search.PROVIDERS.get(r.provider, r.provider)
-            lines.append(f"{r.published or '近期'} [联网·{label}] {r.title}")
+            line = f"{r.published or '近期'} [联网·{label}] {r.title}"
+            if tagged:
+                rel = r.relevance or score_news(r.title, r.snippet, r.url, r.source, code, name, sector_terms or ())
+                line = f"[{CATEGORY_LABELS_SHORT[rel['category']]}] {line}" + (f"（{rel['reasons'][0]}）" if rel["reasons"] else "")
+            lines.append(line)
         return lines[:5]
 
     def build_context(self, code: str, run_log: RunLog | None = None) -> dict[str, Any]:
@@ -398,14 +409,15 @@ class StockDiagnosisService:
             name = name or normalize_name(next((r.name for r in limit_ups if r.name), ""))
 
             since = datetime.now() - timedelta(days=NEWS_DAYS)
-            news_lines = []
+            local_news: list[tuple[str, str]] = []
             if name:
                 news = (
                     session.query(FinanceNews.title, FinanceNews.source, FinanceNews.collected_at)
                     .filter(FinanceNews.collected_at >= since, or_(*[FinanceNews.title.contains(v) for v in (name_variants(name) or [name])]))
                     .order_by(FinanceNews.collected_at.desc()).limit(8).all()
                 )
-                news_lines = [f"[{src}] {title}" for title, src, _ in news]
+                local_news = [(title, src) for title, src, _ in news]
+            limit_up_reasons = [r.reason or r.sector or "" for r in limit_ups]
             sentiments = (
                 session.query(SentimentAnalysis.sentiment, SentimentAnalysis.impact_score, SentimentAnalysis.analysis_reason)
                 .filter(SentimentAnalysis.related_stock_code.in_(cands), SentimentAnalysis.created_at >= since)
@@ -458,18 +470,67 @@ class StockDiagnosisService:
         except Exception as e:
             logger.debug(f"个股新闻/公告获取失败: {e}")
             stock_news = {"news": [], "notices": []}
-        seen = set(news_lines)
-        news_lines += [f"{n['date'][:10]} [{n['source'] or '东方财富'}] {n['title']}" for n in stock_news["news"][:STOCK_NEWS_LIMIT]
-                       if n["title"] not in seen]
+        from src.analyzers.theme_tracker import is_generic_concept
         from src.collectors import news_search
+        from src.collectors.limit_up_reasons import split_concepts
+        from src.collectors.news_relevance import junk_reason, score_news
 
+        # 所属主线/题材：主线名 + 近期涨停原因里的题材词，取前 3 个
+        sector_terms: list[str] = []
+        for term in ([role["theme"]] if role else []) + [c for r in limit_up_reasons for c in split_concepts(r)]:
+            if len(term) >= 2 and not is_generic_concept(term) and term not in sector_terms:
+                sector_terms.append(term)
+        sector_terms = sector_terms[:SECTOR_TERM_LIMIT]
+        dropped = 0
+        entries: list[tuple[str, str]] = []   # (类别, 资讯行)
+
+        def add_entry(title: str, snippet: str, url: str, source: str, line: str, cat: str = "") -> None:
+            nonlocal dropped
+            if junk_reason(title, snippet, url, source):
+                dropped += 1
+                return
+            category = cat or score_news(title, snippet, url, source, code, name, sector_terms)["category"]
+            entries.append((category, f"[{CATEGORY_LABELS_SHORT[category]}] {line}"))
+
+        for title, src in local_news:
+            add_entry(title, "", "", src or "", f"[{src}] {title}")
+        seen_titles = {t for t, _ in local_news}
+        for n in stock_news["news"][:STOCK_NEWS_LIMIT]:
+            if n["title"] in seen_titles:
+                continue
+            add_entry(n["title"], "", n.get("url") or "", n["source"] or "",
+                      f"{n['date'][:10]} [{n['source'] or '东方财富'}] {n['title']}")
+        if sector_terms and name:   # 行业背景：标题含题材词、但不含本股名称的本地资讯
+            variants = name_variants(name) or [name]
+            with get_db_session(self.db_path) as session:
+                bg_rows = (
+                    session.query(FinanceNews.title, FinanceNews.source)
+                    .filter(FinanceNews.collected_at >= since, or_(*[FinanceNews.title.contains(t) for t in sector_terms]))
+                    .order_by(FinanceNews.collected_at.desc()).limit(40).all()
+                )
+            bg_count = 0
+            for title, src in bg_rows:
+                if bg_count >= BACKGROUND_NEWS_LIMIT:
+                    break
+                if title in seen_titles or any(v in title for v in variants) or junk_reason(title, "", "", src or ""):
+                    continue
+                entries.append(("sector", f"[{CATEGORY_LABELS_SHORT['sector']}] [{src}] {title}"))
+                bg_count += 1
+        news_lines = [line for _, line in entries]
+        web_count = 0
         if news_search.is_enabled(self.config):  # 未启用联网搜索时不记录这一步
             with step("联网搜索") as s:
-                web_lines = self._web_search_lines(code, name, news_lines)
-                s.detail = f"{len(web_lines)} 条"
-        else:
-            web_lines = []
-        news_lines += web_lines
+                web_lines = self._web_search_lines(code, name, news_lines, sector_terms=sector_terms, tagged=True)
+                web_count = len(web_lines)
+                web_cats = {c: sum(1 for ln in web_lines if ln.startswith(f"[{CATEGORY_LABELS_SHORT[c]}]")) for c in CATEGORY_LABELS_SHORT}
+                s.detail = (f"{web_count} 条（直接 {web_cats['direct']}，行业 {web_cats['sector']}，"
+                            f"宏观 {web_cats['macro']}，过滤 {dropped}）")
+            for ln in web_lines:
+                entries.append((next((c for c, short in CATEGORY_LABELS_SHORT.items() if ln.startswith(f"[{short}]")), "sector"), ln))
+        entries.sort(key=lambda e: NEWS_CATEGORY_ORDER[e[0]])   # 直接 → 行业 → 宏观，稳定排序保留原顺序
+        news_lines = [line for _, line in entries]
+        news_relevance = {c: sum(1 for cat, _ in entries if cat == c) for c in NEWS_CATEGORY_ORDER}
+        news_relevance["dropped"] = dropped
         notices = stock_news["notices"]
         notice_lines = [f"{n['date']} {n['title']}" + (f"（风险：{n['risk']}）" if n["risk"] else "") for n in notices[:NOTICE_LIMIT]]
         risk_notices = [n for n in notices if n["risk"]]
@@ -521,7 +582,7 @@ class StockDiagnosisService:
             "risk_notices": risk_notices,
             "shareholders": holders, "holder_signals": holder_signals(holders),
             "valuation_text": valuation_text(quote.get("pe"), quote.get("pb")) if quote else "",
-            "phase": phase_ctx,
+            "phase": phase_ctx, "news_relevance": news_relevance,
         }
 
     @staticmethod

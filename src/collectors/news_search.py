@@ -13,9 +13,9 @@ from __future__ import annotations
 import re
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 import httpx
 from loguru import logger
@@ -39,6 +39,7 @@ class SearchResult:
     source: str = ""        # 站点或媒体名，可空
     published: str = ""     # YYYY-MM-DD，未知为空
     provider: str = ""      # PROVIDERS 的键
+    relevance: dict | None = None   # 相关度分级（score_news 的结果），个股搜索时才有
 
 
 class KeyRejected(Exception):
@@ -336,20 +337,24 @@ def search(query: str, config: dict, *, max_results: int | None = None, days: in
     return list(results)
 
 
-def search_stock_news(code: str, name: str, config: dict, limit: int = 5) -> list[SearchResult]:
-    """搜索个股最新消息：只保留标题或摘要里含股票名称或代码的结果，按标题去重。"""
+def search_stock_news(code: str, name: str, config: dict, limit: int = 5,
+                      sector_terms: Iterable[str] = ()) -> list[SearchResult]:
+    """搜索个股最新消息：过滤股吧、行情页等低质量页面，按相关度（直接 → 行业 → 宏观）排序，结果带 relevance。"""
+    from src.collectors.news_relevance import rank_news
+
     query = f"{name} {code} 最新消息".strip()
     found = search(query, config, max_results=max(limit * 2, 8))
-    keys = [k for k in (name, code) if k]
-    out: list[SearchResult] = []
-    titles: set[str] = set()
+    by_title: dict[str, SearchResult] = {}
     for r in found:
-        if keys and not any(k in r.title or k in r.snippet for k in keys):
+        by_title.setdefault(r.title, r)
+    items = [{"title": r.title, "snippet": r.snippet, "url": r.url, "source": r.source, "_r": r} for r in by_title.values()]
+    ranked = rank_news(items, code, name, sector_terms)
+    out = []
+    for it in ranked:
+        rel = it["relevance"]
+        if rel["category"] != "direct" and rel["score"] <= 0:
             continue
-        if r.title in titles:
-            continue
-        titles.add(r.title)
-        out.append(r)
+        out.append(replace(it["_r"], relevance=rel))
     return out[:limit]
 
 

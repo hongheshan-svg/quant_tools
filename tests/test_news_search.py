@@ -449,7 +449,7 @@ def offline_diag(monkeypatch):
 def test_diagnosis_includes_web_news_when_enabled(tmp_path, monkeypatch, offline_diag):
     R = news_search.SearchResult
     hits = [R(title=f"联网标题{i}", url=f"https://w.com/{i}", snippet="s", source="站点", published=_day(1), provider="bocha") for i in range(8)]
-    monkeypatch.setattr(news_search, "search_stock_news", lambda code, name, config, limit=5: hits[:limit] if limit else hits)
+    monkeypatch.setattr(news_search, "search_stock_news", lambda code, name, config, limit=5, sector_terms=(): hits[:limit] if limit else hits)
     service = _diag_service(tmp_path, cfg())
     text = service.build_context("002594")["text"]
     lines = [ln for ln in text.replace("；", "\n").splitlines() if "[联网·" in ln]
