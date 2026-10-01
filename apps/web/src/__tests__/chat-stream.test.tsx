@@ -136,3 +136,26 @@ describe('ChatPage in Chromium', () => {
     }
   })
 })
+
+describe('ChatPage new session', () => {
+  it('keeps a failed first turn visible and restores the question', async () => {
+    const NO_KEY = '未配置可用的大模型 API Key，请在【设置 → AI 模型】填写主模型的 API Key'
+    const fresh = { id: 's2', title: '新会话', perspective: '综合', turns: [], updated_at: '' }
+    const fetchMock = stubFetch((url, init) => {
+      if (/\/chat\/sessions$/.test(url) && init?.method === 'POST') return json(fresh)
+      if (/\/chat\/sessions\/s2$/.test(url)) return json(fresh) // 后台不保存失败的一轮
+      if (url.includes('/chat/sessions/s2/ask/stream')) {
+        return new Response(ev({ type: 'error', message: NO_KEY }) + ev({ type: 'done', turn: { question: '茅台能买吗', answer: '', perspective: '综合', tools: [], asked_at: '2026-10-01 19:30', error: NO_KEY } }),
+          { status: 200, headers: { 'content-type': 'text/event-stream' } })
+      }
+      return undefined
+    })
+    render(<MemoryRouter initialEntries={['/chat']}><AppRoutes authEnabled={false} /></MemoryRouter>)
+    const box = await screen.findByPlaceholderText(/输入问题/)
+    await userEvent.type(box, '茅台能买吗')
+    await userEvent.click(screen.getByRole('button', { name: '发送' }))
+    expect((await screen.findAllByText(NO_KEY)).length).toBeGreaterThan(0)
+    await waitFor(() => expect(screen.getByPlaceholderText(/输入问题/)).toHaveValue('茅台能买吗'))
+    expect(fetchMock.mock.calls.some((c) => /\/chat\/sessions\/s2$/.test(String(c[0])))).toBe(false)
+  })
+})

@@ -67,10 +67,15 @@ export function ChatPage() {
   const groups = groupSkills(skills.data ?? [])
   const current = (skills.data ?? []).find((s) => s.display_name === perspective)
   const bottom = useRef<HTMLDivElement>(null)
+  const createdRef = useRef('') // 本页刚新建的会话：跳转到它的地址时不再从后台加载，否则会覆盖正在进行的这一轮
 
   useEffect(() => {
     if (!sessionId) {
       setSession(null)
+      return
+    }
+    if (createdRef.current === sessionId) {
+      createdRef.current = ''
       return
     }
     api.chatSession(sessionId).then((s) => {
@@ -90,6 +95,7 @@ export function ChatPage() {
     let current = session
     if (!current) {
       current = await api.createChat(perspective)
+      createdRef.current = current.id
       setSession(current)
       navigate(`/chat/${current.id}`, { replace: true })
     }
@@ -120,6 +126,11 @@ export function ChatPage() {
         const turn: ChatTurn = doneTurn
         setSession((s) => (s ? { ...s, turns: [...s.turns, turn] } : s))
         void sessions.reload()
+        if (turn.error && !turn.answer) {
+          // 失败的一轮不保存：提示原因并把问题放回输入框，改好设置后可以直接重发
+          toast.error(turn.error)
+          setQuestion(q)
+        }
       } else if (streamError) {
         toast.error(streamError)
         setQuestion(q)
