@@ -55,16 +55,21 @@ def _check_watchlist(config: dict) -> bool:
     return bool(WatchlistService(config).list())
 
 
+def default_browsers_dir() -> str:
+    """Playwright 默认的浏览器下载目录（系统缓存目录，不看 PLAYWRIGHT_BROWSERS_PATH）"""
+    home = os.path.expanduser("~")
+    if sys.platform == "win32":
+        return os.path.join(os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local"), "ms-playwright")
+    if sys.platform == "darwin":
+        return os.path.join(home, "Library", "Caches", "ms-playwright")
+    return os.path.join(home, ".cache", "ms-playwright")
+
+
 def _browser_dirs() -> list[str]:
     env = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
     if env and env != "0":
         return [env]
-    home = os.path.expanduser("~")
-    if sys.platform == "win32":
-        return [os.path.join(os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local"), "ms-playwright")]
-    if sys.platform == "darwin":
-        return [os.path.join(home, "Library", "Caches", "ms-playwright")]
-    return [os.path.join(home, ".cache", "ms-playwright")]
+    return [default_browsers_dir()]
 
 
 def _check_browser(config: dict) -> bool:

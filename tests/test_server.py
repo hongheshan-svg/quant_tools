@@ -31,3 +31,20 @@ def test_prepare_workdir_without_bundle(tmp_path, monkeypatch):
     server.prepare_workdir(tmp_path / "w")
     assert (tmp_path / "w" / "config").is_dir()
     assert server.bundle_dir() is None
+
+
+def test_use_system_browser_dir(monkeypatch):
+    from src.services import setup_status
+
+    # 先 setenv 再 delenv，测试结束后才会还原为原来的状态
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "x")
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH")
+    server.use_system_browser_dir()
+    # 打包后 Playwright 不再改用安装包内的目录，下载、启动和配置向导检查的是同一个目录
+    assert server.os.environ["PLAYWRIGHT_BROWSERS_PATH"] == setup_status.default_browsers_dir()
+    assert setup_status._browser_dirs() == [setup_status.default_browsers_dir()]
+
+    # 用户自己指定的目录不覆盖
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "/opt/browsers")
+    server.use_system_browser_dir()
+    assert server.os.environ["PLAYWRIGHT_BROWSERS_PATH"] == "/opt/browsers"

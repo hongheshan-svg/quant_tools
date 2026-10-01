@@ -55,6 +55,18 @@ def prepare_workdir(workdir: str | Path, bundle: Path | None = None) -> None:
         shutil.copyfile(pool, "config/stock_pool.yaml")
 
 
+def use_system_browser_dir() -> None:
+    """打包运行时让 Playwright 到系统缓存目录找浏览器。
+
+    Playwright 检测到自己被 PyInstaller 打包时，默认到安装包内找浏览器（PLAYWRIGHT_BROWSERS_PATH=0），
+    而后台下载和配置向导用的是系统缓存目录，结果向导显示已安装、采集却启动不了浏览器。
+    统一指向系统缓存目录：浏览器不写进只读的安装包，升级后也不用重新下载。已设置该环境变量时不覆盖。
+    """
+    from src.services.setup_status import default_browsers_dir
+
+    os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", default_browsers_dir())
+
+
 def install_playwright_browser() -> None:
     """下载 Playwright 的 Chromium（东方财富、同花顺、社交平台采集需要），已安装时很快返回。
 
@@ -110,6 +122,7 @@ def main() -> None:
         logger.warning(f"监听 {args.host} 但没有开启 Web 登录：局域网内其他设备的请求会被拒绝，需要时在 web.auth_enabled 开启登录")
     bundle = bundle_dir()
     if bundle:
+        use_system_browser_dir()
         threading.Thread(target=install_playwright_browser, name="playwright-install", daemon=True).start()
     app = create_app(config, start_scheduler=False if args.no_scheduler else None,
                      static_dir=bundle / "web" if bundle else None)
