@@ -59,13 +59,28 @@ class TradeBody(BaseModel):
     fee: float = Field(0.0, ge=0)
     trade_time: str = ""
     note: str = ""
+    account: str = ""
 
 
 class CashBody(BaseModel):
     cash: float = Field(ge=0)
+    account: str = ""
+
+
+class AccountBody(BaseModel):
+    name: str
+    broker: str = ""
+    note: str = ""
+
+
+class AccountUpdate(BaseModel):
+    name: str
+    broker: str | None = None
+    note: str | None = None
 
 
 class PlanBody(BaseModel):
+    account: str = ""
     stop_loss: float | None = Field(None, ge=0)
     target_price: float | None = Field(None, ge=0)
 
@@ -86,16 +101,52 @@ class ActionBody(BaseModel):
     shares: int = Field(0, ge=0)
     plan: ActionPlan | None = None
     note: str = ""
+    account: str = ""
 
 
 @router.get("/real")
-def real_portfolio(pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
-    return pipeline.real_portfolio()
+def real_portfolio(account: str = "", pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
+    """实盘持仓、流水和组合风险；account 为空是全部账户。"""
+    return pipeline.real_portfolio(account or None)
+
+
+@router.get("/real/risk")
+def real_risk(account: str = "", pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
+    return pipeline.portfolio_risk(f"real:{account}" if account else "real")
+
+
+@router.get("/real/accounts")
+def list_accounts(pipeline: PipelineService = Depends(get_pipeline)) -> list[dict[str, Any]]:
+    return RealPortfolioService(pipeline.config).accounts()
+
+
+@router.post("/real/accounts")
+def add_account(body: AccountBody, pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
+    result = RealPortfolioService(pipeline.config).add_account(body.name, body.broker, body.note)
+    if not result["ok"]:
+        raise bad_request(result["error"])
+    return result
+
+
+@router.put("/real/accounts/{name}")
+def update_account(name: str, body: AccountUpdate, pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
+    result = RealPortfolioService(pipeline.config).rename_account(name, body.name, body.broker, body.note)
+    if not result["ok"]:
+        raise bad_request(result["error"])
+    return result
+
+
+@router.delete("/real/accounts/{name}")
+def delete_account(name: str, pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
+    result = RealPortfolioService(pipeline.config).delete_account(name)
+    if not result["ok"]:
+        raise bad_request(result["error"])
+    return result
 
 
 @router.post("/real/trades")
 def add_trade(body: TradeBody, pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
-    result = pipeline.real_add_trade(**body.model_dump())
+    result = pipeline.real_add_trade(**{**body.model_dump(), "account": body.account or None})
     if not result["ok"]:
         raise bad_request(result["error"])
     return result
@@ -107,38 +158,38 @@ def delete_trade(trade_id: int, pipeline: PipelineService = Depends(get_pipeline
 
 
 @router.post("/real/trades/import")
-async def import_trades(file: UploadFile = File(...), preview: bool = False,
+async def import_trades(file: UploadFile = File(...), preview: bool = False, account: str = "",
                         pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
     """导入交割单；preview=true 时只解析预览、不写库。"""
     path = await save_upload(file)
     try:
         if preview:
-            return RealPortfolioService(pipeline.config).preview_import(str(path))
-        return pipeline.real_import(str(path))
+            return RealPortfolioService(pipeline.config, account=account or None).preview_import(str(path))
+        return pipeline.real_import(str(path), account or None)
     finally:
         path.unlink(missing_ok=True)
 
 
 @router.put("/real/cash")
 def set_cash(body: CashBody, pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
-    pipeline.real_set_cash(body.cash)
+    pipeline.real_set_cash(body.cash, body.account or None)
     return {"ok": True}
 
 
 @router.put("/real/plans/{code}")
 def set_plan(code: str, body: PlanBody, pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
-    pipeline.real_set_plan(code, body.stop_loss or None, body.target_price or None)
+    pipeline.real_set_plan(code, body.stop_loss or None, body.target_price or None, body.account or None)
     return {"ok": True}
 
 
 @router.get("/real/actions")
-def list_actions(pipeline: PipelineService = Depends(get_pipeline)) -> list[dict[str, Any]]:
-    return RealPortfolioService(pipeline.config).corporate_actions()
+def list_actions(account: str = "", pipeline: PipelineService = Depends(get_pipeline)) -> list[dict[str, Any]]:
+    return RealPortfolioService(pipeline.config, account=account or None).corporate_actions()
 
 
 @router.post("/real/actions")
 def add_action(body: ActionBody, pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
-    service = RealPortfolioService(pipeline.config)
+    service = RealPortfolioService(pipeline.config, account=body.account or None)
     if body.plan is not None:
         result = service.add_corporate_action_by_plan(body.ex_date, body.code, note=body.note, **body.plan.model_dump())
     else:

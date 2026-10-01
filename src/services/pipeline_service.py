@@ -336,37 +336,38 @@ class PipelineService:
         """组合风险（paper 模拟盘 / real 实盘记账）：总仓位与大盘环境、个股和行业集中度、止损距离、净值回撤。"""
         from src.services.portfolio_risk import PortfolioRiskService
 
-        if account == "real":
-            return PortfolioRiskService(self.config, account="real").report()
+        if account == "real" or account.startswith("real:"):
+            return PortfolioRiskService(self.config, account=account).report()
         with self._execution_lock:
             return PortfolioRiskService(self.config, execution=self.execution).report()
 
     # ---- 实盘记账 ----
 
-    def _real(self):
+    def _real(self, account: str | None = None):
         from src.services.real_portfolio import RealPortfolioService
 
-        return RealPortfolioService(self.config)
+        return RealPortfolioService(self.config, account=account)
 
-    def real_portfolio(self) -> dict[str, Any]:
-        """实盘持仓快照、成交流水和组合风险。"""
-        real = self._real()
-        return {"snapshot": real.snapshot(), "trades": real.trades(300), "risk": self.portfolio_risk("real")}
+    def real_portfolio(self, account: str | None = None) -> dict[str, Any]:
+        """实盘持仓快照、成交流水和组合风险；account 为空是全部账户。"""
+        real = self._real(account)
+        risk_account = f"real:{real.account}" if real.account else "real"
+        return {"snapshot": real.snapshot(), "trades": real.trades(300), "risk": self.portfolio_risk(risk_account)}
 
-    def real_add_trade(self, **kwargs) -> dict[str, Any]:
-        return self._real().add_trade(**kwargs)
+    def real_add_trade(self, account: str | None = None, **kwargs) -> dict[str, Any]:
+        return self._real(account).add_trade(**kwargs)
 
     def real_delete_trade(self, trade_id: int) -> bool:
         return self._real().delete_trade(trade_id)
 
-    def real_import(self, path: str) -> dict[str, Any]:
-        return self._real().import_file(path)
+    def real_import(self, path: str, account: str | None = None) -> dict[str, Any]:
+        return self._real(account).import_file(path)
 
-    def real_set_cash(self, cash: float) -> None:
-        self._real().set_cash(cash)
+    def real_set_cash(self, cash: float, account: str | None = None) -> None:
+        self._real(account).set_cash(cash)
 
-    def real_set_plan(self, code: str, stop_loss: float | None, target_price: float | None) -> None:
-        self._real().set_plan(code, stop_loss, target_price)
+    def real_set_plan(self, code: str, stop_loss: float | None, target_price: float | None, account: str | None = None) -> None:
+        self._real(account).set_plan(code, stop_loss, target_price)
 
     def trading_snapshot(self) -> dict[str, Any]:
         with self._execution_lock:

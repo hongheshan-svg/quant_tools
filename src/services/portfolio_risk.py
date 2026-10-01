@@ -6,6 +6,7 @@
 - 行业集中度：按股票最近一次涨停时的所属行业归类（没有涨停记录的归「未知」），同一行业超过 sector_max_pct（默认 50%）时提示
 - 止损距离：现价距止损价不足 near_stop_pct（默认 3%）时提示，已跌破的单独提示
 - 回撤：按成交记录和每日收盘价重放账户净值，给出最大回撤和当前回撤
+account="real:<账户名>" 只看该实盘账户。
 account="real" 时改为实盘记账（RealPortfolioService）的持仓和流水；实盘没有设置可用资金时不比较总仓位，
 回撤按「现在没有现金」反推期初资金计算。
 """
@@ -92,11 +93,16 @@ class PortfolioRiskService:
         if self._real is None:
             from src.services.real_portfolio import RealPortfolioService
 
-            self._real = RealPortfolioService(self.config)
+            account = self.account.split(":", 1)[1] if self.account.startswith("real:") else None
+            self._real = RealPortfolioService(self.config, account=account)
         return self._real
 
+    @property
+    def _is_real(self) -> bool:
+        return self.account == "real" or self.account.startswith("real:")
+
     def report(self) -> dict[str, Any]:
-        snapshot = self.real.snapshot() if self.account == "real" else self.execution.get_trading_snapshot(order_limit=1)
+        snapshot = self.real.snapshot() if self._is_real else self.execution.get_trading_snapshot(order_limit=1)
         account, positions = snapshot["account"], snapshot["positions"]
         total = account["total_assets"] or 0.0
         warnings: list[str] = list(snapshot.get("warnings") or [])
@@ -174,7 +180,7 @@ class PortfolioRiskService:
         return result
 
     def _fills_and_initial_cash(self) -> tuple[list[tuple], float]:
-        if self.account == "real":
+        if self._is_real:
             fills = self.real.fills()
             # 期初资金 = 现在的可用资金 + 全部买入 - 全部卖出（没有设置可用资金时按现在没有现金计算）
             flow = sum(price * qty * (1 if side == "buy" else -1) for _, side, price, qty, _ in fills)

@@ -696,6 +696,8 @@ export interface Position {
   stop_loss: number
   target_price: number
   first_date?: string
+  /** 实盘持仓所在的账户（汇总视图可能有多个） */
+  accounts?: string[]
 }
 
 export interface Order {
@@ -747,6 +749,17 @@ export interface RealTrade {
   fee: number
   source: string
   note: string
+  account?: string
+}
+
+export interface RealAccount {
+  name: string
+  broker: string
+  note: string
+  trades: number
+  positions: number
+  market_value: number
+  cash: number | null
 }
 
 export interface RealCorporateAction {
@@ -760,6 +773,7 @@ export interface RealCorporateAction {
   shares: number
   note: string
   source: string
+  account?: string
 }
 
 export interface RealImportPreview {

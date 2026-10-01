@@ -1,9 +1,9 @@
 // 实盘记账：手动记一笔、导入交割单、设置可用资金和止损止盈；只记账，不连券商、不下单
 import { Trash2 } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '@/api/endpoints'
-import type { Position, RealCorporateAction, RealImportPreview, RealTrade } from '@/api/types'
+import type { Position, RealAccount, RealCorporateAction, RealImportPreview, RealTrade } from '@/api/types'
 import { actionBody, CorporateActionForm, emptyActionForm, type ActionForm } from '@/components/CorporateActionForm'
 import { DataTable, type Column } from '@/components/DataTable'
 import { RiskPanel } from '@/components/RiskPanel'
@@ -15,45 +15,70 @@ import { fmtMoney, fmtNum, trendClass } from '@/utils/format'
 import { positionColumns } from './TradingPage'
 
 const today = () => new Date().toISOString().slice(0, 10)
+const ACCOUNT_KEY = 'quant-real-account'
+const DEFAULT_ACCOUNT = '默认'
 const EMPTY_TRADE = { trade_date: today(), trade_time: '', code: '', side: 'buy', price: '', quantity: '100', fee: '0', note: '' }
+
+function loadAccount(): string {
+  try { return localStorage.getItem(ACCOUNT_KEY) ?? '' } catch { return '' }
+}
 
 export function RealPage() {
   const t = useT()
   const navigate = useNavigate()
-  const { data, error, reload } = useApi(api.real)
+  const [account, setAccountState] = useState(loadAccount)
+  const accountsApi = useApi(api.realAccounts)
+  const accountList: RealAccount[] = Array.isArray(accountsApi.data) ? accountsApi.data : []
+  const accountNames = accountList.length > 0 ? accountList.map((a) => a.name) : [DEFAULT_ACCOUNT]
+  const multi = accountNames.length > 1
+  const setAccount = (name: string) => {
+    setAccountState(name)
+    try { localStorage.setItem(ACCOUNT_KEY, name) } catch { /* 忽略 */ }
+  }
+  // 保存的账户已被删除或改名时回到全部账户
+  useEffect(() => {
+    if (accountsApi.data && account && !accountNames.includes(account)) setAccount('')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountsApi.data])
+  // 录入时默认记入的账户：当前选中的账户，全部账户视图下是默认账户
+  const targetAccount = account || DEFAULT_ACCOUNT
+  const showAccounts = multi && !account
+  const { data, error, reload } = useApi(() => api.real(account), [account])
+  const [manageOpen, setManageOpen] = useState(false)
+  const [formAccount, setFormAccount] = useState(DEFAULT_ACCOUNT)
   const [tradeOpen, setTradeOpen] = useState(false)
   const [trade, setTrade] = useState(EMPTY_TRADE)
   const [cashOpen, setCashOpen] = useState(false)
   const [cash, setCash] = useState('')
-  const [plan, setPlan] = useState<{ code: string; name: string; stop: string; target: string } | null>(null)
+  const [plan, setPlan] = useState<{ code: string; name: string; stop: string; target: string; accounts: string[]; account: string } | null>(null)
   const fileInput = useRef<HTMLInputElement>(null)
-  const actionsApi = useApi(api.realActions)
+  const actionsApi = useApi(() => api.realActions(account), [account])
   const [actionOpen, setActionOpen] = useState(false)
   const [actionForm, setActionForm] = useState<ActionForm>(emptyActionForm)
-  const [importPreview, setImportPreview] = useState<{ file: File; preview: RealImportPreview } | null>(null)
+  const [importPreview, setImportPreview] = useState<{ file: File; preview: RealImportPreview; account: string } | null>(null)
 
   const submitAction = async () => {
     try {
-      await api.addRealAction(actionBody(actionForm))
+      await api.addRealAction(actionBody({ ...actionForm, account: multi ? actionForm.account || DEFAULT_ACCOUNT : account }))
       toast.success(t('已记录'))
       setActionOpen(false)
-      setActionForm(emptyActionForm())
+      setActionForm(emptyActionForm(targetAccount))
       void reload()
       void actionsApi.reload()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
     }
   }
-  const startPreview = (file: File) => {
-    api.previewRealImport(file)
-      .then((preview) => (preview.error ? toast.error(preview.error) : setImportPreview({ file, preview })))
+  const startPreview = (file: File, target = targetAccount) => {
+    api.previewRealImport(file, target === DEFAULT_ACCOUNT ? '' : target)
+      .then((preview) => (preview.error ? toast.error(preview.error) : setImportPreview({ file, preview, account: target })))
       .catch((err) => toast.error(err.message))
   }
   const confirmImport = () => {
     if (!importPreview) return
-    const { file } = importPreview
+    const { file, account: target } = importPreview
     setImportPreview(null)
-    api.importRealTrades(file)
+    api.importRealTrades(file, target === DEFAULT_ACCOUNT ? '' : target)
       .then((r) => (r.error ? toast.error(r.error) : toast.success(t('导入 {a} 笔成交、{b} 条分红送转，重复 {c} 条，跳过 {d} 行', { a: r.added, b: r.actions_added ?? 0, c: r.duplicate, d: r.skipped }))))
       .then(() => { void reload(); void actionsApi.reload() })
       .catch((err) => toast.error(err.message))
@@ -61,7 +86,7 @@ export function RealPage() {
 
   const submitTrade = async () => {
     try {
-      await api.addRealTrade({ ...trade, price: Number(trade.price), quantity: Number(trade.quantity), fee: Number(trade.fee || 0) })
+      await api.addRealTrade({ ...trade, account: formAccount === DEFAULT_ACCOUNT ? '' : formAccount, price: Number(trade.price), quantity: Number(trade.quantity), fee: Number(trade.fee || 0) })
       toast.success(t('已记录'))
       setTradeOpen(false)
       setTrade({ ...EMPTY_TRADE, trade_date: today() })
@@ -110,17 +135,30 @@ export function RealPage() {
       ),
     },
   ]
+  const base = positionColumns((c) => navigate(`/stocks/${c}`))
   const positions: Column<Position>[] = [
-    ...positionColumns((c) => navigate(`/stocks/${c}`)),
+    base[0],
+    ...(showAccounts ? [{ key: 'account', title: t('账户'), render: (p: Position) => <span className="text-xs">{(p.accounts ?? []).join('、')}</span> }] : []),
+    ...base.slice(1),
     {
       key: 'plan', title: '', align: 'right', render: (p) => (
-        <Button variant="ghost" onClick={() => setPlan({ code: p.code, name: p.name, stop: String(p.stop_loss ?? ''), target: String(p.target_price ?? '') })}>
+        <Button variant="ghost" onClick={() => {
+          const owners = p.accounts && p.accounts.length > 0 ? p.accounts : [targetAccount]
+          setPlan({ code: p.code, name: p.name, stop: String(p.stop_loss ?? ''), target: String(p.target_price ?? ''), accounts: owners, account: owners[0] })
+        }}>
           {t('止损止盈')}
         </Button>
       ),
     },
   ]
-  const account = data?.snapshot.account
+  const summary = data?.snapshot.account
+  // 某个账户当前的可用资金（没设置过为空）；选中单个账户时用持仓快照里的数
+  const cashOf = (name: string) => {
+    if (account === name && summary) return summary.cash_known ? String(summary.cash) : ''
+    const found = accountList.find((a) => a.name === name)
+    if (found) return found.cash != null ? String(found.cash) : ''
+    return !multi && summary?.cash_known ? String(summary.cash) : ''
+  }
 
   return (
     <div>
@@ -129,10 +167,17 @@ export function RealPage() {
         description={t('只记账，不连券商、不下单；持仓会进入盘中止损提醒、组合风险、个股诊断和 AI 问股')}
         actions={
           <>
-            <Button variant="primary" onClick={() => setTradeOpen(true)}>{t('记一笔')}</Button>
-            <Button onClick={() => setActionOpen(true)}>{t('记一笔分红送转')}</Button>
+            {multi && (
+              <Select aria-label={t('账户')} value={account} onChange={(e) => setAccount(e.target.value)}>
+                <option value="">{t('全部账户')}</option>
+                {accountNames.map((n) => <option key={n} value={n}>{n}</option>)}
+              </Select>
+            )}
+            <Button variant="primary" onClick={() => { setFormAccount(targetAccount); setTradeOpen(true) }}>{t('记一笔')}</Button>
+            <Button onClick={() => { setActionForm((f) => ({ ...f, account: targetAccount })); setActionOpen(true) }}>{t('记一笔分红送转')}</Button>
             <Button onClick={() => fileInput.current?.click()}>{t('导入交割单')}</Button>
-            <Button onClick={() => { setCash(account?.cash_known ? String(account.cash) : ''); setCashOpen(true) }}>{t('设置可用资金')}</Button>
+            <Button onClick={() => { setFormAccount(targetAccount); setCash(cashOf(targetAccount)); setCashOpen(true) }}>{t('设置可用资金')}</Button>
+            <Button onClick={() => setManageOpen(true)}>{t('管理账户')}</Button>
             <input
               ref={fileInput}
               type="file"
@@ -149,13 +194,13 @@ export function RealPage() {
         }
       />
       {error && <ErrorBox message={error} onRetry={reload} />}
-      {account && (
+      {summary && (
         <div className="mb-4 grid grid-cols-2 gap-2 md:grid-cols-5">
-          <Stat label={t('总资产')} value={fmtMoney(account.total_assets)} />
-          <Stat label={t('可用资金')} value={account.cash_known ? fmtMoney(account.cash) : t('未设置')} />
-          <Stat label={t('持仓市值')} value={fmtMoney(account.market_value)} />
-          <Stat label={t('浮动盈亏')} value={<span className={trendClass(account.unrealized_pnl)}>{fmtMoney(account.unrealized_pnl, true)}</span>} />
-          <Stat label={t('已实现盈亏')} value={<span className={trendClass(account.realized_pnl)}>{fmtMoney(account.realized_pnl, true)}</span>} />
+          <Stat label={t('总资产')} value={fmtMoney(summary.total_assets)} />
+          <Stat label={t('可用资金')} value={summary.cash_known ? fmtMoney(summary.cash) : t('未设置')} />
+          <Stat label={t('持仓市值')} value={fmtMoney(summary.market_value)} />
+          <Stat label={t('浮动盈亏')} value={<span className={trendClass(summary.unrealized_pnl)}>{fmtMoney(summary.unrealized_pnl, true)}</span>} />
+          <Stat label={t('已实现盈亏')} value={<span className={trendClass(summary.realized_pnl)}>{fmtMoney(summary.realized_pnl, true)}</span>} />
         </div>
       )}
       <div className="space-y-4">
@@ -172,7 +217,7 @@ export function RealPage() {
       </div>
 
       <Modal open={actionOpen} title={t('记一笔分红送转')} onClose={() => setActionOpen(false)} footer={<Button variant="primary" onClick={submitAction}>{t('保存')}</Button>}>
-        <CorporateActionForm value={actionForm} onChange={setActionForm} />
+        <CorporateActionForm value={actionForm} onChange={setActionForm} accounts={multi ? accountNames : undefined} />
       </Modal>
       <Modal
         open={importPreview != null}
@@ -186,10 +231,26 @@ export function RealPage() {
           </>
         }
       >
+        {importPreview && multi && (
+          <div className="mb-3 max-w-xs">
+            <Field label={t('导入到账户')}>
+              <Select className="w-full" value={importPreview.account} onChange={(e) => startPreview(importPreview.file, e.target.value)}>
+                {accountNames.map((n) => <option key={n} value={n}>{n}</option>)}
+              </Select>
+            </Field>
+          </div>
+        )}
         {importPreview && <ImportPreviewView preview={importPreview.preview} />}
       </Modal>
       <Modal open={tradeOpen} title={t('记一笔实盘成交')} onClose={() => setTradeOpen(false)} footer={<Button variant="primary" onClick={submitTrade}>{t('保存')}</Button>}>
         <div className="grid grid-cols-2 gap-3">
+          {multi && (
+            <Field label={t('账户')}>
+              <Select className="w-full" value={formAccount} onChange={(e) => setFormAccount(e.target.value)}>
+                {accountNames.map((n) => <option key={n} value={n}>{n}</option>)}
+              </Select>
+            </Field>
+          )}
           <Field label={t('日期')}><Input type="date" value={trade.trade_date} onChange={(e) => setTrade({ ...trade, trade_date: e.target.value })} /></Field>
           <Field label={t('时间（可空）')}><Input value={trade.trade_time} placeholder="10:31" onChange={(e) => setTrade({ ...trade, trade_time: e.target.value })} /></Field>
           <Field label={t('股票')}><Input value={trade.code} placeholder={t('代码 / 名称 / 拼音')} onChange={(e) => setTrade({ ...trade, code: e.target.value })} /></Field>
@@ -209,8 +270,15 @@ export function RealPage() {
         open={cashOpen}
         title={t('设置可用资金')}
         onClose={() => setCashOpen(false)}
-        footer={<Button variant="primary" onClick={() => api.setRealCash(Number(cash)).then(() => { setCashOpen(false); void reload() })}>{t('保存')}</Button>}
+        footer={<Button variant="primary" onClick={() => api.setRealCash(Number(cash), formAccount === DEFAULT_ACCOUNT ? '' : formAccount).then(() => { setCashOpen(false); void reload(); void accountsApi.reload() })}>{t('保存')}</Button>}
       >
+        {multi && (
+          <Field label={t('账户')}>
+            <Select className="w-full" value={formAccount} onChange={(e) => { setFormAccount(e.target.value); setCash(cashOf(e.target.value)) }}>
+              {accountNames.map((n) => <option key={n} value={n}>{n}</option>)}
+            </Select>
+          </Field>
+        )}
         <Field label={t('券商账户当前的可用资金（元）')} hint={t('之后发生的成交会自动增减')}>
           <Input type="number" value={cash} onChange={(e) => setCash(e.target.value)} />
         </Field>
@@ -220,19 +288,104 @@ export function RealPage() {
         title={t('止损止盈：{name}', { name: plan?.name ?? '' })}
         onClose={() => setPlan(null)}
         footer={
-          <Button variant="primary" onClick={() => plan && api.setRealPlan(plan.code, Number(plan.stop) || null, Number(plan.target) || null).then(() => { setPlan(null); void reload() })}>
+          <Button variant="primary" onClick={() => plan && api.setRealPlan(plan.code, Number(plan.stop) || null, Number(plan.target) || null, plan.account === DEFAULT_ACCOUNT ? '' : plan.account).then(() => { setPlan(null); void reload() })}>
             {t('保存')}
           </Button>
         }
       >
         {plan && (
           <div className="grid grid-cols-2 gap-3">
+            {plan.accounts.length > 1 && (
+              <Field label={t('账户')}>
+                <Select className="w-full" value={plan.account} onChange={(e) => setPlan({ ...plan, account: e.target.value })}>
+                  {plan.accounts.map((n) => <option key={n} value={n}>{n}</option>)}
+                </Select>
+              </Field>
+            )}
             <Field label={t('止损价（0 表示按风控比例）')}><Input type="number" step="0.01" value={plan.stop} onChange={(e) => setPlan({ ...plan, stop: e.target.value })} /></Field>
             <Field label={t('目标价（0 表示按风控比例）')}><Input type="number" step="0.01" value={plan.target} onChange={(e) => setPlan({ ...plan, target: e.target.value })} /></Field>
           </div>
         )}
       </Modal>
+      <AccountManager
+        open={manageOpen}
+        accounts={accountList}
+        onClose={() => setManageOpen(false)}
+        onChanged={(renamed) => {
+          if (renamed && renamed.from === account) setAccount(renamed.to)
+          void accountsApi.reload()
+          void reload()
+          void actionsApi.reload()
+        }}
+      />
     </div>
+  )
+}
+
+/** 管理账户：新增、改名、删除（默认账户不能改名和删除） */
+function AccountManager({ open, accounts, onClose, onChanged }: {
+  open: boolean
+  accounts: RealAccount[]
+  onClose: () => void
+  onChanged: (renamed?: { from: string; to: string }) => void
+}) {
+  const t = useT()
+  const [name, setName] = useState('')
+  const [broker, setBroker] = useState('')
+  const [editing, setEditing] = useState<{ from: string; name: string; broker: string; note: string } | null>(null)
+  const fail = (e: unknown) => toast.error(e instanceof Error ? e.message : String(e))
+  const add = () => {
+    api.addRealAccount({ name: name.trim(), broker: broker.trim() })
+      .then(() => { setName(''); setBroker(''); toast.success(t('已新增账户')); onChanged() })
+      .catch(fail)
+  }
+  const save = () => {
+    if (!editing) return
+    api.updateRealAccount(editing.from, { name: editing.name.trim(), broker: editing.broker.trim(), note: editing.note })
+      .then(() => { const e = editing; setEditing(null); onChanged(e.from !== e.name.trim() ? { from: e.from, to: e.name.trim() } : undefined) })
+      .catch(fail)
+  }
+  const remove = (a: RealAccount) => {
+    if (!window.confirm(t('删除账户「{name}」？', { name: a.name }))) return
+    api.deleteRealAccount(a.name).then(() => { toast.success(t('已删除账户')); onChanged({ from: a.name, to: '' }) }).catch(fail)
+  }
+  const list = accounts.length > 0 ? accounts : [{ name: DEFAULT_ACCOUNT, broker: '', note: '', trades: 0, positions: 0, market_value: 0, cash: null }]
+  return (
+    <Modal open={open} title={t('管理账户')} onClose={onClose}>
+      <ul className="mb-4 space-y-2 text-sm">
+        {list.map((a) => (
+          <li key={a.name} className="flex items-center justify-between gap-2 rounded-md border border-line px-3 py-2">
+            {editing?.from === a.name ? (
+              <div className="flex flex-1 flex-wrap items-center gap-2">
+                <Input aria-label={t('账户名称')} value={editing.name} maxLength={30} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
+                <Input aria-label={t('券商（可空）')} value={editing.broker} placeholder={t('券商（可空）')} maxLength={30} onChange={(e) => setEditing({ ...editing, broker: e.target.value })} />
+                <Button variant="primary" onClick={save}>{t('保存')}</Button>
+                <Button onClick={() => setEditing(null)}>{t('取消')}</Button>
+              </div>
+            ) : (
+              <>
+                <div>
+                  <span className="font-medium">{a.name}</span>
+                  {a.broker && <span className="ml-2 text-xs text-muted">{a.broker}</span>}
+                  <div className="text-xs text-muted">{t('{n} 笔成交，{m} 只持仓', { n: a.trades, m: a.positions })}</div>
+                </div>
+                {a.name !== DEFAULT_ACCOUNT && (
+                  <div className="flex gap-1">
+                    <Button variant="ghost" onClick={() => setEditing({ from: a.name, name: a.name, broker: a.broker, note: a.note })}>{t('改名')}</Button>
+                    <Button variant="ghost" onClick={() => remove(a)}>{t('删除')}</Button>
+                  </div>
+                )}
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+      <div className="flex flex-wrap items-end gap-2">
+        <Field label={t('账户名称')}><Input value={name} maxLength={30} placeholder={t('如：招商证券')} onChange={(e) => setName(e.target.value)} /></Field>
+        <Field label={t('券商（可空）')}><Input value={broker} maxLength={30} onChange={(e) => setBroker(e.target.value)} /></Field>
+        <Button variant="primary" disabled={!name.trim()} onClick={add}>{t('新增账户')}</Button>
+      </div>
+    </Modal>
   )
 }
 

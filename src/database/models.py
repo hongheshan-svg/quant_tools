@@ -235,6 +235,17 @@ class AlertRecord(Base):
     )
 
 
+class RealAccount(Base):
+    """实盘记账账户（多个券商账户）；默认账户「默认」不一定有记录，旧数据的 account 为空都归入默认账户"""
+    __tablename__ = "real_account"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(30), nullable=False, unique=True, comment="账户名称")
+    broker = Column(String(30), comment="券商")
+    note = Column(String(200), comment="备注")
+    created_at = Column(DateTime, default=datetime.now)
+
+
 class RealTrade(Base):
     """实盘成交流水（手动记录或从券商交割单导入，只用于记账和风险提示，不连券商、不下单）"""
     __tablename__ = "real_trade"
@@ -251,6 +262,7 @@ class RealTrade(Base):
     note = Column(String(200), comment="备注")
     source = Column(String(10), default="manual", comment="manual 手动 / import 导入")
     import_key = Column(String(120), comment="导入去重键")
+    account = Column(String(30), comment="账户名称；空表示默认账户")
     created_at = Column(DateTime, default=datetime.now)
 
     __table_args__ = (
@@ -266,6 +278,7 @@ class RealCash(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     cash = Column(Float, nullable=False, comment="设置时的可用资金")
     as_of = Column(DateTime, default=datetime.now, comment="设置时间")
+    account = Column(String(30), comment="账户名称；空表示默认账户")
 
 
 class RealPositionPlan(Base):
@@ -276,10 +289,11 @@ class RealPositionPlan(Base):
     code = Column(String(10), nullable=False, comment="股票代码（6位）")
     stop_loss = Column(Float, comment="止损价")
     target_price = Column(Float, comment="目标价")
+    account = Column(String(30), comment="账户名称；空表示默认账户")
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     __table_args__ = (
-        Index("idx_real_position_plan_code", "code", unique=True),
+        Index("idx_real_position_plan_account_code", "account", "code", unique=True),
     )
 
 
@@ -297,6 +311,7 @@ class RealCorporateAction(Base):
     note = Column(String(200), comment="备注")
     source = Column(String(10), default="manual", comment="manual 手动 / import 导入")
     import_key = Column(String(120), comment="导入去重键")
+    account = Column(String(30), comment="账户名称；空表示默认账户")
     created_at = Column(DateTime, default=datetime.now)
 
     __table_args__ = (

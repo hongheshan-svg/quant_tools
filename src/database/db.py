@@ -60,6 +60,7 @@ def init_db(db_path: str = "data/quant.db", echo: bool = False):
     engine = get_engine(db_path, echo)
     Base.metadata.create_all(engine)
     _auto_migrate(engine)
+    _migrate_real_plan_index(engine)
     _normalize_stock_names(engine)
     logger.info("数据库表已创建/更新")
 
@@ -78,6 +79,23 @@ def _normalize_stock_names(engine):
                         conn.execute(text(f"UPDATE {table} SET name = :name WHERE id = :id"), {"name": fixed, "id": row_id})
     except Exception as e:
         logger.warning(f"股票名称规范化迁移失败: {e}")
+
+
+def _migrate_real_plan_index(engine):
+    """实盘止损计划的唯一索引由 code 改为 (account, code)：旧库删除旧索引并建新索引。"""
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("real_position_plan"):
+            return
+        names = {i["name"] for i in insp.get_indexes("real_position_plan")}
+        with engine.begin() as conn:
+            if "idx_real_position_plan_code" in names:
+                conn.execute(text("DROP INDEX idx_real_position_plan_code"))
+                logger.info("迁移: 删除旧索引 idx_real_position_plan_code")
+            if "idx_real_position_plan_account_code" not in names:
+                conn.execute(text("CREATE UNIQUE INDEX idx_real_position_plan_account_code ON real_position_plan(account, code)"))
+    except Exception as e:
+        logger.warning(f"实盘止损计划索引迁移失败: {e}")
 
 
 def _auto_migrate(engine):

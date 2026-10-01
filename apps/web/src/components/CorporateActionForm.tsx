@@ -16,16 +16,18 @@ export interface ActionForm {
   action: string
   cash: string
   shares: string
+  /** 记入的账户；空表示默认账户 */
+  account: string
 }
 
-export const emptyActionForm = (): ActionForm => ({
+export const emptyActionForm = (account = ''): ActionForm => ({
   mode: 'plan', ex_date: new Date().toISOString().slice(0, 10), code: '', note: '',
-  cash_per_10: '0', bonus_per_10: '0', transfer_per_10: '0', tax_rate: '0', action: 'dividend', cash: '', shares: '',
+  cash_per_10: '0', bonus_per_10: '0', transfer_per_10: '0', tax_rate: '0', action: 'dividend', cash: '', shares: '', account,
 })
 
 /** 表单 -> 接口请求体 */
 export function actionBody(f: ActionForm): Record<string, unknown> {
-  const base = { ex_date: f.ex_date, code: f.code.trim(), note: f.note }
+  const base = { ex_date: f.ex_date, code: f.code.trim(), note: f.note, account: f.account }
   if (f.mode === 'plan') {
     return {
       ...base,
@@ -38,7 +40,8 @@ export function actionBody(f: ActionForm): Record<string, unknown> {
   return { ...base, action: f.action, cash: Number(f.cash || 0), shares: Number(f.shares || 0) }
 }
 
-export function CorporateActionForm({ value, onChange }: { value: ActionForm; onChange: (v: ActionForm) => void }) {
+/** accounts 给出多个账户时显示账户选择 */
+export function CorporateActionForm({ value, onChange, accounts }: { value: ActionForm; onChange: (v: ActionForm) => void; accounts?: string[] }) {
   const t = useT()
   const set = (patch: Partial<ActionForm>) => onChange({ ...value, ...patch })
   return (
@@ -49,6 +52,13 @@ export function CorporateActionForm({ value, onChange }: { value: ActionForm; on
         onChange={(mode) => set({ mode })}
       />
       <div className="grid grid-cols-2 gap-3">
+        {accounts && accounts.length > 1 && (
+          <Field label={t('账户')}>
+            <Select className="w-full" value={value.account || accounts[0]} onChange={(e) => set({ account: e.target.value })}>
+              {accounts.map((a) => <option key={a} value={a}>{a}</option>)}
+            </Select>
+          </Field>
+        )}
         <Field label={t('除权除息日')}><Input type="date" value={value.ex_date} onChange={(e) => set({ ex_date: e.target.value })} /></Field>
         <Field label={t('股票')}><Input value={value.code} placeholder={t('股票代码 / 名称 / 拼音')} onChange={(e) => set({ code: e.target.value })} /></Field>
         {value.mode === 'plan' ? (

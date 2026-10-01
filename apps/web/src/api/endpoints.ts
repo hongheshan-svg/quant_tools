@@ -133,17 +133,22 @@ export const api = {
   checkExits: () => http.post<T.Task>('/trading/exits/check'),
 
   // 实盘记账
-  real: () => http.get<T.RealPortfolio>('/real'),
+  real: (account = '') => http.get<T.RealPortfolio>(account ? `/real?account=${encodeURIComponent(account)}` : '/real'),
   addRealTrade: (trade: Record<string, unknown>) => http.post<{ ok: boolean }>('/real/trades', trade),
   deleteRealTrade: (id: number) => http.del<{ ok: boolean }>(`/real/trades/${id}`),
-  importRealTrades: (file: File) => http.upload<{ added: number; duplicate: number; skipped: number; actions_added?: number; error: string }>('/real/trades/import', file),
-  previewRealImport: (file: File) => http.upload<T.RealImportPreview>('/real/trades/import?preview=true', file),
-  realActions: () => http.get<T.RealCorporateAction[]>('/real/actions'),
+  importRealTrades: (file: File, account = '') => http.upload<{ added: number; duplicate: number; skipped: number; actions_added?: number; error: string }>(`/real/trades/import${account ? `?account=${encodeURIComponent(account)}` : ''}`, file),
+  previewRealImport: (file: File, account = '') => http.upload<T.RealImportPreview>(`/real/trades/import?preview=true${account ? `&account=${encodeURIComponent(account)}` : ''}`, file),
+  realActions: (account = '') => http.get<T.RealCorporateAction[]>(account ? `/real/actions?account=${encodeURIComponent(account)}` : '/real/actions'),
   addRealAction: (body: Record<string, unknown>) => http.post<{ ok: boolean }>('/real/actions', body),
   deleteRealAction: (id: number) => http.del<{ ok: boolean }>(`/real/actions/${id}`),
-  setRealCash: (cash: number) => http.put<{ ok: boolean }>('/real/cash', { cash }),
-  setRealPlan: (code: string, stop_loss: number | null, target_price: number | null) =>
-    http.put<{ ok: boolean }>(`/real/plans/${code}`, { stop_loss, target_price }),
+  setRealCash: (cash: number, account = '') => http.put<{ ok: boolean }>('/real/cash', { cash, account }),
+  setRealPlan: (code: string, stop_loss: number | null, target_price: number | null, account = '') =>
+    http.put<{ ok: boolean }>(`/real/plans/${code}`, { stop_loss, target_price, account }),
+  realAccounts: () => http.get<T.RealAccount[]>('/real/accounts'),
+  addRealAccount: (body: { name: string; broker?: string; note?: string }) => http.post<{ ok: boolean }>('/real/accounts', body),
+  updateRealAccount: (name: string, body: { name: string; broker?: string; note?: string }) =>
+    http.put<{ ok: boolean }>(`/real/accounts/${encodeURIComponent(name)}`, body),
+  deleteRealAccount: (name: string) => http.del<{ ok: boolean }>(`/real/accounts/${encodeURIComponent(name)}`),
 
   // 设置
   exportSettingsUrl: (includeSecrets: boolean) => `/api/v1/settings/export?include_secrets=${includeSecrets}`,
