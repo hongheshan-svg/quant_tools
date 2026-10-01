@@ -74,6 +74,14 @@ export const api = {
 
   // 策略选股
   screening: () => http.get<T.ScreeningLatest>('/screening'),
+  screeningDates: (limit = 60) => http.get<T.ScreeningDates>(`/screening/dates?limit=${limit}`),
+  screeningPicks: (tradeDate?: string, strategy?: string) => {
+    const q = new URLSearchParams()
+    if (tradeDate) q.set('trade_date', tradeDate)
+    if (strategy) q.set('strategy', strategy)
+    const qs = q.toString()
+    return http.get<T.ScreeningPicks>(`/screening/picks${qs ? `?${qs}` : ''}`)
+  },
   runScreening: () => http.post<T.Task<T.ScreenResult>>('/screening/run'),
   backtest: (days = 60) => http.post<T.Task<T.BacktestReport>>(`/screening/backtest?days=${days}`),
 

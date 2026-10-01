@@ -502,15 +502,28 @@ class StrategyScreener:
 
     def latest(self) -> list[dict[str, Any]]:
         """最近一次选股结果（按股票合并），附次日涨幅（已有次日行情时）。"""
+        return self.picks()
+
+    def picks(self, trade_date: str | None = None, strategy: str | None = None) -> list[dict[str, Any]]:
+        """某天的选股结果（按股票合并），附次日涨幅；trade_date 为空取最近一天。
+
+        strategy 非空时只保留入选了该策略的股票，合并后的 labels/reasons 仍含该股票当天所有策略。
+        """
         labels = {s.name: s.label for s in STRATEGIES}
         with get_db_session(self.db_path) as session:
-            trade_date = session.query(func.max(StrategyPick.trade_date)).scalar()
+            if not trade_date:
+                trade_date = session.query(func.max(StrategyPick.trade_date)).scalar()
             if not trade_date:
                 return []
             rows = (
                 session.query(StrategyPick).filter(StrategyPick.trade_date == trade_date)
                 .order_by(StrategyPick.score.desc(), StrategyPick.id).all()
             )
+            if strategy:
+                keep = {r.code for r in rows if r.strategy == strategy}
+                rows = [r for r in rows if r.code in keep]
+            if not rows:
+                return []
             next_changes = self._next_day_changes(session, trade_date, {r.code for r in rows})
             merged: dict[str, dict[str, Any]] = {}
             for r in rows:
@@ -525,6 +538,37 @@ class StrategyScreener:
         for item in merged.values():
             item["score"] = _merged_score(item.pop("scores"))
         return sorted(merged.values(), key=lambda x: (not x["fits_regime"], -x["score"], x["code"]))
+
+    def history_dates(self, limit: int = 60) -> list[dict[str, Any]]:
+        """最近 limit 个有选股的交易日（倒序）：入选数、各策略入选数、次日表现概览。"""
+        limit = max(1, min(int(limit), 250))
+        with get_db_session(self.db_path) as session:
+            dates = [d for (d,) in (
+                session.query(StrategyPick.trade_date).distinct()
+                .order_by(StrategyPick.trade_date.desc()).limit(limit).all()
+            )]
+            if not dates:
+                return []
+            rows = session.query(StrategyPick.trade_date, StrategyPick.code, StrategyPick.strategy).filter(
+                StrategyPick.trade_date.in_(dates)).all()
+            by_date: dict[str, list] = defaultdict(list)
+            for trade_date, code, strategy in rows:
+                by_date[trade_date].append((code, strategy))
+            result = []
+            for trade_date in dates:
+                items = by_date.get(trade_date, [])
+                codes = {c for c, _ in items}
+                strategies: dict[str, int] = defaultdict(int)
+                for _, st in {(c, st) for c, st in items}:
+                    strategies[st] += 1
+                changes = list(self._next_day_changes(session, trade_date, codes).values())
+                result.append({
+                    "trade_date": trade_date, "picks": len(codes), "strategies": dict(strategies),
+                    "evaluated": len(changes),
+                    "avg_next_pct": round(sum(changes) / len(changes), 2) if changes else None,
+                    "win_rate": round(sum(1 for c in changes if c > 0) / len(changes) * 100, 1) if changes else None,
+                })
+        return result
 
     def performance(self, lookback_days: int = 30) -> list[dict[str, Any]]:
         """近 lookback_days 天各策略选股的次日表现：平均涨幅、上涨比例、涨停比例。"""

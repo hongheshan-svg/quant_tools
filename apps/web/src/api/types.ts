@@ -428,6 +428,25 @@ export interface ScreeningLatest {
   backtest: BacktestReport | null
 }
 
+export interface ScreeningDate {
+  trade_date: string
+  picks: number
+  strategies: Dict<number>
+  evaluated: number
+  avg_next_pct: number | null
+  win_rate: number | null
+}
+
+export interface ScreeningDates {
+  dates: ScreeningDate[]
+  strategies: { name: string; label: string }[]
+}
+
+export interface ScreeningPicks {
+  trade_date: string | null
+  picks: ScreeningPick[]
+}
+
 export interface ScreenResult {
   trade_date: string
   regime: string

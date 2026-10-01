@@ -1,9 +1,10 @@
 // 策略选股：选股结果（含次日涨幅）、近 30 天策略次日表现、历史回测
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '@/api/endpoints'
-import type { BacktestReport, BacktestStrategy, ScreeningPick, ScreenResult, StrategyPerformance } from '@/api/types'
+import type { BacktestReport, BacktestStrategy, ScreeningDate, ScreeningPick, ScreenResult, StrategyPerformance } from '@/api/types'
 import { DataTable, type Column } from '@/components/DataTable'
-import { Badge, Button, Card, ErrorBox, PageHeader, Pct, Spinner } from '@/components/ui'
+import { Badge, Button, Card, ErrorBox, PageHeader, Pct, Select, Spinner } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
 import { useT } from '@/i18n'
 import { progressText, useTask } from '@/hooks/useTask'
@@ -15,8 +16,48 @@ export function ScreeningPage() {
   const t = useT()
   const navigate = useNavigate()
   const { data, error, loading, reload } = useApi(api.screening)
+  const datesApi = useApi(api.screeningDates)
+  const [selDate, setSelDate] = useState('')
+  const [strategy, setStrategy] = useState('')
+  const [histPicks, setHistPicks] = useState<ScreeningPick[] | null>(null)
+  const [histError, setHistError] = useState('')
   const screen = useTask<ScreenResult>()
   const backtest = useTask<BacktestReport>()
+
+  // 默认（最近一天、全部策略）直接用 /screening 的结果，切换日期或策略后请求 /screening/picks
+  useEffect(() => {
+    if (!selDate && !strategy) {
+      setHistPicks(null)
+      setHistError('')
+      return
+    }
+    let cancelled = false
+    api.screeningPicks(selDate || undefined, strategy || undefined)
+      .then((r) => { if (!cancelled) { setHistPicks(r.picks); setHistError('') } })
+      .catch((e) => { if (!cancelled) setHistError(e instanceof Error ? e.message : String(e)) })
+    return () => { cancelled = true }
+  }, [selDate, strategy])
+
+  const refreshAll = () => {
+    setSelDate('')
+    setStrategy('')
+    void datesApi.reload()
+    return reload()
+  }
+  const dates = datesApi.data?.dates ?? []
+  const strategyOptions = datesApi.data?.strategies ?? []
+  const dateLabel = (d: ScreeningDate) => {
+    const next = d.avg_next_pct == null ? '' : `，${t('次日均')} ${d.avg_next_pct > 0 ? '+' : ''}${d.avg_next_pct.toFixed(2)}%`
+    return `${d.trade_date}（${t('{n} 只', { n: d.picks })}${next}）`
+  }
+  const histColumns: Column<ScreeningDate>[] = [
+    { key: 'date', title: t('日期'), render: (d) => <span className="num">{d.trade_date}</span> },
+    { key: 'picks', title: t('入选数'), align: 'right', render: (d) => <span className="num">{d.picks}</span> },
+    { key: 'eval', title: t('已验证'), align: 'right', render: (d) => <span className="num">{d.evaluated}</span> },
+    { key: 'avg', title: t('次日均涨幅'), align: 'right', render: (d) => <Pct value={d.avg_next_pct} /> },
+    { key: 'win', title: t('次日上涨比例'), align: 'right', render: (d) => rate(d.win_rate) },
+  ]
+  const shownPicks = histPicks ?? data?.picks ?? []
 
   const pickColumns: Column<ScreeningPick>[] = [
     { key: 'stock', title: t('股票'), render: (p) => <><div>{p.name}</div><div className="num text-xs text-muted">{p.code}</div></> },
@@ -61,7 +102,7 @@ export function ScreeningPage() {
             <Button loading={backtest.running} onClick={() => backtest.run(() => api.backtest(60), { success: (r) => (r.note ? r.note : t('回测完成：{n} 个交易日', { n: r.dates })) }).then(reload).catch(() => {})}>
               {backtest.running ? `${t('回测中')} ${progressText(backtest.progress)}` : t('历史回测（60 天）')}
             </Button>
-            <Button variant="primary" loading={screen.running} onClick={() => screen.run(api.runScreening, { success: (r) => t('选出 {n} 只', { n: r.picks.length }) + (r.notes.length ? '（' + r.notes[0] + '）' : '') }).then(reload).catch(() => {})}>
+            <Button variant="primary" loading={screen.running} onClick={() => screen.run(api.runScreening, { success: (r) => t('选出 {n} 只', { n: r.picks.length }) + (r.notes.length ? '（' + r.notes[0] + '）' : '') }).then(refreshAll).catch(() => {})}>
               {t('重新选股')}
             </Button>
           </>
@@ -70,8 +111,27 @@ export function ScreeningPage() {
       {error && <ErrorBox message={error} onRetry={reload} />}
       {loading && !data ? <Spinner /> : (
         <div className="space-y-4">
-          <Card title={t('选股结果')} bodyClassName="p-0">
-            <DataTable columns={pickColumns} rows={data?.picks ?? []} rowKey={(p) => p.code} onRowClick={(p) => navigate(`/stocks/${p.code}`)} empty={t('暂无选股结果，点「重新选股」扫描全市场')} />
+          <Card
+            title={t('选股结果')}
+            actions={
+              <div className="flex gap-2">
+                <Select aria-label={t('选股日期')} value={selDate} onChange={(e) => setSelDate(e.target.value)}>
+                  <option value="">{t('最近一天')}</option>
+                  {dates.map((d) => <option key={d.trade_date} value={d.trade_date}>{dateLabel(d)}</option>)}
+                </Select>
+                <Select aria-label={t('策略筛选')} value={strategy} onChange={(e) => setStrategy(e.target.value)}>
+                  <option value="">{t('全部策略')}</option>
+                  {strategyOptions.map((s) => <option key={s.name} value={s.name}>{t(s.label)}</option>)}
+                </Select>
+              </div>
+            }
+            bodyClassName="p-0"
+          >
+            {histError && <ErrorBox message={histError} />}
+            <DataTable columns={pickColumns} rows={shownPicks} rowKey={(p) => p.code} onRowClick={(p) => navigate(`/stocks/${p.code}`)} empty={t('暂无选股结果，点「重新选股」扫描全市场')} />
+          </Card>
+          <Card title={t('历史概览（最近 20 个交易日）')} bodyClassName="p-0">
+            <DataTable columns={histColumns} rows={dates.slice(0, 20)} rowKey={(d) => d.trade_date} onRowClick={(d) => setSelDate(d.trade_date)} empty={t('暂无历史选股')} />
           </Card>
           <Card title={t('策略次日表现（近 30 天实际选股）')} bodyClassName="p-0">
             <DataTable columns={perfColumns} rows={data?.performance ?? []} rowKey={(r) => r.strategy} />

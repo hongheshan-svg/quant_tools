@@ -194,6 +194,18 @@ class PipelineService:
         screener = StrategyScreener(self.config)
         return {"picks": screener.latest(), "performance": screener.performance(), "backtest": self.latest_backtest()}
 
+    def screening_dates(self, limit: int = 60) -> list[dict[str, Any]]:
+        """有选股结果的历史交易日概览（倒序）。"""
+        from src.strategy.screener import StrategyScreener
+
+        return StrategyScreener(self.config).history_dates(limit)
+
+    def screening_picks(self, trade_date: str | None = None, strategy: str | None = None) -> list[dict[str, Any]]:
+        """指定交易日（空为最近一天）的选股结果，可按策略筛选。"""
+        from src.strategy.screener import StrategyScreener
+
+        return StrategyScreener(self.config).picks(trade_date, strategy)
+
     def market_regime(self) -> dict[str, Any]:
         """大盘环境评估（进攻/均衡/防守/冰点 + 情绪周期）。"""
         from src.analyzers.market_regime import MarketRegimeAnalyzer
