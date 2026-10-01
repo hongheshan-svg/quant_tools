@@ -1,4 +1,4 @@
-name: 每日分析
+name: Daily analysis
 
 # 收盘后在 GitHub Actions 上执行一遍：数据采集 → 综合分析 → 交易信号 → 大盘复盘与日报推送 → 自学习 → 自选股仪表盘。
 #
@@ -28,15 +28,15 @@ on:
   workflow_dispatch:
     inputs:
       steps:
-        description: "执行的步骤，逗号分隔，留空为全部：collect,analysis,signals,report,learn,watchlist"
+        description: "Steps to run, comma-separated; empty runs all: collect,analysis,signals,report,learn,watchlist"
         required: false
         default: ""
       stocks:
-        description: "只诊断这些股票并推送决策仪表盘，逗号分隔，代码、名称、拼音首字母均可（填了就不执行 steps）"
+        description: "Only diagnose these stocks and push the dashboard, comma-separated (code, name or pinyin initials); overrides steps"
         required: false
         default: ""
       no_notify:
-        description: "不推送任何消息"
+        description: "Do not send any notifications"
         type: boolean
         required: false
         default: false
@@ -50,6 +50,7 @@ permissions:
 
 jobs:
   run:
+    name: Run daily analysis
     if: github.event_name == 'workflow_dispatch' || vars.ENABLE_DAILY_ANALYSIS == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -117,31 +118,31 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: 安装依赖
+      - name: Install dependencies
         run: |
           grep -viE '^(pyqt6|pyinstaller)' requirements.txt > /tmp/requirements.txt
           pip install -r /tmp/requirements.txt
           playwright install --with-deps chromium
 
-      - name: 写入配置
+      - name: Write settings.yaml
         env:
           SETTINGS_YAML: ${{ secrets.SETTINGS_YAML }}
         run: |
           if [ -n "$SETTINGS_YAML" ]; then
             printf '%s\n' "$SETTINGS_YAML" > config/settings.yaml
-            echo "已写入 config/settings.yaml"
+            echo "Wrote config/settings.yaml from SETTINGS_YAML"
           else
-            echo "没有 SETTINGS_YAML，使用默认配置和环境变量"
+            echo "No SETTINGS_YAML; using default settings and QUANT__ environment variables"
           fi
 
-      - name: 恢复数据库
+      - name: Restore database
         uses: actions/cache/restore@v6
         with:
           path: data
           key: quant-data-${{ github.run_id }}
           restore-keys: quant-data-
 
-      - name: 执行
+      - name: Run pipeline
         env:
           STEPS: ${{ inputs.steps }}
           STOCKS: ${{ inputs.stocks }}
@@ -157,14 +158,14 @@ jobs:
             python main.py --once "${args[@]}"
           fi
 
-      - name: 保存数据库
+      - name: Save database
         if: always()
         uses: actions/cache/save@v6
         with:
           path: data
           key: quant-data-${{ github.run_id }}
 
-      - name: 上传日志
+      - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v7
         with:

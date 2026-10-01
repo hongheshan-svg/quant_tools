@@ -6,6 +6,7 @@
 
 缺文件、缺隐藏导入只有运行到那段代码才会报错，所以除了健康检查，还请求了用到 AKShare、平台预设、
 内置策略、内置报告模板的接口。用临时数据目录运行，不启动定时任务，不需要联网。失败时打印后台日志并返回 1。
+输出在 GitHub Actions 日志里显示，用英文。
 """
 
 import argparse
@@ -42,7 +43,7 @@ def main() -> int:
     args = parser.parse_args()
     exe = Path(args.exe)
     if not exe.exists():
-        print(f"找不到后台程序：{exe}")
+        print(f"Backend executable not found: {exe}")
         return 1
 
     workdir = Path(tempfile.mkdtemp(prefix="quant-smoke-"))
@@ -57,7 +58,7 @@ def main() -> int:
         deadline = time.time() + STARTUP_TIMEOUT
         while time.time() < deadline:
             if proc.poll() is not None:
-                print(f"后台服务提前退出，代码 {proc.returncode}")
+                print(f"Backend exited early with code {proc.returncode}")
                 break
             try:
                 if get(base + PATHS[0], timeout=3) == 200:
@@ -65,7 +66,7 @@ def main() -> int:
             except Exception:
                 time.sleep(1)
         else:
-            print(f"{STARTUP_TIMEOUT} 秒内没有就绪")
+            print(f"Backend not ready within {STARTUP_TIMEOUT}s")
         if proc.poll() is None:
             failures = []
             for path in PATHS:
@@ -84,10 +85,10 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             proc.kill()
     if not ok:
-        print("----- 后台日志 -----")
+        print("----- backend log -----")
         print(log_path.read_text(encoding="utf-8", errors="replace")[-8000:])
     shutil.rmtree(workdir, ignore_errors=True)
-    print("冒烟测试通过" if ok else "冒烟测试失败")
+    print("Smoke test passed" if ok else "Smoke test FAILED")
     return 0 if ok else 1
 
 

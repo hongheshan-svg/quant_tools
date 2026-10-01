@@ -1,4 +1,4 @@
-name: 数据源检查
+name: Data source check
 
 # 每个交易日开盘后联网检查各数据源（scripts/check_sources.py），及早发现接口变化。
 # 关键数据源（行情、交易日历、涨停池）不可用时任务失败；结果表格见任务摘要。
@@ -18,6 +18,7 @@ permissions:
 
 jobs:
   smoke:
+    name: Check data sources
     if: github.event_name == 'workflow_dispatch' || vars.ENABLE_NETWORK_SMOKE == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -31,11 +32,11 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: 安装依赖
+      - name: Install dependencies
         run: |
           grep -viE '^(pyqt6|pyinstaller)' requirements.txt > /tmp/requirements.txt
           pip install -r /tmp/requirements.txt
           playwright install --with-deps chromium
 
-      - name: 检查数据源
+      - name: Check data sources
         run: python scripts/check_sources.py
