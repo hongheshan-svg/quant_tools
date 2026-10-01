@@ -9,6 +9,7 @@ const {
   exitReason,
   findAvailablePort,
   isExternalUrl,
+  needsNoSandbox,
   resolveBackendLaunch,
   startBackend,
   stopBackend,
@@ -18,6 +19,8 @@ const { canAutoInstall, readPrefs, releasePageUrl, shouldAutoCheck, writePrefs }
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..')
 const LOADING_PAGE = path.join(__dirname, 'renderer', 'loading.html')
+
+if (needsNoSandbox()) app.commandLine.appendSwitch('no-sandbox')
 
 let mainWindow = null
 let backend = null

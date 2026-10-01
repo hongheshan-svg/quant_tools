@@ -160,3 +160,10 @@ test('isExternalUrl 只放行站外的 http(s) 链接', () => {
   assert.equal(backend.isExternalUrl('javascript:alert(1)', origin), false)
   assert.equal(backend.isExternalUrl('not a url', origin), false)
 })
+
+test('只有 Linux 的 AppImage 关闭 Chromium 沙箱', () => {
+  assert.equal(backend.needsNoSandbox('linux', { APPIMAGE: '/tmp/AStockQuant.AppImage' }), true)
+  assert.equal(backend.needsNoSandbox('linux', {}), false)
+  assert.equal(backend.needsNoSandbox('darwin', { APPIMAGE: 'x' }), false)
+  assert.equal(backend.needsNoSandbox('win32', {}), false)
+})

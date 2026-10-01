@@ -529,7 +529,7 @@ cd apps/desktop && npm test                                 # 桌面端
 
 前端开发：先运行 `python server.py`，再在 `apps/web` 运行 `npm run dev`，打开 http://localhost:5173（接口自动代理到 8000 端口）。
 
-打包：桌面端安装包用 `python scripts/build_desktop.py`；推送 `v*` 标签时 GitHub Actions 会打包 Windows 和 macOS 安装包并上传到 Release。旧版 PyQt6 EXE 仍可用 `powershell .\scripts\build_exe.ps1` 打包（需要自行准备未纳入仓库的 `AStockQuantQt6.spec`）。
+打包：桌面端安装包用 `python scripts/build_desktop.py`；推送 `v*` 标签时 GitHub Actions 会打包 Windows 安装包、macOS dmg（Apple 芯片）和 Linux AppImage 并上传到 Release。旧版 PyQt6 EXE 仍可用 `powershell .\scripts\build_exe.ps1` 打包（需要自行准备未纳入仓库的 `AStockQuantQt6.spec`）。
 
 提交信息遵循 Conventional Commits（`feat:`、`fix:`、`docs:` 等）。更多约定见 [AGENTS.md](AGENTS.md)。
 

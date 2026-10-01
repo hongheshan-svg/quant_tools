@@ -83,7 +83,9 @@ cd apps/desktop && npm test                                 # node --test，不�
 
 ## 打包
 
-- **桌面端安装包：** `python scripts/build_desktop.py`（`--backend-only`、`--skip-web`、`--dir`）。依次构建前端 → 用 PyInstaller 把 `server.py` 打成 onedir 的 `dist/backend/quant_server`（内置 `settings.yaml.example`、`stock_pool.yaml`、策略技能（`src/services/skills`）和前端，排除 PyQt6）→ electron-builder 打包（Windows NSIS、macOS dmg，产物在 `apps/desktop/dist/`）。只能打包当前系统的安装包；推送 `v*` 标签时 `desktop-release.yml` 在 Windows 和 macOS 上打包并上传到 Release。
+- **桌面端安装包：** `python scripts/build_desktop.py`（`--backend-only`、`--skip-web`、`--dir`）。依次构建前端 → 用 PyInstaller 把 `server.py` 打成 onedir 的 `dist/backend/quant_server`（内置 `settings.yaml.example`、`stock_pool.yaml`、策略技能（`src/services/skills`）和前端，排除 PyQt6）→ electron-builder 打包（Windows NSIS、macOS dmg、Linux AppImage，产物在 `apps/desktop/dist/`）。只能打包当前系统的安装包；推送 `v*` 标签时 `desktop-release.yml` 在 Windows、macOS、Linux（ubuntu-22.04，兼容 glibc 2.35+）上打包，先用 `scripts/smoke_backend.py` 启动打包的后台服务请求几个接口做冒烟测试，再上传到 Release。
+  - macOS 没有 Developer ID：`mac.identity: "-"` 对整个 .app 做 ad-hoc 签名（需要 `hardenedRuntime: false`），否则签名不完整，下载后提示「已损坏」；有效的 ad-hoc 签名只需在「隐私与安全性」里允许一次。
+  - Linux AppImage 挂载为 nosuid，Ubuntu 23.10+ 又限制非特权 user namespace，Chromium 沙箱不可用，`needsNoSandbox()` 为真时（AppImage）主进程追加 `--no-sandbox`。
   - 打包时用 `build_desktop.py` 的 `--add-data` 把 `src/services/skills` 和内置报告模板 `src/services/templates` 内置，用户自定义策略放在 `config/strategies/`、自定义报告模板放在 `config/templates/`（数据目录）。
   - 运行时按字符串导入或带数据文件、原生库的包要加到脚本里的 `HIDDEN_IMPORTS`、`COLLECT_DATA`、`COLLECT_SUBMODULES`、`COLLECT_ALL`（例如 litellm 的价格表、akshare 的数据文件、py_mini_racer 的动态库）。打包后记得实际运行 `quant_server` 冒烟，缺文件只有运行到那段代码才会报错。
   - 打包的后台服务用 `--workdir` 指定数据目录，启动时把内置的示例配置复制进去（每次覆盖），股票池规则只在缺失时复制；没传 `--workdir` 时用可执行文件所在目录。它还会在后台执行 `playwright install chromium`。
@@ -408,7 +410,7 @@ cd apps/desktop && npm test                                 # node --test，不�
 ### 部署与 CI（`docker/`、`.github/workflows/`）
 
 - Docker：多阶段构建（先构建前端），以 UID 1000 的 `quant` 用户运行，默认 `python server.py --host 0.0.0.0`。默认配置放在镜像的 `/app/defaults/config`，`entrypoint.sh` 启动时复制进挂载的 `/app/config`（示例配置覆盖、股票池缺失才复制），并修复挂载目录属主。compose 用环境变量开启 Web 登录，因为容器外的请求不算本机。因为 `COPY src/` 会自然包含 `src/services/skills`，所以 Docker 镜像内置有策略技能。
-- **桌面端自动更新：** 使用 electron-updater，检查 GitHub Release（hongheshan-svg/quant_tools）；启动时检查（可在设置禁用，偏好文件 `desktop-prefs.json`），菜单「帮助 → 检查更新」手动触发；Windows 下载后重启安装，macOS 未签名只提示前往下载。发布工作流需上传 `latest*.yml` 和 `*.blockmap`（旧版本发布没有这些文件时检查不到更新）。
+- **桌面端自动更新：** 使用 electron-updater，检查 GitHub Release（hongheshan-svg/quant_tools）；启动时检查（可在设置禁用，偏好文件 `desktop-prefs.json`），菜单「帮助 → 检查更新」手动触发；Windows 和 Linux（AppImage）下载后重启安装，macOS 未签名只提示前往下载。发布工作流需上传 `latest*.yml` 和 `*.blockmap`（旧版本发布没有这些文件时检查不到更新）。
 - 工作流：
   - `ci.yml`（后端测试、前端 lint/测试/构建、桌面端测试）。
   - `daily-analysis.yml`（工作日 16:40 `main.py --once`）：需要仓库变量 `ENABLE_DAILY_ANALYSIS=true`。配置来自 Secret `SETTINGS_YAML` 或按段映射为 `QUANT__` 环境变量的单独 Secret（LLM、各推送渠道、搜索源都支持）。支持 workflow_dispatch 新增 `stocks` 输入诊断指定股票、`no_notify` 不推送。数据库用 actions/cache 保留到下一次运行。

@@ -140,6 +140,12 @@ function isExternalUrl(url, backendOrigin) {
   }
 }
 
+// Linux 的 AppImage 挂载为 nosuid，用不了 setuid 的 chrome-sandbox；Ubuntu 23.10+ 又用 AppArmor 限制了非特权 user namespace，
+// Chromium 沙箱两种方式都不可用，Electron 直接启动失败。AppImage 运行时关闭沙箱（界面只加载本机后台服务，站外链接交给系统浏览器）
+function needsNoSandbox(platform = process.platform, env = process.env) {
+  return platform === 'linux' && Boolean(env.APPIMAGE)
+}
+
 module.exports = {
   BACKEND_HOST,
   HEALTH_PATH,
@@ -147,6 +153,7 @@ module.exports = {
   exitReason,
   findAvailablePort,
   isExternalUrl,
+  needsNoSandbox,
   resolveBackendLaunch,
   resolvePython,
   startBackend,

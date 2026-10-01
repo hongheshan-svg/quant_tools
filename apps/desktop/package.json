@@ -58,7 +58,8 @@
     },
     "linux": {
       "target": "AppImage",
-      "artifactName": "AStockQuant-${version}-linux-${arch}.${ext}"
+      "artifactName": "AStockQuant-${version}-linux-${arch}.${ext}",
+      "category": "Finance"
     }
   },
   "dependencies": {
