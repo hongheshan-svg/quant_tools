@@ -71,7 +71,10 @@ describe('SettingsPage notifier tab (new channels)', () => {
     })
     await openNotifierTab()
     const fieldset = await screen.findByRole('group', { name: 'Telegram' })
+    // 等表单从接口初始化完成后再改，否则随后的状态同步会覆盖输入
+    await vi.waitFor(() => expect(screen.getByLabelText(/Chat ID/)).toHaveValue('-100'))
     fireEvent.change(screen.getByLabelText(/Chat ID/), { target: { value: '-999' } })
+    await vi.waitFor(() => expect(screen.getByLabelText(/Chat ID/)).toHaveValue('-999'))
     fireEvent.click(within(fieldset).getByRole('button', { name: /测试/ }))
     await vi.waitFor(() => {
       const call = fetchMock.mock.calls.find(([u]) => String(u).includes('/settings/notifier/test/telegram'))
