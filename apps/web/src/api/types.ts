@@ -633,6 +633,7 @@ export interface ChatSession {
 export interface WatchlistRow {
   code: string
   name: string
+  kind?: 'stock' | 'etf' | 'index'
   note: string
   added_at: string
   trade_date: string

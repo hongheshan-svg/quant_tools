@@ -31,6 +31,15 @@ BUCKETS = (
 )
 
 
+FUND_TAGS = {"etf": "ETF", "index": "指数"}
+
+
+def _title(it: dict[str, Any]) -> str:
+    """名称(代码)，ETF/指数在后面标注类型。"""
+    tag = FUND_TAGS.get(it.get("kind", "stock"))
+    return f"{it['name']}({it['code']})" + (f"「{tag}」" if tag else "")
+
+
 def bucket_of(action: str) -> tuple[str, str]:
     return next(((icon, label) for icon, label, actions in BUCKETS if action in actions), ("⚪", "其他"))
 
@@ -71,11 +80,11 @@ def render_dashboard(trade_date: str, items: list[dict[str, Any]], failed: list[
     ordered = sorted(items, key=lambda it: (_bucket_rank(it["action"]), -(it["score"] or 0), it["code"]))
     for it in ordered:
         icon, _ = bucket_of(it["action"])
-        lines.append(f"- {icon} **{it['name']}({it['code']})**：{it['action_label']}｜评分 {it['score']}｜{it['one_sentence'] or '-'}"
+        lines.append(f"- {icon} **{_title(it)}**：{it['action_label']}｜评分 {it['score']}｜{it['one_sentence'] or '-'}"
                      f"（{it['change']}）")
     lines.append("### 🔎 个股要点")
     for it in ordered:
-        detail = [f"**{it['name']}({it['code']})** {it['action_label']} {it['score']}分"]
+        detail = [f"**{_title(it)}** {it['action_label']} {it['score']}分"]
         plan = it.get("battle_plan") or {}
         plan_text = "，".join(f"{label}{plan[k]:.2f}" for k, label in (("buy_price", "买入"), ("stop_loss", "止损"), ("target_price", "目标")) if plan.get(k))
         if plan_text:
@@ -94,11 +103,12 @@ def render_dashboard(trade_date: str, items: list[dict[str, Any]], failed: list[
 
 
 class WatchlistReportService:
-    def __init__(self, config: dict | None = None, diagnosis=None):
+    def __init__(self, config: dict | None = None, diagnosis=None, fund_diagnosis=None):
         self.config = config or load_config()
         self.db_path = self.config.get("database", {}).get("sqlite_path", "data/quant.db")
         self.workers = max(1, int((self.config.get("watchlist") or {}).get("workers", 3)))
         self._diagnosis = diagnosis
+        self._fund_diagnosis = fund_diagnosis
 
     @property
     def diagnosis(self):
@@ -107,6 +117,15 @@ class WatchlistReportService:
 
             self._diagnosis = StockDiagnosisService(self.config)
         return self._diagnosis
+
+    @property
+    def fund_diagnosis(self):
+        """ETF/指数用基金诊断服务（复用规则相同）。"""
+        if self._fund_diagnosis is None:
+            from src.services.fund_diagnosis import FundDiagnosisService
+
+            self._fund_diagnosis = FundDiagnosisService(self.config)
+        return self._fund_diagnosis
 
     def run(self, push: bool = True, progress: Callable[[int, int], None] | None = None,
             now: datetime | None = None, codes: list[str] | None = None) -> dict[str, Any]:
@@ -147,31 +166,39 @@ class WatchlistReportService:
                 "counts": counts, "markdown": markdown, "pushed": pushed}
 
     def _stocks_of(self, codes: list[str]) -> list[dict[str, Any]]:
-        """代码列表 → [{code, name}]（去重保序，名称从 stock_info 取，取不到用行情库）。"""
+        """代码列表 → [{code, name, kind}]（去重保序；个股名称从 stock_info/行情库取，ETF/指数从 fund_info/内置指数取）。"""
         from src.database.models import StockDaily, StockInfo
-        from src.utils.stock_code import bare_code, code_candidates
+        from src.services.fund_registry import fund_kind, resolve_fund
+        from src.utils.stock_code import code_candidates, diagnosis_code
 
         result = []
         with get_db_session(self.db_path) as session:
-            for code in dict.fromkeys(bare_code(c) for c in codes):
+            for code in dict.fromkeys(diagnosis_code(c) for c in codes):
+                kind = fund_kind(code, self.db_path)
+                if kind:
+                    fund = resolve_fund(code, self.db_path)
+                    result.append({"code": code, "name": (fund or {}).get("name", ""), "kind": kind})
+                    continue
                 name = session.query(StockInfo.name).filter(StockInfo.code.in_(code_candidates(code))).limit(1).scalar()
                 if not name:
                     name = (session.query(StockDaily.name).filter(StockDaily.code.in_(code_candidates(code)))
                             .order_by(StockDaily.trade_date.desc()).limit(1).scalar())
-                result.append({"code": code, "name": name or ""})
+                result.append({"code": code, "name": name or "", "kind": "stock"})
         return result
 
     def _diagnose_one(self, stock: dict[str, Any], threshold: str) -> dict[str, Any]:
         code = stock["code"]
-        latest = self.diagnosis.latest(code)
+        kind = stock.get("kind") or "stock"
+        service = self.diagnosis if kind == "stock" else self.fund_diagnosis
+        latest = service.latest(code)
         reused = bool(latest and not latest.get("error") and latest.get("created_at", "") >= threshold)
-        result = latest if reused else self.diagnosis.diagnose(code, force=True)
+        result = latest if reused else service.diagnose(code, force=True)
         if result.get("error"):
             return {"error": result["error"]}
-        history = self.diagnosis.history(code, limit=2)
+        history = service.history(code, limit=2)
         previous = history[1] if len(history) > 1 else None
         return {
-            "code": code, "name": result.get("name") or stock["name"], "action": result["action"],
+            "code": code, "kind": kind, "name": result.get("name") or stock["name"], "action": result["action"],
             "action_label": result["action_label"], "score": result["score"], "one_sentence": result.get("one_sentence", ""),
             "battle_plan": result.get("battle_plan") or {}, "catalysts": result.get("catalysts") or [],
             "risks": result.get("risks") or [], "guardrails": result.get("guardrails") or [],

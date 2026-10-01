@@ -298,11 +298,13 @@ def test_stock_search_stock_first(db_path):
     assert not any(r["code"] == "sh000001" and r is found[0] for r in found)
 
 
-def test_watchlist_rejects_funds(db_path):
+def test_watchlist_accepts_funds(db_path):
     from src.services.watchlist import WatchlistService
 
     service = WatchlistService({"database": {"sqlite_path": db_path}})
-    for text in ("510300", "沪深300", "sh000300"):
+    for text, code in (("510300", "510300"), ("沪深300", "sh000300")):
         result = service.add(text)
-        assert not result.get("ok"), (text, result)
+        assert result.get("ok") and result["code"] == code, (text, result)
+    assert not service.add("sh000300").get("ok")  # 重复添加
+    assert not service.add("sh000300", include_funds=False).get("ok")
     assert service.add("600519").get("ok")

@@ -358,7 +358,7 @@ class ChatTools:
         if not rows:
             return "自选股为空"
         return "自选股：" + "；".join(
-            f"{r['name']}({r['code']}) " + (f"{r['close']}（{r['change_pct'] or 0:+.2f}%）" if r["close"] else "无行情")
+            f"{r['name']}({r['code']})" + {"etf": "[ETF]", "index": "[指数]"}.get(r.get("kind", "stock"), "") + " " + (f"{r['close']}（{r['change_pct'] or 0:+.2f}%）" if r["close"] else "无行情")
             + (f" 诊断：{r['diagnosis']['action_label']} {r['diagnosis']['score']}分（{r['diagnosis']['created_at']}）" if r["diagnosis"] else " 未诊断")
             for r in rows
         )

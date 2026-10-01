@@ -4,7 +4,7 @@ A股舆情驱动量化交易系统 - 主入口
     python main.py                                   # 定时任务常驻运行
     python main.py --once                            # 按顺序执行一遍收盘后的全部任务后退出
     python main.py --once --steps collect,analysis   # 只执行部分步骤
-    python main.py --stocks 600519,贵州茅台          # 只诊断这些股票并推送决策仪表盘
+    python main.py --stocks 600519,510300,沪深300      # 只诊断这些股票（支持 ETF、指数）并推送决策仪表盘
     python main.py --check-notify                    # 检查推送配置后退出
 """
 
@@ -57,7 +57,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="A股舆情驱动量化交易系统")
     parser.add_argument("--once", action="store_true", help="执行一遍收盘后的任务后退出（GitHub Actions、Docker 定时任务用）")
     parser.add_argument("--steps", help=f"--once 时只执行这些步骤，逗号分隔：{','.join(ONCE_STEPS)}")
-    parser.add_argument("--stocks", help="只对这些股票执行 AI 诊断并推送决策仪表盘后退出，逗号分隔，代码、名称、拼音首字母均可，如 600519,贵州茅台；不受交易日限制")
+    parser.add_argument("--stocks", help="只对这些股票执行 AI 诊断并推送决策仪表盘后退出，逗号分隔，代码、名称、拼音首字母均可，支持 ETF 和指数，如 600519,贵州茅台,510300,沪深300；不受交易日限制")
     parser.add_argument("--no-notify", action="store_true", help="不推送任何消息（对 --once、--stocks 和常驻调度都生效）")
     parser.add_argument("--check-notify", action="store_true", help="检查推送渠道配置，打印结果后退出（全部正常时退出码为 0）")
     parser.add_argument("--debug", action="store_true", help="日志级别改为 DEBUG（控制台和文件）")

@@ -13,6 +13,7 @@ import { progressText, useTask } from '@/hooks/useTask'
 import { t, useT } from '@/i18n'
 import { toast } from '@/stores/toast'
 import { fmtNum, verdictClass } from '@/utils/format'
+import { FUND_LABELS } from '@/utils/fund'
 
 export function importSummary(r: ImportResult): string {
   const parts = [t('新增 {n} 只', { n: r.added.length })]
@@ -82,7 +83,17 @@ export function WatchlistPage() {
   }
 
   const columns: Column<WatchlistRow>[] = [
-    { key: 'name', title: t('股票'), render: (r) => <><div>{r.name}</div><div className="num text-xs text-muted">{r.code}</div></> },
+    { key: 'name', title: t('股票'), render: (r) => (
+      <>
+        <div>
+          {r.name}
+          {r.kind && r.kind !== 'stock' && (
+            <span className="ml-1.5 rounded bg-accent/10 px-1 py-0.5 text-[10px] font-normal text-accent">{t(FUND_LABELS[r.kind])}</span>
+          )}
+        </div>
+        <div className="num text-xs text-muted">{r.code}</div>
+      </>
+    ) },
     { key: 'close', title: t('最新价'), align: 'right', render: (r) => <span className="num">{fmtNum(r.close)}</span> },
     { key: 'pct', title: t('涨跌幅'), align: 'right', render: (r) => <Pct value={r.change_pct} /> },
     { key: 'action', title: t('最近诊断'), render: (r) => <span className={verdictClass(r.diagnosis?.action_label)}>{t(r.diagnosis?.action_label ?? '未诊断')}</span> },
@@ -105,7 +116,7 @@ export function WatchlistPage() {
     <div onPaste={onPaste}>
       <PageHeader
         title={t('自选股')}
-        description={t('收盘后（16:30）自动逐只 AI 诊断并推送决策仪表盘；盘中提醒也会关注自选股')}
+        description={t('收盘后（16:30）自动逐只 AI 诊断并推送决策仪表盘（支持 ETF 和指数）；盘中提醒也会关注个股自选')}
         actions={
           <Button
             variant="primary"
@@ -125,7 +136,7 @@ export function WatchlistPage() {
           title={t('自选股（{n}）', { n: list.data?.length ?? 0 })}
           actions={
             <>
-              <StockSearch className="w-56" placeholder={t('添加：代码 / 名称 / 拼音')} onSelect={(s) => void add(s.code)} />
+              <StockSearch className="w-56" placeholder={t('添加：股票 / ETF / 指数')} onSelect={(s) => void add(s.code)} />
               <Button onClick={() => setPasteOpen(true)}>{t('粘贴导入')}</Button>
               <Button onClick={() => fileInput.current?.click()}>{t('文件导入')}</Button>
               <Button loading={imageTask.running} onClick={() => imageInput.current?.click()} title={t('也可以直接在页面上粘贴截图')}>
@@ -220,7 +231,7 @@ export function WatchlistPage() {
           </Button>
         }
       >
-        <p className="mb-2 text-xs text-muted">{t('粘贴一段文字（如券商自选股列表、聊天记录），自动识别其中的 6 位代码和股票名称')}</p>
+        <p className="mb-2 text-xs text-muted">{t('粘贴一段文字（如券商自选股列表、聊天记录），自动识别其中的 6 位代码和股票名称（批量导入只识别个股，ETF 和指数请用上方搜索框添加）')}</p>
         <Textarea rows={8} value={pasteText} onChange={(e) => setPasteText(e.target.value)} aria-label={t('导入内容')} />
       </Modal>
     </div>

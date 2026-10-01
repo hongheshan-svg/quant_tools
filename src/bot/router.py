@@ -36,7 +36,7 @@ HELP_TEXT = """**A股量化助手**
 - **研究 固态电池产业链**：深度研究报告，联网检索并综合行情，约 1~2 分钟（也可用 深度研究、/research）
 - **大盘**：最近一次大盘复盘和次日姿态
 - **预测**：今日 AI 涨停预测
-- **自选**：自选股和最近诊断；**自选 加 茅台** / **自选 删 茅台**
+- **自选**：自选股（含 ETF、指数）和最近诊断；**自选 加 茅台** / **自选 删 茅台**
 - **持仓**：模拟盘和实盘记账的持仓
 - **状态**：数据源健康状况
 - **清空**：结束当前 AI 问股对话
@@ -135,7 +135,7 @@ class CommandRouter:
         return HELP_TEXT
 
     def _resolve(self, text: str, funds: bool = False) -> tuple[str, str] | None:
-        """funds=True 时先识别 ETF/指数（诊断类命令用）；自选股等仍只接受个股。"""
+        """funds=True 时先识别 ETF/指数（诊断类命令用）。"""
         from src.services.watchlist import WatchlistService
 
         query = _FILLER.sub("", text.strip())
@@ -294,7 +294,7 @@ class CommandRouter:
         return f"已加入自选：{result['name']}({result['code']})" if result.get("ok") else str(result.get("error") or "添加失败")
 
     def _watch_remove(self, target: str) -> str:
-        resolved = self._resolve(target) if target else None
+        resolved = self._resolve(target, funds=True) if target else None
         if not resolved:
             return f"找不到股票「{target}」" if target else "请带上股票，例如：自选 删 茅台"
         code, name = resolved

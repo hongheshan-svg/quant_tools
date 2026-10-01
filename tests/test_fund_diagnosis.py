@@ -283,11 +283,13 @@ def test_api_news_empty_for_funds(env):
         assert not body.get("news") and not body.get("notices")
 
 
-def test_api_watchlist_rejects_funds(env):
+def test_api_watchlist_accepts_funds(env):
     client, _ = env
     for code in ("510300", "沪深300"):
         res = client.post("/api/v1/watchlist", json={"text": code})
-        assert res.status_code == 200 and not res.json().get("ok")
+        assert res.status_code == 200 and res.json().get("ok"), res.json()
+    kinds = {r["code"]: r["kind"] for r in client.get("/api/v1/watchlist").json()}
+    assert kinds == {"510300": "etf", "sh000300": "index"}
 
 
 # ---------- 问股工具 ----------

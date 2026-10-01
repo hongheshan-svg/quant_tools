@@ -212,7 +212,7 @@ class RealPortfolioService:
             return bare, name
         from src.services.watchlist import WatchlistService
 
-        resolved = WatchlistService(self.config).resolve(code)
+        resolved = WatchlistService(self.config).resolve(code, include_funds=False)
         if not resolved:
             return f"找不到股票「{code}」"
         return resolved[0], name or resolved[1]

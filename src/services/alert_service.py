@@ -238,6 +238,8 @@ class AlertService:
             from src.services.watchlist import WatchlistService
 
             for item in WatchlistService(self.config).list():
+                if item.get("kind", "stock") != "stock":
+                    continue  # ETF/指数没有 stock_daily 行情，盘中提醒跳过
                 watch.setdefault(item["code"], item["name"])
         except Exception as e:
             logger.debug(f"读取自选股失败: {e}")

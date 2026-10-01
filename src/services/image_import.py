@@ -94,7 +94,7 @@ def extract_stocks(image: bytes, mime: str, config: dict, llm=None) -> dict:
         for query in (code, name):
             if query:
                 try:
-                    resolved = service.resolve(query)
+                    resolved = service.resolve(query, include_funds=False)
                 except Exception as e:
                     logger.warning(f"图片识别解析股票失败 {query}: {e}")
                     resolved = None

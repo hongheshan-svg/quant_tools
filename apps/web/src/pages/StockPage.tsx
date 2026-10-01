@@ -51,9 +51,8 @@ export function StockPage() {
   }, [code, daily.loading])
 
   useEffect(() => {
-    if (fund) return // ETF / 指数不进自选股
     api.watchlist().then((rows) => setWatched(rows.some((r) => r.code === code))).catch(() => setWatched(null))
-  }, [code, fund])
+  }, [code])
 
   const toggleWatch = async () => {
     if (watched) {
@@ -93,7 +92,7 @@ export function StockPage() {
           </>
         )}
         {backfilling && <Badge tone="accent">{t('本地日线不足，正在联网补齐…')}</Badge>}
-        {!fund && watched != null && (
+        {watched != null && (
           <Button className="ml-auto" onClick={toggleWatch}>
             <Star className={watched ? 'size-4 fill-warn text-warn' : 'size-4'} /> {watched ? t('移出自选') : t('加入自选')}
           </Button>

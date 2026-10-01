@@ -2,6 +2,7 @@
 自选股（参考 daily_stock_analysis 的 STOCK_LIST 与智能导入）
 
 - 增删：代码、名称或拼音首字母都可以，先经股票搜索解析成代码；最多 watchlist.max_stocks 只
+- ETF 和指数也可以加入（指数的规范代码带交易所前缀，如 sh000300；纯 6 位数字优先当个股）；批量导入和图片导入只识别个股
 - 批量导入：粘贴文本或 CSV / Excel 文件，从中识别 6 位代码（可带 sh/sz/bj 前缀）和股票名称
 - 配置里的 alerts.watchlist 仍然有效，与这里的自选股合并使用（盘中提醒）
 """
@@ -16,8 +17,8 @@ from loguru import logger
 
 from src.config_loader import load_config
 from src.database.db import get_db_session
-from src.database.models import StockDaily, Watchlist
-from src.utils.stock_code import bare_code, code_candidates
+from src.database.models import FundDaily, StockDaily, Watchlist
+from src.utils.stock_code import bare_code, code_candidates, diagnosis_code
 
 DEFAULT_MAX_STOCKS = 50
 _CODE = re.compile(r"(?<![0-9A-Za-z])(?:sh|sz|bj|SH|SZ|BJ)?(\d{6})(?:\.(?:SH|SZ|BJ|sh|sz|bj))?(?![0-9])")
@@ -96,26 +97,36 @@ class WatchlistService:
         self.max_stocks = int((self.config.get("watchlist") or {}).get("max_stocks", DEFAULT_MAX_STOCKS))
 
     def list(self) -> list[dict[str, Any]]:
+        from src.services.fund_registry import fund_kind
+
         with get_db_session(self.db_path) as session:
             rows = session.query(Watchlist).order_by(Watchlist.added_at, Watchlist.id).all()
             return [{"code": r.code, "name": r.name or "", "note": r.note or "",
+                     "kind": fund_kind(r.code, self.db_path) or "stock",
                      "added_at": r.added_at.strftime("%Y-%m-%d %H:%M") if r.added_at else ""} for r in rows]
 
     def overview(self) -> list[dict[str, Any]]:
-        """自选股 + 最新行情 + 最近一次 AI 诊断，供界面和问股使用。"""
+        """自选股 + 最新行情 + 最近一次 AI 诊断，供界面和问股使用（ETF/指数的行情取自 fund_daily，诊断取自基金诊断）。"""
+        from src.services.fund_diagnosis import FundDiagnosisService
         from src.services.stock_diagnosis import StockDiagnosisService
 
         diagnosis = StockDiagnosisService(self.config)
+        fund_diagnosis = FundDiagnosisService(self.config)
         rows = self.list()
         with get_db_session(self.db_path) as session:
             for r in rows:
-                bar = (session.query(StockDaily.trade_date, StockDaily.close, StockDaily.change_pct)
-                       .filter(StockDaily.code.in_(code_candidates(r["code"])), StockDaily.close > 0)
-                       .order_by(StockDaily.trade_date.desc()).first())
+                if r["kind"] == "stock":
+                    bar = (session.query(StockDaily.trade_date, StockDaily.close, StockDaily.change_pct)
+                           .filter(StockDaily.code.in_(code_candidates(r["code"])), StockDaily.close > 0)
+                           .order_by(StockDaily.trade_date.desc()).first())
+                else:
+                    bar = (session.query(FundDaily.trade_date, FundDaily.close, FundDaily.change_pct)
+                           .filter(FundDaily.code == r["code"], FundDaily.close > 0)
+                           .order_by(FundDaily.trade_date.desc()).first())
                 r.update({"trade_date": bar[0], "close": bar[1], "change_pct": bar[2]} if bar else
                          {"trade_date": "", "close": None, "change_pct": None})
         for r in rows:
-            latest = diagnosis.latest(r["code"])
+            latest = (diagnosis if r["kind"] == "stock" else fund_diagnosis).latest(r["code"])
             r["diagnosis"] = ({k: latest.get(k) for k in ("action", "action_label", "score", "created_at", "one_sentence")}
                               if latest and not latest.get("error") else None)
         return rows
@@ -124,19 +135,29 @@ class WatchlistService:
         return [r["code"] for r in self.list()]
 
     def contains(self, code: str) -> bool:
-        return bare_code(code) in self.codes()
+        return diagnosis_code(code) in self.codes()
 
-    def resolve(self, text: str) -> tuple[str, str] | None:
-        """代码 / 名称 / 拼音 → (代码, 名称)；代码必须在行情库或股票列表里存在。"""
-        from src.services.stock_search import StockSearch
+    def resolve(self, text: str, include_funds: bool = True) -> tuple[str, str] | None:
+        """代码 / 名称 / 拼音 → (代码, 名称)；代码必须在行情库或股票列表里存在。
 
+        include_funds 为真时也识别 ETF 和指数，返回规范代码（指数带前缀）；纯 6 位数字优先当个股，
+        要加指数需输入带前缀的代码或名称。批量导入、图片导入、实盘等只要个股的地方传 False。
+        """
         query = (text or "").strip()
         if not query:
             return None
         from src.services.fund_registry import resolve_fund
 
-        if resolve_fund(query, self.db_path):  # ETF 和指数不进自选股
-            return None
+        stock = self._resolve_stock(query)
+        fund = resolve_fund(query, self.db_path)
+        if fund and not (stock and re.fullmatch(r"\d{6}", query)):
+            # 明确是 ETF/指数：include_funds=False 时不能退回去匹配同码个股（如 sh000001 → 平安银行）
+            return (fund["code"], fund["name"]) if include_funds else None
+        return stock
+
+    def _resolve_stock(self, query: str) -> tuple[str, str] | None:
+        from src.services.stock_search import StockSearch
+
         found = [r for r in StockSearch(self.db_path).search(query, 10) if r.get("kind", "stock") == "stock"][:5]
         exact = next((r for r in found if r["code"] == bare_code(query) or r["name"] == query), None)
         if exact:
@@ -149,8 +170,8 @@ class WatchlistService:
             return (bare, name or "") if name is not None else None
         return (found[0]["code"], found[0]["name"]) if len(found) == 1 else None
 
-    def add(self, text: str, note: str = "") -> dict[str, Any]:
-        resolved = self.resolve(text)
+    def add(self, text: str, note: str = "", include_funds: bool = True) -> dict[str, Any]:
+        resolved = self.resolve(text, include_funds=include_funds)
         if not resolved:
             return {"ok": False, "error": f"找不到股票「{text}」"}
         code, name = resolved
@@ -165,7 +186,7 @@ class WatchlistService:
 
     def remove(self, code: str) -> bool:
         with get_db_session(self.db_path) as session:
-            return session.query(Watchlist).filter(Watchlist.code == bare_code(code)).delete() > 0
+            return session.query(Watchlist).filter(Watchlist.code == diagnosis_code(code)).delete() > 0
 
     def import_text(self, text: str) -> dict[str, list[str]]:
         """批量导入：返回 {"added": [...], "existing": [...], "unknown": [...], "over_limit": [...]}。"""
@@ -173,12 +194,12 @@ class WatchlistService:
         result: dict[str, list[str]] = {"added": [], "existing": [], "unknown": [], "over_limit": []}
         seen: set[str] = set()
         for token in [*codes, *names]:
-            resolved = self.resolve(token)
+            resolved = self.resolve(token, include_funds=False)
             if resolved and resolved[0] in seen:  # 同一行里既有代码又有名称
                 continue
             if resolved:
                 seen.add(resolved[0])
-            outcome = self.add(token)
+            outcome = self.add(token, include_funds=False)
             label = f"{outcome.get('name', '')}({outcome['code']})" if outcome.get("code") else token
             if outcome["ok"]:
                 result["added"].append(label)

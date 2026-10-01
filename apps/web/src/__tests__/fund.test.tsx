@@ -54,14 +54,13 @@ describe('搜索下拉的品种标签', () => {
 })
 
 describe('StockPage 打开指数', () => {
-  it('显示行情，但不显示加入自选', async () => {
+  it('显示行情，并可加入自选', async () => {
     stubFetch()
     render(<MemoryRouter initialEntries={['/stocks/sh000300']}><AppRoutes authEnabled={false} /></MemoryRouter>)
     expect((await screen.findAllByText(/沪深300/)).length).toBeGreaterThan(0)
     await waitFor(() => expect(screen.getAllByText(/4,?006/).length).toBeGreaterThan(0))
     await act(async () => { await new Promise((r) => setTimeout(r, 50)) })
-    expect(screen.queryByText('加入自选')).not.toBeInTheDocument()
-    expect(screen.queryByText('移出自选')).not.toBeInTheDocument()
+    expect(await screen.findByText('加入自选')).toBeInTheDocument()
   })
 
   it('普通个股仍显示加入自选', async () => {
