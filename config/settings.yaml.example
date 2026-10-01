@@ -96,6 +96,9 @@ scheduler:
   watchlist_report_time: "16:30"
   # 决策信号评估时间 (HH:MM)：更新信号有效期、止损止盈和后验收益
   signal_lifecycle_time: "16:25"
+  # 收盘后的每日任务在独立子进程中运行，超过下面的分钟数未完成就终止并推送系统错误（外部接口卡住时不拖住后面的任务）
+  isolate_daily_jobs: true
+  job_timeout_minutes: 90
 
 # --- 交易时间配置 ---
 trading:

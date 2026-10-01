@@ -56,6 +56,15 @@ def main() -> int:
         return 1
 
     workdir = Path(tempfile.mkdtemp(prefix="quant-smoke-"))
+    # 定时任务的独立子进程入口：未知任务应按失败退出（退出码 2），能跑到这一步说明入口在打包产物里可用
+    job = subprocess.run([str(exe), "--run-job", "smoke-unknown-job", "--workdir", str(workdir)], cwd=exe.parent,
+                         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=STARTUP_TIMEOUT)
+    print(f"--run-job -> exit {job.returncode}")
+    if job.returncode != 2:
+        print(job.stdout[-2000:], job.stderr[-2000:])
+        print("Smoke test FAILED")
+        return 1
+
     log_path = workdir / "server.log"
     port = free_port()
     base = f"http://127.0.0.1:{port}"

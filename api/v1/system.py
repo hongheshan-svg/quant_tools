@@ -135,13 +135,14 @@ def scheduler_status(request: Request) -> dict[str, Any]:
 @router.post("/system/scheduler/{job_id}/run")
 def run_job_now(job_id: str, tasks: TaskManager = Depends(get_tasks),
                 pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
-    """立即运行一个定时任务（后台任务）；行情和分析类任务在非交易日会自行跳过"""
-    from src.scheduler import JOBS
+    """立即运行一个定时任务（后台任务）；行情和分析类任务在非交易日会自行跳过。
+    每日任务和定时触发一样在独立子进程中运行、受总时长限制。"""
+    from src.scheduler import JOBS, run_job
 
     if job_id not in JOBS:
         raise not_found("未知的定时任务")
-    name, fn = JOBS[job_id]
-    return tasks.submit("job", fn, pipeline.config, dedupe_key=f"job:{job_id}", label=f"立即运行：{name}")
+    name = JOBS[job_id][0]
+    return tasks.submit("job", run_job, job_id, pipeline.config, dedupe_key=f"job:{job_id}", label=f"立即运行：{name}")
 
 
 # ---------- 大模型用量 ----------

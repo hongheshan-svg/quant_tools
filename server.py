@@ -141,6 +141,7 @@ def main() -> None:
     pre = argparse.ArgumentParser(add_help=False)
     pre.add_argument("--workdir")
     pre.add_argument("--self-check", action="store_true")
+    pre.add_argument("--run-job")
     known, _ = pre.parse_known_args()
     if known.self_check:
         sys.exit(self_check())
@@ -148,6 +149,13 @@ def main() -> None:
     workdir = known.workdir or (os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else None)
     if workdir:
         prepare_workdir(workdir, bundle_dir())
+    if known.run_job:   # 定时任务的独立子进程：运行一个任务后退出（见 src/scheduler.run_isolated）
+        from src.scheduler import run_job_entry
+
+        if bundle_dir():
+            use_system_browser_dir()
+
+        sys.exit(run_job_entry(known.run_job))
 
     import uvicorn
 
@@ -164,6 +172,7 @@ def main() -> None:
     parser.add_argument("--no-scheduler", action="store_true", help="不运行定时任务和聊天机器人")
     parser.add_argument("--workdir", help="存放 config/、data/、logs/ 的目录（默认当前目录）")
     parser.add_argument("--self-check", action="store_true", help="自检打包产物（原生库、内置数据文件）后退出")
+    parser.add_argument("--run-job", help="运行一个定时任务后退出（定时任务的独立子进程使用）")
     args = parser.parse_args()
 
     setup_logging(config)

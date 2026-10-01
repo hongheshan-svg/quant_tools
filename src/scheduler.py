@@ -1,9 +1,19 @@
 """
 任务调度器 - APScheduler 定时采集和分析
+
+收盘后的每日任务（分析、信号、复盘日报、自学习、信号评估、自选股仪表盘、提醒日报）默认在独立子进程中运行，
+超过 scheduler.job_timeout_minutes 未完成就终止整个进程树并推送系统错误：外部接口（如部分 AKShare 请求没有超时）
+卡住时不会一直占着线程、拖住后面的任务。间隔采集任务仍在本进程运行（市场概况缓存、盘中提醒状态都在进程内）。
 """
 
+import os
+import signal
+import subprocess
+import sys
+import time
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -378,6 +388,102 @@ JOBS: dict[str, tuple[str, Callable[[dict], None]]] = {
     "alert_digest": ("盘中提醒日报", _run_alert_digest),   # 仅 alerts.daily_digest 为真时注册
 }
 
+# 在独立子进程中运行、受总时长限制的每日任务
+ISOLATED_JOBS = frozenset({"daily_analysis", "signal_generation", "daily_report", "watchlist_report",
+                           "self_learning", "signal_lifecycle", "alert_digest"})
+DEFAULT_JOB_TIMEOUT_MINUTES = 90
+JOB_FAILED_EXIT = 2          # 子进程里任务抛异常（已自行推送系统错误）时的退出码
+KILL_GRACE_SECONDS = 10
+SERVER_SCRIPT = Path(__file__).resolve().parent.parent / "server.py"
+
+
+def _job_command(job_id: str) -> list[str]:
+    """运行单个任务的子进程命令：打包后是后台程序本身，源码运行是 python server.py"""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--run-job", job_id, "--workdir", os.getcwd()]
+    return [sys.executable, str(SERVER_SCRIPT), "--run-job", job_id, "--workdir", os.getcwd()]
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """终止子进程及其子孙（任务里可能启动了 Chromium）"""
+    if proc.poll() is not None:
+        return
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, timeout=30)
+        else:
+            os.killpg(proc.pid, signal.SIGTERM)
+            try:
+                proc.wait(timeout=KILL_GRACE_SECONDS)
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, OSError):
+        pass
+    try:
+        proc.wait(timeout=KILL_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
+def run_isolated(job_id: str, config: dict, command: list[str] | None = None) -> bool:
+    """在独立子进程中运行一个每日任务，超时终止；返回是否正常完成。
+    任务自身出错时子进程已推送系统错误，这里只对超时和异常退出推送。"""
+    name = JOBS[job_id][0]
+    timeout_minutes = float((config.get("scheduler") or {}).get("job_timeout_minutes") or DEFAULT_JOB_TIMEOUT_MINUTES)
+    cmd = command or _job_command(job_id)
+    started = time.monotonic()
+    kwargs: dict = {"cwd": os.getcwd()}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    else:
+        kwargs["start_new_session"] = True   # 自成进程组，超时可以整组终止
+    proc = subprocess.Popen(cmd, **kwargs)
+    logger.info(f"[定时任务] {name} 在独立进程中运行（pid {proc.pid}，最长 {timeout_minutes:g} 分钟）")
+    try:
+        code = proc.wait(timeout=timeout_minutes * 60)
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        logger.error(f"[定时任务] {name} 超过 {timeout_minutes:g} 分钟未完成，已终止")
+        _report_error(config, name, TimeoutError(f"超过 {timeout_minutes:g} 分钟未完成，已终止（可调大 scheduler.job_timeout_minutes）"))
+        return False
+    elapsed = time.monotonic() - started
+    if code == 0:
+        logger.info(f"[定时任务] {name} 完成，用时 {elapsed:.0f} 秒")
+        return True
+    if code != JOB_FAILED_EXIT:
+        _report_error(config, name, RuntimeError(f"任务进程异常退出（退出码 {code}）"))
+    logger.error(f"[定时任务] {name} 失败（退出码 {code}，用时 {elapsed:.0f} 秒）")
+    return False
+
+
+def run_job(job_id: str, config: dict) -> None:
+    """定时任务和「立即运行」的统一入口：每日任务按配置在独立进程中运行，其余在本进程运行"""
+    if job_id in ISOLATED_JOBS and (config.get("scheduler") or {}).get("isolate_daily_jobs", True):
+        run_isolated(job_id, config)
+    else:
+        JOBS[job_id][1](config)
+
+
+def run_job_entry(job_id: str) -> int:
+    """子进程入口（server.py --run-job）：按当前目录的配置运行一个任务后退出"""
+    from main import setup_logging
+    from src.config_loader import load_config
+
+    config = load_config()
+    setup_logging(config)
+    if job_id not in JOBS:
+        logger.error(f"未知的定时任务: {job_id}")
+        return JOB_FAILED_EXIT
+    name, fn = JOBS[job_id]
+    try:
+        fn(config)
+    except Exception as e:
+        logger.exception(f"[定时任务] {name} 出错: {e}")
+        _report_error(config, name, e)
+        return JOB_FAILED_EXIT
+    return 0
+
+
 _WEEKDAYS = {"mon-fri": "工作日", "*": "每天"}
 
 
@@ -483,9 +589,9 @@ def build_scheduler(config: dict, scheduler=None):
     analysis_time = sched_cfg.get("daily_analysis_time", "15:30")
     hour, minute = analysis_time.split(":")
     scheduler.add_job(
-        _run_daily_analysis,
+        run_job,
         trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
-        args=[config],
+        args=["daily_analysis", config],
         id="daily_analysis",
         name=JOBS["daily_analysis"][0],
     )
@@ -494,9 +600,9 @@ def build_scheduler(config: dict, scheduler=None):
     signal_time = sched_cfg.get("daily_signal_time", "16:00")
     hour, minute = signal_time.split(":")
     scheduler.add_job(
-        _run_signal_generation,
+        run_job,
         trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
-        args=[config],
+        args=["signal_generation", config],
         id="signal_generation",
         name=JOBS["signal_generation"][0],
     )
@@ -505,9 +611,9 @@ def build_scheduler(config: dict, scheduler=None):
     report_time = sched_cfg.get("daily_report_time", "16:10")
     hour, minute = report_time.split(":")
     scheduler.add_job(
-        _run_daily_report,
+        run_job,
         trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
-        args=[config],
+        args=["daily_report", config],
         id="daily_report",
         name=JOBS["daily_report"][0],
     )
@@ -516,9 +622,9 @@ def build_scheduler(config: dict, scheduler=None):
     watchlist_time = sched_cfg.get("watchlist_report_time", "16:30")
     hour, minute = watchlist_time.split(":")
     scheduler.add_job(
-        _run_watchlist_report,
+        run_job,
         trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
-        args=[config],
+        args=["watchlist_report", config],
         id="watchlist_report",
         name=JOBS["watchlist_report"][0],
     )
@@ -527,9 +633,9 @@ def build_scheduler(config: dict, scheduler=None):
     learn_time = sched_cfg.get("self_learning_time", "16:20")
     hour, minute = learn_time.split(":")
     scheduler.add_job(
-        _run_self_learning,
+        run_job,
         trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
-        args=[config],
+        args=["self_learning", config],
         id="self_learning",
         name=JOBS["self_learning"][0],
     )
@@ -537,9 +643,9 @@ def build_scheduler(config: dict, scheduler=None):
     # 决策信号评估（16:25，自学习之后）
     hour, minute = str(sched_cfg.get("signal_lifecycle_time") or "16:25").split(":")
     scheduler.add_job(
-        _run_signal_lifecycle,
+        run_job,
         trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
-        args=[config],
+        args=["signal_lifecycle", config],
         id="signal_lifecycle",
         name=JOBS["signal_lifecycle"][0],
     )
@@ -549,9 +655,9 @@ def build_scheduler(config: dict, scheduler=None):
     if alerts_cfg.get("daily_digest", False):
         hour, minute = str(alerts_cfg.get("digest_time") or "15:10").split(":")
         scheduler.add_job(
-            _run_alert_digest,
+            run_job,
             trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
-            args=[config],
+            args=["alert_digest", config],
             id="alert_digest",
             name=JOBS["alert_digest"][0],
         )
