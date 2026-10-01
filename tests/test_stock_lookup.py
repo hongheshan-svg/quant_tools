@@ -214,13 +214,3 @@ def test_name_initials():
     assert name_initials("贵州茅台")[0] == "gzmt"
     assert name_initials("*ST东园")[0] == "stdy"
     assert "cykj" in name_initials("朝阳科技")
-
-
-def test_render_news_markdown():
-    from src.desktop.markdown_render import render_news_markdown
-
-    text = render_news_markdown({"news": [], "notices": [
-        {"date": "2026-09-20", "title": "关于立案告知书的公告", "url": "http://x", "source": "", "risk": "立案", "severe": True},
-    ]})
-    assert "- 2026-09-20 [关于立案告知书的公告](http://x) ⚠️ **严重风险：立案**" in text
-    assert text.endswith("### 个股新闻（近 7 天）\n- 暂无")

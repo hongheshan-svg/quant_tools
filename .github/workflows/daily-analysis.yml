@@ -120,7 +120,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          grep -viE '^(pyqt6|pyinstaller)' requirements.txt > /tmp/requirements.txt
+          grep -viE '^pyinstaller' requirements.txt > /tmp/requirements.txt
           pip install -r /tmp/requirements.txt
           playwright install --with-deps chromium
 

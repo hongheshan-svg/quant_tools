@@ -20,6 +20,11 @@ DYNAMIC_PATHS = {
     ("strategy", "adaptive_weights"), ("strategy", "source_confidence"), ("screening", "strategies"),
     ("llm", "pricing"), ("notifier", "routes"), ("alerts", "rules"),
 }
+# 已删除的旧配置项（旧版 Qt6 桌面端用过）：用户的 settings.yaml 里可能还有，忽略不报未知键
+REMOVED_PATHS = {
+    ("desktop", key) for key in ("refresh_interval_seconds", "news_refresh_seconds", "auto_collect_enabled",
+                                 "collect_interval_seconds", "analysis_workers", "score_workers", "max_log_lines")
+}
 # 允许写成字符串（逗号/换行分隔）的列表型键
 STRING_LIST_KEYS = {"api_key", "api_keys", "base_urls", "to"}
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -88,7 +93,7 @@ def _walk_raw(raw: Any, example: Any, path: tuple, issues: list[dict]) -> None:
     for key, value in raw.items():
         sub = (*path, key)
         if key not in example:
-            if key not in allowed_extra:
+            if key not in allowed_extra and sub not in REMOVED_PATHS:
                 issues.append({"level": "warning", "path": _dot(sub), "message": "未知配置项，可能拼写错误"})
             continue
         default = example[key]

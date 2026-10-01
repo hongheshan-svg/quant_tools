@@ -13,7 +13,7 @@ from src.database import db as db_module
 from src.database.db import get_db_session, init_db
 from src.database.models import StockDiagnosis
 from src.services import strategy_skills
-from src.services.stock_chat import PERSPECTIVES, StockChatSession
+from src.services.stock_chat import StockChatSession, perspectives
 from src.services.strategy_skills import DEFAULT_SKILL, Skill, get_skill, load_skills, reset_cache
 from tests.test_api import _wait, env  # noqa: F401
 
@@ -193,10 +193,10 @@ def test_prompt_contains_instructions_and_perspective_normalized():
     assert get_skill("综合").instructions.strip()[:20] in llm.prompts[-1]
 
 
-def test_perspectives_still_dict():
-    assert isinstance(PERSPECTIVES, dict)
-    assert "综合" in PERSPECTIVES and "龙回头" in PERSPECTIVES
-    assert all(isinstance(k, str) and isinstance(v, str) and v for k, v in PERSPECTIVES.items())
+def test_perspectives_dict():
+    items = perspectives()
+    assert "综合" in items and "龙回头" in items
+    assert all(isinstance(k, str) and isinstance(v, str) and v for k, v in items.items())
 
 
 # ---------- API ----------

@@ -91,7 +91,7 @@ class SelfLearningService:
 
         logger.info(f"自学习启动: 截止={as_of_date}, 回看={lookback_days}天")
 
-        # 只读本地缓存，不联网；调度器和桌面端启动时已负责更新交易日历
+        # 只读本地缓存，不联网；调度器和 Web 服务启动时已负责更新交易日历
         trading_calendar.load(self.db_path, refresh=False)
         outcomes = self._evaluate_signal_outcomes(as_of_date, lookback_days)
         factor_stats = self._compute_factor_stats(as_of_date, lookback_days)

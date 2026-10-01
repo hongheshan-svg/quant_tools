@@ -34,10 +34,10 @@ jobs:
           cache: pip
           cache-dependency-path: requirements.txt
 
-      # 测试不导入 PyQt6（CI 机器也没有 libEGL）、不打包，跳过这两个大包
+      # 测试不打包，跳过 PyInstaller
       - name: Install dependencies
         run: |
-          grep -viE '^(pyqt6|pyinstaller)' requirements.txt > /tmp/requirements.txt
+          grep -viE '^pyinstaller' requirements.txt > /tmp/requirements.txt
           pip install -r /tmp/requirements.txt pytest
 
       # 测试不访问网络，也不需要 Playwright 浏览器

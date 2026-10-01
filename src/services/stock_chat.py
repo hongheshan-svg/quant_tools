@@ -155,9 +155,6 @@ def perspectives() -> dict[str, str]:
     return {s.display_name: s.description for s in load_skills()}
 
 
-# 兼容旧代码（桌面端下拉框、测试）：导入时的快照；需要包含新改的自定义策略时用 perspectives()
-PERSPECTIVES: dict[str, str] = perspectives()
-
 
 def normalize_perspective(value: str | None) -> str:
     """策略名、中文名或别名 → 中文名；空值返回「综合」，未知值回退到「综合」并记 warning。"""

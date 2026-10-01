@@ -807,7 +807,7 @@ def _phase_markdown(result: dict[str, Any]) -> list[str]:
 
 
 def render_markdown(result: dict[str, Any]) -> str:
-    """诊断结果转为 markdown，供桌面端显示。"""
+    """诊断结果转为 markdown（机器人回复、Markdown 下载、分享图的内置格式）。"""
     lang = result.get("language") or "zh"
     if result.get("error"):
         return tr(lang, f"**诊断失败**：{result['error']}", f"**Diagnosis failed**: {result['error']}")

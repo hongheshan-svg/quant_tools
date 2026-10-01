@@ -108,9 +108,9 @@ trading:
   auction_start: "09:15"
   auction_end: "09:25"
   # 交易执行（模拟盘）
-  # 生成交易信号后（定时任务 16:00、桌面端 AI涨停预测后）自动把买入信号转为待确认订单
+  # 生成交易信号后（定时任务 16:00、界面上点 AI 涨停预测后）自动把买入信号转为待确认订单
   execution_enabled: true
-  # 自动确认下单；false 时需在桌面端【模拟交易】页手动确认（仅对模拟盘生效）
+  # 自动确认下单；false 时需在界面【模拟交易】页手动确认（仅对模拟盘生效）
   auto_confirm: false
   # 单笔订单预算（元），按信号强度缩放后取整到 100 股
   default_order_budget: 100000
@@ -214,7 +214,7 @@ global_data:
 
 # --- 消息推送配置 ---
 notifier:
-  # 每日报告：定时任务在 scheduler.daily_report_time 推送，桌面端 AI涨停预测完成后也会推送
+  # 每日报告：定时任务在 scheduler.daily_report_time 推送，界面上的 AI 涨停预测完成后也会推送
   # 内容：大盘复盘、交易信号（含价格计划）、待确认订单、模拟盘账户、近 60 天信号绩效
   daily_report_enabled: true
   # 免打扰时段（如 ["22:00", "08:00"]，可跨午夜），期间只推送紧急提醒；为空表示不启用
@@ -315,7 +315,7 @@ notifier:
     headers: ""              # JSON 文本，如 {"Authorization": "Bearer xxx"}
     body_template: ""
   # 按消息类型指定推送渠道（渠道名见上面各段，如 wechat、telegram），不写或为空的类型推送到全部已启用渠道
-  # 桌面端【推送设置】可以直接修改、检查配置和发送测试消息
+  # 界面【设置 → 推送】可以直接修改、检查配置和发送测试消息
   routes:
     daily_report: []         # 每日报告
     alert: []                # 盘中提醒
@@ -433,7 +433,7 @@ diagnosis:
     max_skills: 2
 
 # --- 自选股 ---
-# 在桌面端【自选股】页增删、批量导入（粘贴文本或 CSV/Excel）；盘中提醒也会关注自选股
+# 在界面【自选股】页增删、批量导入（粘贴文本或 CSV/Excel）；盘中提醒也会关注自选股
 watchlist:
   daily_report: true       # 收盘后（scheduler.watchlist_report_time）逐只 AI 诊断，推送决策仪表盘
   max_stocks: 50           # 自选股上限（每只每天一次 LLM 调用）
@@ -443,7 +443,7 @@ watchlist:
 
 # --- LLM 大盘复盘 ---
 # 按趋势结构、资金情绪、主线板块复盘，给出次日姿态（不会比量化大盘环境更激进）、仓位、关注与回避方向
-# 定时任务在每日报告推送前生成并写进日报；桌面端「大盘复盘」页可手动生成
+# 定时任务在每日报告推送前生成并写进日报；界面【大盘复盘】页可手动生成
 market_review:
   enabled: true
 
@@ -454,7 +454,7 @@ alerts:
   enabled: true
   cooldown_minutes: 30     # 同一提醒的冷却时间（封涨停每只每天只提醒一次）
   big_drop_pct: -7         # 跌幅达到该值提醒
-  watchlist: []            # 额外关注的股票代码，如 ["600519", "300750"]（加引号；一般在桌面端【自选股】页添加即可）
+  watchlist: []            # 额外关注的股票代码，如 ["600519", "300750"]（加引号；一般在界面【自选股】页添加即可）
   # 自定义规则：
   #   - {code: "600519", type: price_cross, direction: above, price: 1800}   # 价格上破/下破（above/below）
   #   - {code: "300750", type: change_pct, direction: down, change_pct: 5}  # 涨跌幅达到（up/down）
@@ -492,19 +492,12 @@ web:
   task_workers: 4          # 同时执行的后台任务数
   cors_origins: ["http://localhost:5173", "http://127.0.0.1:5173"]   # 前端开发服务器
 
-# --- Qt6 桌面端配置 ---
+# --- 数据采集并发（「采集数据」和定时采集共用；节名沿用旧版的 desktop） ---
 desktop:
-  refresh_interval_seconds: 30
-  news_refresh_seconds: 10          # 资讯流独立刷新间隔（秒）
-  auto_collect_enabled: true
-  collect_interval_seconds: 120
-  news_workers: 3
-  market_workers: 4
-  analysis_workers: 3
-  score_workers: 4
-  enable_realtime_ai: true
+  news_workers: 3                   # 新闻源并发数
+  market_workers: 4                 # 行情类数据并发数
+  enable_realtime_ai: true          # 财联社重要快讯到达后立即送入 LLM 分析
   realtime_ai_workers: 2
-  max_log_lines: 800
 
 # --- 日志配置 ---
 logging:

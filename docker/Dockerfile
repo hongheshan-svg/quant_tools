@@ -25,10 +25,10 @@ RUN apt-get update \
 
 WORKDIR /app
 
-# PyQt6（旧桌面端）和 PyInstaller（打包）在容器里用不到
+# PyInstaller（打包桌面端）在容器里用不到
 COPY requirements.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
-    grep -viE '^(pyqt6|pyinstaller)' requirements.txt > /tmp/requirements.txt \
+    grep -viE '^pyinstaller' requirements.txt > /tmp/requirements.txt \
     && pip install -r /tmp/requirements.txt
 
 # 东方财富、同花顺、社交平台采集需要 Chromium；--with-deps 会装好系统依赖

@@ -1,5 +1,5 @@
 """
-settings.yaml 的分段写回（桌面端设置对话框和 Web API 共用）。
+settings.yaml 的分段写回（Web 设置接口使用）。
 写回会丢掉文件里的注释；文件不存在时新建，只含写入的段，其余配置仍由 settings.yaml.example 提供默认值。
 来自环境变量（QUANT__ 开头）的值不会写进文件。
 """

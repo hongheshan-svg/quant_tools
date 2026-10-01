@@ -134,18 +134,6 @@ def test_long_tool_result_is_truncated(tools, monkeypatch):
     fresh = ChatTools(tools.config)
     assert fresh.call("market", {}).endswith("…（已截断）")
 
-
-def test_render_chat_markdown():
-    from src.desktop.markdown_render import render_chat_markdown
-    from src.services.stock_chat import ChatTurn
-
-    assert "可以这样问" in render_chat_markdown([])
-    turn = ChatTurn(question="茅台能买吗", answer="观望", tools=[{"label": "最新行情"}, {"label": "最新行情"}, {"label": "技术面"}])
-    text = render_chat_markdown([turn], pending="止损放哪", status="正在查询：日线走势…")
-    assert "> 查询：最新行情、技术面" in text and text.endswith("**🧑 止损放哪**\n\n*正在查询：日线走势…*")
-    assert "*AI 调用失败*" in render_chat_markdown([ChatTurn(question="q", error="AI 调用失败")])
-
-
 def test_ask_explains_missing_model():
     from src.analyzers.llm_client import NO_MODEL_HINT
 

@@ -35,8 +35,8 @@ COLLECT_DATA = ["litellm", "akshare", "tiktoken_ext", "efinance"]
 COLLECT_SUBMODULES = ["litellm", "uvicorn", "discord"]
 # 带原生库的包（akshare 的交易日历等接口用 py_mini_racer 执行 JS）
 COLLECT_ALL = ["py_mini_racer"]
-# 后台服务用不到的大包（Qt 只有旧桌面端使用）
-EXCLUDES = ["PyQt6", "tkinter", "matplotlib", "IPython", "pytest"]
+# 后台服务用不到的大包
+EXCLUDES = ["tkinter", "matplotlib", "IPython", "pytest"]
 
 
 def run(cmd: list[str], cwd: Path = ROOT) -> None:

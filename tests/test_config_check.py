@@ -113,6 +113,14 @@ def test_unknown_nested_key():
     assert hit and "未知" in hit[0]["message"]
 
 
+def test_removed_qt_desktop_keys_not_unknown():
+    """旧版 Qt6 桌面端的配置项已删除，老用户的 settings.yaml 里还有也不报未知键；仍在用的采集并发项照常检查"""
+    res = run({"desktop": {"refresh_interval_seconds": 30, "max_log_lines": 800, "news_workers": 3, "typo_workers": 1}})
+    assert not find(res, "desktop.refresh_interval_seconds", "warning")
+    assert not find(res, "desktop.max_log_lines", "warning")
+    assert find(res, "desktop.typo_workers", "warning")
+
+
 def test_dynamic_keys_exempt():
     raw = {
         "strategy": {"adaptive_weights": {"foo_score": 0.3}, "source_confidence": {"某源": 0.8}},

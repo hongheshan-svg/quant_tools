@@ -1,5 +1,5 @@
 """
-大模型平台预设（桌面端 AI 设置和 Web 设置页共用）。
+大模型平台预设（Web 设置页和大模型客户端使用）。
 anthropic、gemini、ollama 走 LiteLLM 的原生通道（base_url 可留空，ollama 填本机服务地址），
 其余平台按 OpenAI 兼容协议调用各自的 base_url。
 """

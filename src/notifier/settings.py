@@ -1,5 +1,5 @@
 """
-推送设置的读写辅助（不依赖 Qt，桌面端推送设置对话框使用）。
+推送设置的读写辅助（Web 推送设置接口使用）。
 """
 
 from __future__ import annotations

@@ -201,7 +201,7 @@ class DailyReportService:
         if not lines:
             return ""
         return "\n".join([tr(self.lang, "### 待确认订单", "### Pending Orders"), *lines,
-                          tr(self.lang, "请在桌面端【模拟交易】页确认下单", "Confirm orders on the Paper Trading page")])
+                          tr(self.lang, "请在【模拟交易】页确认下单", "Confirm orders on the Paper Trading page")])
 
     def _account_section(self) -> str:
         try:

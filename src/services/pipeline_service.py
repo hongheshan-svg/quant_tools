@@ -1,4 +1,4 @@
-"""桌面端统一流程编排。"""
+"""流程编排门面：Web 接口和聊天机器人通过它调用采集、分析、预测、诊断、交易等业务。"""
 
 import threading
 from datetime import date, datetime
@@ -97,11 +97,6 @@ class PipelineService:
         from src.services.watchlist import WatchlistService
 
         return WatchlistService(self.config).remove(code)
-
-    def watchlist_contains(self, code: str) -> bool:
-        from src.services.watchlist import WatchlistService
-
-        return WatchlistService(self.config).contains(code)
 
     def watchlist_import(self, text: str = "", path: str = "") -> dict[str, list[str]]:
         """批量导入：粘贴的文本或 CSV / Excel 文件。"""
