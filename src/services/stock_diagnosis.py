@@ -44,6 +44,7 @@ from src.database.models import (
 from src.analyzers.attribution import normalize_attribution
 from src.services import market_phase
 from src.collectors.shareholders import describe_shareholders
+from src.services.report_language import display, language_directive, report_language, tr
 from src.services.run_log import RunLog
 from src.trading.price_plan import sanitize_price_plan
 from src.utils.stock_code import bare_code, board_of, code_candidates, name_variants, normalize_name
@@ -65,6 +66,9 @@ DEFAULT_HORIZON = 5
 MAX_HORIZON = 20
 MAX_INVALIDATION_LEN = 200
 BEARISH_ACTIONS = frozenset({"reduce", "sell", "avoid"})
+DIAGNOSIS_ENUMS = ('"action" must be one of buy/add/hold/watch/reduce/sell/avoid; "confidence" one of 高/中/低; '
+                   'checklist "status" one of pass/warn/fail; "trend_prediction" keeps its Chinese values '
+                   '(强烈看多/看多/震荡/看空/强烈看空) (keep these values verbatim)')
 # 数据完整度各块权重（合计 100）
 DATA_QUALITY_WEIGHTS = {"行情": 20, "日线": 15, "技术面": 10, "资金流": 15, "筹码": 10, "大盘": 15, "资讯": 10, "业绩": 5}
 
@@ -169,9 +173,10 @@ class StockDiagnosisService:
     def diagnose(self, code: str, force: bool = False, skills: list[str] | None = None) -> dict[str, Any]:
         """诊断一只股票；30 分钟内的诊断结果直接复用（force=True 时重新诊断）。"""
         code = bare_code(code)
+        lang = report_language(self.config)
         if not force:
             cached = self.latest(code, max_age_minutes=CACHE_MINUTES)
-            if cached:
+            if cached and (cached.get("language") or "zh") == lang:
                 return {**cached, "cached": True}
 
         from src.services.diagnosis_agents import DECISION_ADDENDUM, disagreement, opinions_text, run_analysts
@@ -184,7 +189,7 @@ class StockDiagnosisService:
         calibration = self._calibration() if cfg.get("calibration", True) else {}
         model = str((getattr(self.llm, "primary_cfg", None) or {}).get("model") or "")
         analyst_start = time.perf_counter()
-        opinions = run_analysts(self.llm, context["text"], str(cfg.get("mode", "single")))
+        opinions = run_analysts(self.llm, context["text"], str(cfg.get("mode", "single")), *(["en"] if lang == "en" else []))
         if opinions:
             run_log.llm("分析员", model, True, (time.perf_counter() - analyst_start) * 1000)
         conflict = disagreement(opinions)
@@ -195,14 +200,15 @@ class StockDiagnosisService:
         if opinions:
             message += "\n" + opinions_text(opinions, conflict)
         consult_start = time.perf_counter()
-        skill_opinions, skill_consensus, consult_text = self._consult_skills(context, skills)
+        skill_opinions, skill_consensus, consult_text = self._consult_skills(context, skills, lang)
         if skill_opinions:
             names = "、".join(o["display_name"] for o in skill_opinions)
             run_log.llm(f"策略会诊（{names}）", model, True, (time.perf_counter() - consult_start) * 1000)
         if consult_text:
             message += "\n" + consult_text
         decision_start = time.perf_counter()
-        raw = self.llm.chat_json(user_message=message, system_message=SYSTEM_PROMPT + (DECISION_ADDENDUM if opinions else ""))
+        raw = self.llm.chat_json(user_message=message, system_message=SYSTEM_PROMPT + (DECISION_ADDENDUM if opinions else "")
+                                  + language_directive(lang, DIAGNOSIS_ENUMS))
         run_log.llm("决策", model, bool(raw), (time.perf_counter() - decision_start) * 1000)
         if not raw:
             return {"code": code, "name": context["name"], "error": "AI 未返回有效结果，请检查 AI 设置或稍后重试"}
@@ -241,7 +247,7 @@ class StockDiagnosisService:
             return ""
         return f"【历史信号复盘】{review['text']}（历史判断偏乐观/偏悲观时，请相应调整信心）"
 
-    def _consult_skills(self, context: dict[str, Any], requested: list[str] | None = None) -> tuple[list[dict], dict, str]:
+    def _consult_skills(self, context: dict[str, Any], requested: list[str] | None = None, lang: str = "zh") -> tuple[list[dict], dict, str]:
         """多策略会诊：返回（各策略观点，共识，交给决策员的文本）；未启用、非个股或出错时全部为空。"""
         cfg = (self.config.get("diagnosis") or {}).get("skill_consult") or {}
         if not cfg.get("enabled", False):
@@ -259,7 +265,7 @@ class StockDiagnosisService:
             except Exception as e:
                 logger.debug(f"读取策略权重失败: {e}")
                 weights = {}
-            opinions = consult(self.llm, context["text"], picked, weights)
+            opinions = consult(self.llm, context["text"], picked, weights, *(["en"] if lang == "en" else []))
             if not opinions:
                 return [], {}, ""
             cons = consensus(opinions)
@@ -561,62 +567,75 @@ class StockDiagnosisService:
             score = max(0.0, min(100.0, float(raw.get("score", 50))))
         except (TypeError, ValueError):
             score = 50.0
+        lang = context.get("lang") or report_language(self.config)
         action = normalize_action(str(raw.get("action", ""))) or score_to_action(score)
         guardrails: list[str] = []
         if action in BULLISH_ACTIONS and score < MIN_BUY_SCORE:
-            guardrails.append(f"评分 {score:.0f} 与「{ACTION_LABELS[action]}」不一致，降级为观望")
+            guardrails.append(tr(lang, f"评分 {score:.0f} 与「{ACTION_LABELS[action]}」不一致，降级为观望",
+                                 f"Score {score:.0f} is inconsistent with \"{display(lang, ACTION_LABELS[action])}\", downgraded to Watch"))
             action = "watch"
         regime = context["regime"]
         if action in BULLISH_ACTIONS and regime.regime == "冰点":
-            guardrails.append("大盘处于冰点，暂停开新仓，降级为观望")
+            guardrails.append(tr(lang, "大盘处于冰点，暂停开新仓，降级为观望",
+                                 "Market is at freezing point; new positions suspended, downgraded to Watch"))
             action = "watch"
         elif action in BULLISH_ACTIONS and regime.regime == "防守":
-            guardrails.append(f"大盘防守，新开仓仓位按 ×{regime.position_factor:.1f} 控制")
+            guardrails.append(tr(lang, f"大盘防守，新开仓仓位按 ×{regime.position_factor:.1f} 控制",
+                                 f"Market is defensive; new position size scaled by x{regime.position_factor:.1f}"))
 
         confidence = str(raw.get("confidence", ""))
         quality = context["data_quality"]
         if action in BULLISH_ACTIONS and not quality["core_ok"]:
-            guardrails.append(f"行情或日线数据不足（日线 {quality['bar_count']} 根），无法确认买点，降级为观望")
+            guardrails.append(tr(lang, f"行情或日线数据不足（日线 {quality['bar_count']} 根），无法确认买点，降级为观望",
+                                 f"Quote or daily data insufficient ({quality['bar_count']} daily bars); entry cannot be confirmed, downgraded to Watch"))
             action = "watch"
         if quality["score"] < MIN_DATA_QUALITY:
             confidence = "低"
             if action in BULLISH_ACTIONS:
-                guardrails.append(f"数据完整度 {quality['score']}%（缺少{'、'.join(quality['missing'])}），不足以支撑买入，降级为观望")
+                guardrails.append(tr(lang, f"数据完整度 {quality['score']}%（缺少{'、'.join(quality['missing'])}），不足以支撑买入，降级为观望",
+                                     f"Data completeness {quality['score']}% (missing: {', '.join(quality['missing'])}) is not enough to support a buy, downgraded to Watch"))
                 action = "watch"
         flow_ratio = context.get("flow_ratio")
         if action in BULLISH_ACTIONS and flow_ratio is not None and flow_ratio <= FLOW_OUTFLOW_RATIO:
-            guardrails.append(f"资金净流出占成交额 {abs(flow_ratio):.1f}%，与买入建议矛盾，降级为观望")
+            guardrails.append(tr(lang, f"资金净流出占成交额 {abs(flow_ratio):.1f}%，与买入建议矛盾，降级为观望",
+                                 f"Net fund outflow is {abs(flow_ratio):.1f}% of turnover, contradicting the buy advice, downgraded to Watch"))
             action = "watch"
         severe = next((n for n in context.get("risk_notices") or [] if n.get("severe")), None)
         if action in BULLISH_ACTIONS and severe:
-            guardrails.append(f"近 30 天公告含「{severe['risk']}」（{severe['date']} {severe['title'][:40]}），不建议买入，降级为观望")
+            guardrails.append(tr(lang, f"近 30 天公告含「{severe['risk']}」（{severe['date']} {severe['title'][:40]}），不建议买入，降级为观望",
+                                 f"A notice in the past 30 days contains \"{severe['risk']}\" ({severe['date']} {severe['title'][:40]}); buying not advised, downgraded to Watch"))
             action = "watch"
         if context.get("disagreement") and confidence == "高":
-            guardrails.append(f"分析员观点分歧（{context['disagreement']}），信心下调为中")
+            guardrails.append(tr(lang, f"分析员观点分歧（{context['disagreement']}），信心下调为中",
+                                 f"Analysts disagree ({context['disagreement']}); confidence lowered to Medium"))
             confidence = "中"
         bullish_history = (context.get("calibration") or {}).get("看多") or {}
         if (action in BULLISH_ACTIONS and bullish_history.get("n", 0) >= MIN_CALIBRATION_SAMPLES
                 and bullish_history.get("accuracy") is not None and bullish_history["accuracy"] < LOW_CALIBRATION_ACCURACY):
             lowered = {"高": "中", "中": "低"}.get(confidence, "低")
-            guardrails.append(f"近 90 天看多诊断 3 日准确率仅 {bullish_history['accuracy']}%（{bullish_history['n']} 次），信心下调为{lowered}")
+            guardrails.append(tr(lang, f"近 90 天看多诊断 3 日准确率仅 {bullish_history['accuracy']}%（{bullish_history['n']} 次），信心下调为{lowered}",
+                                 f"Bullish diagnoses in the past 90 days hit only {bullish_history['accuracy']}% at 3 days ({bullish_history['n']} runs); "
+                                 f"confidence lowered to {display(lang, lowered)}"))
             confidence = lowered
         if previous and not previous.get("error"):
             prev_action, prev_score = previous.get("action"), float(previous.get("score") or 0)
             flipped_up = action in BULLISH_ACTIONS and prev_action in BEARISH_ACTIONS
             flipped_down = action in BEARISH_ACTIONS and prev_action in BULLISH_ACTIONS
             if (flipped_up or flipped_down) and abs(score - prev_score) < STABILITY_SCORE_DELTA:
-                note = f"与 {previous.get('created_at')} 的诊断（{previous.get('action_label')}，{prev_score:.0f}分）方向相反，但评分变化不足 {STABILITY_SCORE_DELTA} 分"
+                note = tr(lang, f"与 {previous.get('created_at')} 的诊断（{previous.get('action_label')}，{prev_score:.0f}分）方向相反，但评分变化不足 {STABILITY_SCORE_DELTA} 分",
+                          f"Opposite direction to the {previous.get('created_at')} diagnosis ({display(lang, previous.get('action_label'))}, {prev_score:.0f} pts), "
+                          f"but the score changed by less than {STABILITY_SCORE_DELTA} pts")
                 if flipped_up:
-                    guardrails.append(note + "，暂按观望处理，避免反复")
+                    guardrails.append(note + tr(lang, "，暂按观望处理，避免反复", "; treated as Watch to avoid flip-flopping"))
                     action = "watch"
                 else:
-                    guardrails.append(note + "，风险优先，保留减仓/回避建议")
+                    guardrails.append(note + tr(lang, "，风险优先，保留减仓/回避建议", "; risk first, keeping the reduce/avoid advice"))
 
         phase_ctx = context.get("phase")
         phase_decision: dict = {}
         if phase_ctx:
             action, confidence, phase_decision, phase_notes = market_phase.phase_guardrails(
-                action, confidence, raw.get("phase_decision"), phase_ctx, (context["quote"] or {}).get("trade_date", ""))
+                action, confidence, raw.get("phase_decision"), phase_ctx, (context["quote"] or {}).get("trade_date", ""), lang)
             guardrails.extend(phase_notes)
 
         plan_raw = raw.get("battle_plan") or {}
@@ -642,12 +661,12 @@ class StockDiagnosisService:
                 "suggested_position": str(plan_raw.get("suggested_position", "")),
             },
             "catalysts": _as_list(raw.get("catalysts"))
-            + [f"股东：{t}" for t in context.get("holder_signals") or [] if not t.startswith("股东户数环比上升")],
+            + [f"{tr(lang, '股东：', 'Shareholders: ')}{t}" for t in context.get("holder_signals") or [] if not t.startswith("股东户数环比上升")],
             "risks": _as_list(raw.get("risks"))
-            + [f"股东：{t}" for t in context.get("holder_signals") or [] if t.startswith("股东户数环比上升")]
-            + [f"技术面：{r}" for r in context["tech"].risks]
-            + ([f"业绩：{context['earnings_risk']}"] if context.get("earnings_risk") else [])
-            + [f"公告：{n['date']} {n['title']}" for n in (context.get("risk_notices") or [])[:3]],
+            + [f"{tr(lang, '股东：', 'Shareholders: ')}{t}" for t in context.get("holder_signals") or [] if t.startswith("股东户数环比上升")]
+            + [f"{tr(lang, '技术面：', 'Technical: ')}{r}" for r in context["tech"].risks]
+            + ([f"{tr(lang, '业绩：', 'Earnings: ')}{context['earnings_risk']}"] if context.get("earnings_risk") else [])
+            + [f"{tr(lang, '公告：', 'Notice: ')}{n['date']} {n['title']}" for n in (context.get("risk_notices") or [])[:3]],
             "checklist": checklist,
             "analysis": str(raw.get("analysis", "")),
             "guardrails": guardrails,
@@ -667,6 +686,7 @@ class StockDiagnosisService:
             "phase_decision": phase_decision,
             "signal_attribution": normalize_attribution(raw.get("signal_attribution")),
             "market_phase": {k: phase_ctx.get(k) for k in ("phase", "label", "now", "effective_daily_bar_date")} if phase_ctx else {},
+            "language": lang,
         }
 
     def _save(self, result: dict[str, Any]) -> int | None:
@@ -683,89 +703,107 @@ class StockDiagnosisService:
 
 
 ATTRIBUTION_LABELS = (("technical", "技术面"), ("news", "资讯"), ("fundamentals", "基本面"), ("market", "大盘"))
+ATTRIBUTION_LABELS_EN = {"technical": "Technical", "news": "News", "fundamentals": "Fundamentals", "market": "Market"}
+DISCLAIMER_EN = "> For study and research only; not investment advice"
 
 
 def _phase_markdown(result: dict[str, Any]) -> list[str]:
     """阶段决策和信号归因两节，字段为空时不输出。"""
+    lang = result.get("language") or "zh"
     lines: list[str] = []
     pd = result.get("phase_decision") or {}
     body = []
     if pd.get("phase_label"):
-        body.append(f"- 阶段：{pd['phase_label']}")
-    for key, label in (("trading_window", "操作窗口"), ("immediate_action", "立即行动")):
+        body.append(tr(lang, f"- 阶段：{pd['phase_label']}", f"- Phase: {display(lang, pd['phase_label'])}"))
+    for key, label in (("trading_window", tr(lang, "操作窗口", "Trading window")), ("immediate_action", tr(lang, "立即行动", "Immediate action"))):
         if pd.get(key):
-            body.append(f"- {label}：{pd[key]}")
+            body.append(f"- {label}{tr(lang, '：', ': ')}{pd[key]}")
     if pd.get("watch_conditions"):
-        body.append("- 观察条件：")
+        body.append(tr(lang, "- 观察条件：", "- Watch conditions:"))
         body += [f"  - {c}" for c in pd["watch_conditions"]]
     if pd.get("next_check_time"):
-        body.append(f"- 下次检查：{pd['next_check_time']}")
+        body.append(tr(lang, f"- 下次检查：{pd['next_check_time']}", f"- Next check: {pd['next_check_time']}"))
     if pd.get("data_limitations"):
-        body.append("- 数据限制：" + "；".join(pd["data_limitations"]))
+        body.append(tr(lang, "- 数据限制：", "- Data limitations: ") + "；".join(pd["data_limitations"]))
     if len(body) > 1 or (body and not pd.get("phase_label")):
-        lines += ["### 阶段决策", "\n".join(body)]
+        lines += [tr(lang, "### 阶段决策", "### Phase decision"), "\n".join(body)]
     attr = result.get("signal_attribution") or {}
-    parts = [f"{label} {attr[key]}%" for key, label in ATTRIBUTION_LABELS if attr.get(key) is not None]
+    parts = [f"{tr(lang, label, ATTRIBUTION_LABELS_EN[key])} {attr[key]}%" for key, label in ATTRIBUTION_LABELS if attr.get(key) is not None]
     abody = []
     if parts:
-        abody.append("- 贡献度：" + "，".join(parts))
+        abody.append(tr(lang, "- 贡献度：", "- Contribution: ") + "，".join(parts))
     if attr.get("strongest_bullish"):
-        abody.append(f"- 最强看多：{attr['strongest_bullish']}")
+        abody.append(tr(lang, f"- 最强看多：{attr['strongest_bullish']}", f"- Strongest bullish: {attr['strongest_bullish']}"))
     if attr.get("strongest_bearish"):
-        abody.append(f"- 最强看空：{attr['strongest_bearish']}")
+        abody.append(tr(lang, f"- 最强看空：{attr['strongest_bearish']}", f"- Strongest bearish: {attr['strongest_bearish']}"))
     if abody:
-        lines += ["### 信号归因", "\n".join(abody)]
+        lines += [tr(lang, "### 信号归因", "### Signal attribution"), "\n".join(abody)]
     return lines
 
 
 def render_markdown(result: dict[str, Any]) -> str:
     """诊断结果转为 markdown，供桌面端显示。"""
+    lang = result.get("language") or "zh"
     if result.get("error"):
-        return f"**诊断失败**：{result['error']}"
+        return tr(lang, f"**诊断失败**：{result['error']}", f"**Diagnosis failed**: {result['error']}")
     icon = {"buy": "🟢", "add": "🟢", "hold": "🟡", "watch": "🟡", "reduce": "🟠", "sell": "🔴", "avoid": "🔴"}.get(result["action"], "⚪")
     lines = [
-        f"## {icon} {result['name']}({result['code']})：{result['action_label']}｜评分 {result['score']}｜信心 {result['confidence'] or '-'}",
+        tr(lang,
+           f"## {icon} {result['name']}({result['code']})：{result['action_label']}｜评分 {result['score']}｜信心 {result['confidence'] or '-'}",
+           f"## {icon} {result['name']}({result['code']}): {display(lang, result['action_label'])} | Score {result['score']} | "
+           f"Confidence {display(lang, result['confidence']) or '-'}"),
         f"**{result['one_sentence']}**" if result["one_sentence"] else "",
-        f"诊断时间 {result['created_at']}（行情 {result['trade_date']}）" + ("，复用 30 分钟内的结果" if result.get("cached") else ""),
+        tr(lang, f"诊断时间 {result['created_at']}（行情 {result['trade_date']}）" + ("，复用 30 分钟内的结果" if result.get("cached") else ""),
+           f"Diagnosed at {result['created_at']} (quote date {result['trade_date']})" + (", reusing a result from the last 30 minutes" if result.get("cached") else "")),
     ]
     quality = result.get("data_quality") or {}
     if quality:
-        lines.append(f"数据完整度 {quality['score']}%" + (f"（缺少：{'、'.join(quality['missing'])}）" if quality.get("missing") else ""))
+        lines.append(tr(lang, f"数据完整度 {quality['score']}%" + (f"（缺少：{'、'.join(quality['missing'])}）" if quality.get("missing") else ""),
+                        f"Data completeness {quality['score']}%" + (f" (missing: {', '.join(quality['missing'])})" if quality.get("missing") else "")))
     if result["guardrails"]:
-        lines.append("> 护栏：" + "；".join(result["guardrails"]))
+        lines.append(tr(lang, "> 护栏：", "> Guardrails: ") + "；".join(result["guardrails"]))
     advice = result["position_advice"]
     if advice:
-        lines += ["### 操作建议", f"- 空仓：{advice.get('no_position', '-')}", f"- 持仓：{advice.get('has_position', '-')}"]
+        lines += [tr(lang, "### 操作建议", "### Position advice"),
+                  tr(lang, f"- 空仓：{advice.get('no_position', '-')}", f"- No position: {advice.get('no_position', '-')}"),
+                  tr(lang, f"- 持仓：{advice.get('has_position', '-')}", f"- Holding: {advice.get('has_position', '-')}")]
     plan = result["battle_plan"]
-    plan_items = [f"{label} {plan[key]:.2f}" for key, label in (("buy_price", "买入"), ("stop_loss", "止损"), ("target_price", "目标")) if plan.get(key)]
+    plan_items = [f"{label} {plan[key]:.2f}" for key, label in (
+        ("buy_price", tr(lang, "买入", "Buy")), ("stop_loss", tr(lang, "止损", "Stop loss")), ("target_price", tr(lang, "目标", "Target"))) if plan.get(key)]
     if plan_items or plan.get("suggested_position"):
-        lines += ["### 作战计划", "- " + "，".join(plan_items + ([plan["suggested_position"]] if plan.get("suggested_position") else []))]
+        lines += [tr(lang, "### 作战计划", "### Battle plan"),
+                  "- " + tr(lang, "，", ", ").join(plan_items + ([plan["suggested_position"]] if plan.get("suggested_position") else []))]
     lines += _phase_markdown(result)
     if result["theme_role"]:
         role = result["theme_role"]
-        lines.append(f"**主线地位**：{role['theme']}（{role['phase']}）{role['role']}")
-    lines.append(f"**大盘**：{result['market_regime']}")
+        lines.append(tr(lang, f"**主线地位**：{role['theme']}（{role['phase']}）{role['role']}",
+                        f"**Theme position**: {role['theme']} ({role['phase']}) {role['role']}"))
+    lines.append(tr(lang, f"**大盘**：{result['market_regime']}", f"**Market**: {result['market_regime']}"))
     from src.collectors.fundamentals import describe_chips
 
-    for label, text in (("资金", result.get("fund_flow")), ("筹码", describe_chips(result.get("chips"))),
-                        ("业绩", result.get("earnings")), ("股东", result.get("shareholders")), ("估值", result.get("valuation"))):
+    for label, text in ((tr(lang, "资金", "Fund flow"), result.get("fund_flow")), (tr(lang, "筹码", "Chips"), describe_chips(result.get("chips"))),
+                        (tr(lang, "业绩", "Earnings"), result.get("earnings")), (tr(lang, "股东", "Shareholders"), result.get("shareholders")),
+                        (tr(lang, "估值", "Valuation"), result.get("valuation"))):
         if text:
-            lines.append(f"**{label}**：{text}")
+            lines.append(f"**{label}**{tr(lang, '：', ': ')}{text}")
     agents = [a for a in result.get("agents") or [] if not a.get("error")]
     if agents:
-        lines += ["### 分析员观点", *[f"- {a['label']}：{a['view']} {a['score']}分（信心{a['confidence']}）"
-                                    + (f"；{'；'.join(a['key_points'])}" if a["key_points"] else "") for a in agents]]
-        lines.append(f"**分歧**：{result['disagreement']}" if result.get("disagreement") else "**分歧**：观点基本一致")
+        lines += [tr(lang, "### 分析员观点", "### Analyst views"),
+                  *[tr(lang, f"- {a['label']}：{a['view']} {a['score']}分（信心{a['confidence']}）",
+                       f"- {a['label']}: {display(lang, a['view'])} {a['score']} pts (confidence {display(lang, a['confidence'])})")
+                    + (f"；{'；'.join(a['key_points'])}" if a["key_points"] else "") for a in agents]]
+        lines.append((tr(lang, f"**分歧**：{result['disagreement']}", f"**Disagreement**: {result['disagreement']}")
+                      if result.get("disagreement") else tr(lang, "**分歧**：观点基本一致", "**Disagreement**: views are broadly aligned")))
     if result.get("calibration"):
-        lines.append(result["calibration"].replace("【历史表现】", "**历史表现**："))
+        lines.append(result["calibration"].replace("【历史表现】", tr(lang, "**历史表现**：", "**Track record**: ")))
     if result["catalysts"]:
-        lines += ["### 利好催化", *[f"- {c}" for c in result["catalysts"]]]
+        lines += [tr(lang, "### 利好催化", "### Catalysts"), *[f"- {c}" for c in result["catalysts"]]]
     if result["risks"]:
-        lines += ["### 风险提示", *[f"- {r}" for r in result["risks"]]]
+        lines += [tr(lang, "### 风险提示", "### Risks"), *[f"- {r}" for r in result["risks"]]]
     if result["checklist"]:
         mark = {"pass": "✅", "warn": "⚠️", "fail": "❌"}
-        lines += ["### 检查清单", *[f"- {mark.get(c.get('status'), '•')} {c.get('item', '')}：{c.get('note', '')}" for c in result["checklist"]]]
+        lines += [tr(lang, "### 检查清单", "### Checklist"), *[f"- {mark.get(c.get('status'), '•')} {c.get('item', '')}{tr(lang, '：', ': ')}{c.get('note', '')}" for c in result["checklist"]]]
     if result["analysis"]:
-        lines += ["### 综合分析", result["analysis"]]
-    lines.append("\n> 仅供学习研究，不构成投资建议")
+        lines += [tr(lang, "### 综合分析", "### Analysis"), result["analysis"]]
+    lines.append(tr(lang, "\n> 仅供学习研究，不构成投资建议", "\n" + DISCLAIMER_EN))
     return "\n\n".join(line for line in lines if line)

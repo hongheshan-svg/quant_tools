@@ -15,6 +15,8 @@ from typing import Any
 
 from loguru import logger
 
+from src.services.report_language import language_directive
+
 ANALYSTS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "technical": ("技术面分析员", "走势、技术指标、筹码、资金流和涨停质量",
                   ("股票", "行情", "近期走势", "技术面", "筹码", "资金流", "近期涨停", "主线地位")),
@@ -24,6 +26,7 @@ ANALYSTS: dict[str, tuple[str, str, tuple[str, ...]]] = {
              ("股票", "行情", "大盘环境", "资金流", "技术面", "近 30 天公告", "业绩", "持仓", "数据完整度")),
 }
 MODES: dict[str, tuple[str, ...]] = {"standard": ("technical", "intel"), "full": ("technical", "intel", "risk")}
+ANALYST_ENUMS = '"view" must be one of 看多/中性/看空 and "confidence" one of 高/中/低 (keep these Chinese values verbatim)'
 DISAGREEMENT_SCORE_GAP = 25
 VIEWS = ("看多", "中性", "看空")
 
@@ -75,18 +78,19 @@ def _normalize(role_key: str, raw: dict | None) -> dict[str, Any]:
             "key_points": _as_list(raw.get("key_points")), "risks": _as_list(raw.get("risks"))}
 
 
-def run_analysts(llm, context_text: str, mode: str) -> list[dict[str, Any]]:
+def run_analysts(llm, context_text: str, mode: str, lang: str = "zh") -> list[dict[str, Any]]:
     """按模式并发调用各分析员；单个分析员失败不影响其他人（结果里带 error）。"""
     roles = MODES.get(mode, ())
     if not roles:
         return []
     sections = split_sections(context_text)
+    directive = language_directive(lang, ANALYST_ENUMS)
 
     def ask(role_key: str) -> dict[str, Any]:
         label, focus, keys = ANALYSTS[role_key]
         data = "\n".join(sections[k] for k in keys if k in sections)
         try:
-            return _normalize(role_key, llm.chat_json(user_message=data, system_message=ANALYST_PROMPT.format(role=label, focus=focus)))
+            return _normalize(role_key, llm.chat_json(user_message=data, system_message=ANALYST_PROMPT.format(role=label, focus=focus) + directive))
         except Exception as e:
             logger.warning(f"{label}调用失败: {e}")
             return {"role": role_key, "label": label, "error": str(e)[:100]}

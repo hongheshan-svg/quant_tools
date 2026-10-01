@@ -24,6 +24,7 @@ export const SETTINGS_HELP: Record<string, HelpSection> = {
       { label: '备用模型', text: '主力模型失败（限流、超时、Key 失效）时自动切换。Key 仍是 your- 开头的占位符时会被跳过。' },
       { label: '图片识别模型', text: '截图导入自选股时使用，需要支持图片输入（如 gpt-4o、Claude、Gemini、qwen-vl、glm-4v）。留空则用主模型识别。' },
       { label: '测试按钮', text: '发送一次真实请求验证连通性，会产生极少量费用。失败信息会给出原因，如 Key 无效、网络不通或模型不存在。' },
+      { label: 'AI 输出语言', text: '选择英文后，个股/基金诊断、大盘复盘、AI 问股、深度研究和推送报告改用英文输出；行情数据摘要、新闻标题等原文保持不变。界面语言在右上角单独切换。' },
     ],
   },
   notifier: {
@@ -123,6 +124,7 @@ export const SETTINGS_HELP_EN: Record<string, HelpSection> = {
       { label: 'Backup model', text: 'Used automatically when the primary model fails (rate limit, timeout, invalid key). It is skipped while its key is still a placeholder starting with your-.' },
       { label: 'Vision model', text: 'Used when importing watchlist stocks from screenshots; it must support image input (such as gpt-4o, Claude, Gemini, qwen-vl, glm-4v). If left empty, the primary model is used.' },
       { label: 'Test buttons', text: 'Send one real request to verify connectivity, which costs a tiny amount. A failure shows the reason, such as an invalid key, network problem or missing model.' },
+      { label: 'AI output language', text: 'When set to English, stock/fund diagnosis, market review, AI chat, deep research and pushed reports are written in English; market data summaries, news titles and other source text stay as is. The interface language is switched separately at the top right.' },
     ],
   },
   notifier: {

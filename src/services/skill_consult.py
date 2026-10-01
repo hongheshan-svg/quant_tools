@@ -20,6 +20,7 @@ from src import trading_calendar
 from src.config_loader import load_config
 from src.database.db import get_db_session
 from src.database.models import SkillOpinion, StockDaily
+from src.services.report_language import language_directive
 from src.services.strategy_skills import DEFAULT_SKILL, Skill, get_skill, load_skills
 
 STANCES = ("看多", "中性", "看空")
@@ -29,6 +30,8 @@ MIN_WEIGHT_SAMPLES = 20     # 样本不足时权重恒为 1
 OVERSOLD_DROP_PCT = 20.0    # 区间跌幅超过该值视为超跌
 VOLUME_RATIO_MIN = 2.0
 EVENT_KEYWORDS = ("重组", "中标", "订单", "合同", "回购", "增持")
+
+CONSULT_ENUMS = '"stance" must be one of 看多/中性/看空 and "confidence" one of 高/中/低 (keep these Chinese values verbatim)'
 
 CONSULT_PROMPT = """你是按「{display_name}」策略分析的 A 股交易员。请严格按下面的策略标准，根据给出的数据判断这只股票未来 1~5 个交易日的方向；只使用给出的数据，不要编造，数据不足时降低信心。
 
@@ -123,16 +126,18 @@ def _normalize(skill: Skill, raw: Any, weight: float) -> dict[str, Any] | None:
             "reason": str(raw.get("reason", "")).strip()[:120], "weight": weight}
 
 
-def consult(llm, context_text: str, skills: list[Skill], weights: dict[str, float] | None = None) -> list[dict[str, Any]]:
+def consult(llm, context_text: str, skills: list[Skill], weights: dict[str, float] | None = None,
+            lang: str = "zh") -> list[dict[str, Any]]:
     """每个策略并发调用一次 LLM；单个失败或返回非法时跳过该策略。"""
     if not skills:
         return []
     weights = weights or {}
+    directive = language_directive(lang, CONSULT_ENUMS)
 
     def ask(skill: Skill) -> dict[str, Any] | None:
         try:
             raw = llm.chat_json(user_message=context_text,
-                                system_message=CONSULT_PROMPT.format(display_name=skill.display_name, instructions=skill.instructions))
+                                system_message=CONSULT_PROMPT.format(display_name=skill.display_name, instructions=skill.instructions) + directive)
             return _normalize(skill, raw, float(weights.get(skill.name, 1.0)))
         except Exception as e:
             logger.warning(f"策略会诊失败 [{skill.display_name}]: {e}")

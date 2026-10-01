@@ -18,6 +18,7 @@ from loguru import logger
 from src.collectors import news_search
 from src.database.db import get_db_session
 from src.database.models import FinanceNews, ResearchReport
+from src.services.report_language import language_directive, report_language, tr
 from src.services.stock_search import StockSearch
 
 MAX_QUESTIONS = 5
@@ -30,6 +31,10 @@ EVIDENCE_CONTENT_CHARS = 400
 EVIDENCE_TOTAL_CHARS = 12000
 SUMMARY_CHARS = 80
 DISCLAIMER = "仅供学习研究，不构成投资建议"
+DISCLAIMER_EN = "For study and research only; not investment advice"
+REPORT_EN_NOTE = (" Write the whole report in English, with these English section headings in the same order: "
+                  "## Conclusion, ## Core logic, ## Key evidence, ## Risks and invalidation conditions, "
+                  "## Related stocks and watch points, ## Data limitations. Keep evidence citations like [E1] unchanged.")
 
 PLAN_SYSTEM = "你是 A 股行业与主题研究员，负责把研究主题拆解成可检索的子问题。只输出 JSON。"
 PLAN_PROMPT = """研究主题：{topic}
@@ -220,12 +225,13 @@ class ResearchService:
         ev_text = "\n".join(
             f"[{e['id']}]（{e['source']}）{e['title']}：{e['content']}" for e in evidence
         ) or "（没有取到任何证据，请说明数据局限，不要编造）"
+        lang = report_language(self.config)
         prompt = REPORT_PROMPT.format(
             topic=topic, questions="\n".join(f"{i}. {q}" for i, q in enumerate(questions, 1)),
-            evidence=ev_text, disclaimer=DISCLAIMER,
+            evidence=ev_text, disclaimer=tr(lang, DISCLAIMER, DISCLAIMER_EN),
         )
         try:
-            text = self.llm.chat(prompt, REPORT_SYSTEM)
+            text = self.llm.chat(prompt, REPORT_SYSTEM + language_directive(lang) + (REPORT_EN_NOTE if lang == "en" else ""))
         except Exception as e:
             raise RuntimeError(f"生成研究报告失败：{e}") from e
         text = (text or "").strip()
@@ -257,7 +263,7 @@ class ResearchService:
             if line.strip().startswith("##"):
                 if in_conclusion:
                     break
-                in_conclusion = "结论" in line
+                in_conclusion = "结论" in line or "conclusion" in line.lower()
                 continue
             if in_conclusion and line.strip():
                 body.append(line.strip())

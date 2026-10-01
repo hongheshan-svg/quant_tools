@@ -948,6 +948,12 @@ export interface NotifierSettings {
   image_channels?: string[]
 }
 
+export type ReportLanguage = 'zh' | 'en'
+
+export interface ReportSettings {
+  language: ReportLanguage
+}
+
 export interface SearchSettings {
   search: {
     enabled?: boolean

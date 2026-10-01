@@ -19,6 +19,7 @@ from loguru import logger
 
 from src.config_loader import load_config
 from src.services.chat_tools import TOOL_LABELS, ChatTools, tools_prompt
+from src.services.report_language import report_language
 from src.services.strategy_skills import DEFAULT_SKILL, get_skill, load_skills
 
 MAX_TOOL_ROUNDS = 3
@@ -211,13 +212,21 @@ class StockChatSession:
             self._llm = LLMClient(self.config.get("llm", {}))
         return self._llm
 
+    def _language_note(self) -> str:
+        """英文模式下追加的回答语言指令（JSON 协议的键和工具名不变）。"""
+        if report_language(self.config) != "en":
+            return ""
+        return ("\n\nAnswer in English: write the \"answer\" markdown (conclusion, key data, risks, action points and the "
+                "disclaimer \"For study and research only; not investment advice\") in English. Keep the JSON keys "
+                "(\"thought\", \"tool_calls\", \"answer\", \"name\", \"args\") and tool names unchanged.")
+
     def clear(self) -> None:
         self.turns.clear()
 
     def ask(self, question: str, perspective: str = "综合", progress: Callable[[str], None] | None = None) -> ChatTurn:
         """回答一个问题（会带上之前的对话）；progress(提示文字) 用于界面显示正在调用的工具。"""
         turn = ChatTurn(question=question.strip(), perspective=normalize_perspective(perspective))
-        system = SYSTEM_PROMPT.format(tools=tools_prompt())
+        system = SYSTEM_PROMPT.format(tools=tools_prompt()) + self._language_note()
         for round_no in range(1, MAX_TOOL_ROUNDS + 2):
             final = round_no > MAX_TOOL_ROUNDS
             try:
@@ -274,7 +283,7 @@ class StockChatSession:
                    cancel: threading.Event | None = None) -> Iterator[dict[str, Any]]:
         """流式回答：产出 status / tool / tool_result / delta / error 事件，最后一定是 done（含完整 turn）。"""
         turn = ChatTurn(question=question.strip(), perspective=normalize_perspective(perspective))
-        system = SYSTEM_PROMPT.format(tools=tools_prompt())
+        system = SYSTEM_PROMPT.format(tools=tools_prompt()) + self._language_note()
         streamed: list[str] = []          # 已经作为 delta 产出的回答文本
         appended = False
         cancelled = lambda: cancel is not None and cancel.is_set()  # noqa: E731

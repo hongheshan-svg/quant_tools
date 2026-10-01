@@ -400,6 +400,12 @@ screening:
   #   oversold_rebound: {enabled: false}
   strategies: {}
 
+# --- AI 输出语言 ---
+# AI 输出语言：影响个股/基金诊断、大盘复盘、AI 问股、深度研究和推送报告；行情数据摘要保持原文
+# 也可用环境变量 QUANT__REPORT__LANGUAGE=en 覆盖
+report:
+  language: zh    # zh 中文 / en 英文
+
 # --- 个股 AI 诊断 ---
 diagnosis:
   # single：一次 LLM 调用；standard：技术面、情报两位分析员先各自分析，再由决策员综合（3 次调用）；

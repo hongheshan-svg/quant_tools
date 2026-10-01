@@ -9,6 +9,7 @@ import { Button, Card, ErrorBox, Field, Input, PageHeader, Select, Spinner, Tabs
 import { useApi } from '@/hooks/useApi'
 import { useTask } from '@/hooks/useTask'
 import { useT } from '@/i18n'
+import { ReportLanguageSection } from '@/pages/settings/ReportLanguageSection'
 import { toast } from '@/stores/toast'
 import { getDesktop, type DesktopInfo, type QuantDesktop } from '@/utils/desktop'
 
@@ -38,7 +39,7 @@ export function SettingsPage() {
       <Card bodyClassName="p-3">
         <Tabs value={tab} onChange={setTab} tabs={tabs} />
         <div className="mb-2 flex justify-end"><HelpButton helpKey={tab} /></div>
-        {tab === 'llm' && <LLMSettingsForm />}
+        {tab === 'llm' && <><LLMSettingsForm /><ReportLanguageSection /></>}
         {tab === 'notifier' && <NotifierForm />}
         {tab === 'bot' && <BotForm />}
         {tab === 'search' && <SearchForm />}

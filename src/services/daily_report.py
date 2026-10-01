@@ -15,6 +15,7 @@ from src.config_loader import load_config
 from src.database.db import get_db_session
 from src.database.models import TradeOrder, TradeSignal
 from src.notifier import broadcast, enabled_channels
+from src.services.report_language import report_language, tr
 from src.trading.constants import ORDER_STATUS_PENDING_CONFIRM
 
 MAX_SIGNALS = 10
@@ -45,6 +46,7 @@ class DailyReportService:
     def __init__(self, config: dict | None = None):
         self.config = config or load_config()
         self.db_path = self.config.get("database", {}).get("sqlite_path", "data/quant.db")
+        self.lang = report_language(self.config)
 
     def push(self) -> dict[str, Any]:
         """推送日报；没有启用任何渠道时不生成报告。"""
@@ -68,9 +70,9 @@ class DailyReportService:
             self._account_section(),
             self._performance_section(),
             self._source_health_section(),
-            "> 仅供学习研究，不构成投资建议",
+            tr(self.lang, "> 仅供学习研究，不构成投资建议", "> For study and research only; not investment advice"),
         ]
-        return f"A股量化日报 {today}", "\n\n".join(s for s in sections if s)
+        return tr(self.lang, f"A股量化日报 {today}", f"A-share Quant Daily {today}"), "\n\n".join(s for s in sections if s)
 
     def _market_overview(self) -> dict:
         try:
@@ -88,8 +90,8 @@ class DailyReportService:
         regime_line = f"- {regime.summary()}" if regime.regime != "未知" else ""
         self._regime_date = regime.trade_date if regime_line else ""
         if not ov or not (ov.get("up_count") or ov.get("sh_index")):
-            return "\n".join(["### 大盘复盘", regime_line or "暂无市场数据"])
-        lines = ["### 大盘复盘", *([regime_line] if regime_line else [])]
+            return "\n".join([tr(self.lang, "### 大盘复盘", "### Market Review"), regime_line or tr(self.lang, "暂无市场数据", "No market data")])
+        lines = [tr(self.lang, "### 大盘复盘", "### Market Review"), *([regime_line] if regime_line else [])]
         indices = [
             f"{label} {ov[key]}（{_pct(ov.get(pct_key))}）"
             for label, key, pct_key in (("上证", "sh_index", "sh_change_pct"), ("深证", "sz_index", "sz_change_pct"), ("创业板", "cy_index", "cy_change_pct"))
@@ -120,7 +122,7 @@ class DailyReportService:
         review = MarketReviewService(self.config).get(self._regime_date or date.today().strftime("%Y-%m-%d"))
         if not review or review.get("error"):
             return ""
-        return "### AI 复盘与次日计划\n" + review["markdown"]
+        return tr(self.lang, "### AI 复盘与次日计划", "### AI Review and Next-day Plan") + "\n" + review["markdown"]
 
     def _theme_section(self) -> str:
         from src.analyzers.theme_tracker import ThemeTracker
@@ -128,7 +130,7 @@ class DailyReportService:
         tracker = ThemeTracker(self.config)
         concept_themes = tracker.analyze(dimension="concept")
         industry_themes = tracker.analyze(dimension="industry")
-        lines = ["### 主线梯队"]
+        lines = [tr(self.lang, "### 主线梯队", "### Main Themes")]
         for label, group in (("题材", concept_themes), ("行业", industry_themes)):
             lines.extend(f"- {label}｜{t.brief()}" for t in tracker.main_lines(group, top=4))
         if len(lines) == 1:
@@ -156,14 +158,14 @@ class DailyReportService:
                 for s in signals
             ]
         if not rows:
-            return "### 交易信号\n暂无信号"
+            return tr(self.lang, "### 交易信号\n暂无信号", "### Trading Signals\nNo signals")
 
         verdicts: dict[str, int] = {}
         for r in rows:
             key = r["verdict"] or "评分信号"
             verdicts[key] = verdicts.get(key, 0) + 1
         dates = "、".join(sorted({r["date"] for r in rows}))
-        lines = [f"### 交易信号（{dates}）", "共 {} 条 | {}".format(len(rows), " · ".join(f"{k} {v}" for k, v in verdicts.items()))]
+        lines = [tr(self.lang, f"### 交易信号（{dates}）", f"### Trading Signals ({dates})"), "共 {} 条 | {}".format(len(rows), " · ".join(f"{k} {v}" for k, v in verdicts.items()))]
         for i, r in enumerate(rows[:MAX_SIGNALS], 1):
             kind = "AI预测" if r["type"] == "premarket" else "评分信号"
             head = f"{i}. **{r['name']}({r['code']})** {kind}"
@@ -194,7 +196,8 @@ class DailyReportService:
             ]
         if not lines:
             return ""
-        return "\n".join(["### 待确认订单", *lines, "请在桌面端【模拟交易】页确认下单"])
+        return "\n".join([tr(self.lang, "### 待确认订单", "### Pending Orders"), *lines,
+                          tr(self.lang, "请在桌面端【模拟交易】页确认下单", "Confirm orders on the Paper Trading page")])
 
     def _account_section(self) -> str:
         try:
@@ -206,7 +209,7 @@ class DailyReportService:
             return ""
         acc = snapshot["account"]
         return (
-            "### 模拟盘\n"
+            tr(self.lang, "### 模拟盘", "### Paper Account") + "\n"
             f"总资产 {acc['total_assets']:,.0f} | 可用资金 {acc['cash']:,.0f} | "
             f"持仓 {len(snapshot['positions'])} 只 | 浮动盈亏 {acc['unrealized_pnl']:+,.0f}"
         )

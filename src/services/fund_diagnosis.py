@@ -20,9 +20,11 @@ from loguru import logger
 from src.database.db import get_db_session
 from src.database.models import FinanceNews, FundDaily, StockDiagnosis
 from src.services import market_phase
+from src.services.report_language import language_directive, report_language
 from src.services.run_log import RunLog
 from src.services.stock_diagnosis import (
     CACHE_MINUTES,
+    DIAGNOSIS_ENUMS,
     MIN_DAILY_BARS,
     STABILITY_DAYS,
     StockDiagnosisService,
@@ -90,9 +92,10 @@ class FundDiagnosisService(StockDiagnosisService):
         if not info:
             return {"code": code, "error": "不是已知的 ETF 或指数"}
         code = info["code"]
+        lang = report_language(self.config)
         if not force:
             cached = self.latest(code, max_age_minutes=CACHE_MINUTES)
-            if cached:
+            if cached and (cached.get("language") or "zh") == lang:
                 return {**cached, "cached": True}
 
         run_log = RunLog()
@@ -102,7 +105,7 @@ class FundDiagnosisService(StockDiagnosisService):
         cfg = self.config.get("diagnosis") or {}
         model = str((getattr(self.llm, "primary_cfg", None) or {}).get("model") or "")
         analyst_start = time.perf_counter()
-        opinions = run_analysts(self.llm, context["text"], str(cfg.get("mode", "single")))
+        opinions = run_analysts(self.llm, context["text"], str(cfg.get("mode", "single")), *(["en"] if lang == "en" else []))
         if opinions:
             run_log.llm("分析员", model, True, (time.perf_counter() - analyst_start) * 1000)
         conflict = disagreement(opinions)
@@ -110,7 +113,8 @@ class FundDiagnosisService(StockDiagnosisService):
         if opinions:
             message += "\n" + opinions_text(opinions, conflict)
         decision_start = time.perf_counter()
-        raw = self.llm.chat_json(user_message=message, system_message=FUND_SYSTEM_PROMPT + (DECISION_ADDENDUM if opinions else ""))
+        raw = self.llm.chat_json(user_message=message, system_message=FUND_SYSTEM_PROMPT + (DECISION_ADDENDUM if opinions else "")
+                                  + language_directive(lang, DIAGNOSIS_ENUMS))
         run_log.llm("决策", model, bool(raw), (time.perf_counter() - decision_start) * 1000)
         if not raw:
             return {"code": code, "name": context["name"], "kind": info["kind"], "error": "AI 未返回有效结果，请检查 AI 设置或稍后重试"}

@@ -19,11 +19,13 @@ from src.config_loader import load_config
 from src.database.db import get_db_session
 from src.database.models import MarketReview
 from src.services.market_context import build_market_facts
+from src.services.report_language import display, language_directive, report_language, tr
 
 STANCE_RANK = {"防守": 0, "均衡": 1, "进攻": 2}
 REGIME_MAX_STANCE = {"冰点": "防守", "防守": "防守", "均衡": "均衡", "进攻": "进攻"}
 STANCE_POSITION = {"进攻": "7~10 成", "均衡": "4~6 成", "防守": "0~3 成"}
 MARKET_CLOSE = "15:00"
+REVIEW_ENUMS = '"stance" must be exactly one of 进攻/均衡/防守 (keep the Chinese value verbatim)'
 
 SYSTEM_PROMPT = """你是 A 股短线（打板、连板接力、题材主线）复盘分析师。按三段式框架复盘当天市场，并给出次日计划。
 
@@ -68,23 +70,25 @@ class MarketReviewService:
 
         返回 {"trade_date", "stance", "markdown", ...}，失败时含 error。
         """
+        lang = report_language(self.config)
         facts = build_market_facts(self.config, overview)
         trade_date = facts.regime.trade_date if facts.regime else datetime.now().strftime("%Y-%m-%d")
         if not force:
             existing = self.get(trade_date)
-            if existing and existing.get("created_at", "") >= f"{trade_date} {MARKET_CLOSE}":
+            if (existing and existing.get("created_at", "") >= f"{trade_date} {MARKET_CLOSE}"
+                    and (existing.get("language") or "zh") == lang):
                 return existing
         if facts.regime is None and not facts.overview:
             return {"trade_date": trade_date, "error": "没有足够的市场数据，无法复盘"}
 
         try:
-            raw = self.llm.chat_json(user_message=f"复盘日期：{trade_date}\n\n{facts.text()}", system_message=SYSTEM_PROMPT)
+            raw = self.llm.chat_json(user_message=f"复盘日期：{trade_date}\n\n{facts.text()}", system_message=SYSTEM_PROMPT + language_directive(lang, REVIEW_ENUMS))
         except Exception as e:
             logger.error(f"大盘复盘 LLM 调用失败: {e}")
             raw = {}
         if not raw:
             return {"trade_date": trade_date, "error": "AI 未返回有效结果，请检查 AI 设置或稍后重试"}
-        result = self._apply_guardrails(raw, facts, trade_date)
+        result = self._apply_guardrails(raw, facts, trade_date, lang)
         self._save(result)
         return result
 
@@ -98,7 +102,7 @@ class MarketReviewService:
             return json.loads(row.content_json) if row else None
 
     @staticmethod
-    def _apply_guardrails(raw: dict, facts, trade_date: str) -> dict[str, Any]:
+    def _apply_guardrails(raw: dict, facts, trade_date: str, lang: str = "zh") -> dict[str, Any]:
         stance = str(raw.get("stance", "")).strip()
         stance = stance if stance in STANCE_RANK else "均衡"
         guardrails = []
@@ -106,7 +110,12 @@ class MarketReviewService:
         if regime is not None:
             cap = REGIME_MAX_STANCE.get(regime.regime, "均衡")
             if STANCE_RANK[stance] > STANCE_RANK[cap]:
-                guardrails.append(f"量化大盘环境为「{regime.regime}」（{regime.score:.0f}分），姿态由「{stance}」下调为「{cap}」")
+                guardrails.append(tr(
+                    lang,
+                    f"量化大盘环境为「{regime.regime}」（{regime.score:.0f}分），姿态由「{stance}」下调为「{cap}」",
+                    f"Quantitative market regime is \"{display(lang, regime.regime)}\" ({regime.score:.0f} pts); "
+                    f"stance downgraded from \"{display(lang, stance)}\" to \"{display(lang, cap)}\"",
+                ))
                 stance = cap
         position = str(raw.get("position", "")).strip() if not guardrails else STANCE_POSITION[stance]
         as_list = lambda v: [str(x) for x in v if x] if isinstance(v, list) else ([str(v)] if v else [])  # noqa: E731
@@ -124,6 +133,7 @@ class MarketReviewService:
             "watch_points": as_list(raw.get("watch_points")),
             "guardrails": guardrails,
             "regime": regime.summary() if regime is not None else "",
+            "language": lang,
         }
         result["markdown"] = render_markdown(result)
         return result
@@ -139,17 +149,21 @@ class MarketReviewService:
 
 
 def render_markdown(result: dict[str, Any]) -> str:
+    lang = result.get("language") or "zh"
     if result.get("error"):
-        return f"**复盘失败**：{result['error']}"
+        return tr(lang, f"**复盘失败**：{result['error']}", f"**Review failed**: {result['error']}")
     icon = {"进攻": "🔴", "均衡": "🟡", "防守": "🟢"}.get(result["stance"], "")
     lines = [f"**{result['headline']}**" if result.get("headline") else "",
-             f"{icon} 次日姿态：**{result['stance']}**，建议仓位 {result['position']}"]
+             tr(lang, f"{icon} 次日姿态：**{result['stance']}**，建议仓位 {result['position']}",
+                f"{icon} Next-day stance: **{display(lang, result['stance'])}**, suggested position {result['position']}")]
     if result.get("guardrails"):
-        lines.append("> 护栏：" + "；".join(result["guardrails"]))
-    for label, key in (("趋势结构", "trend"), ("资金情绪", "emotion"), ("主线板块", "main_lines")):
+        lines.append(tr(lang, "> 护栏：", "> Guardrails: ") + "；".join(result["guardrails"]))
+    for label, key in ((tr(lang, "趋势结构", "Trend"), "trend"), (tr(lang, "资金情绪", "Sentiment"), "emotion"),
+                       (tr(lang, "主线板块", "Main themes"), "main_lines")):
         if result.get(key):
             lines.append(f"**{label}**：{result[key]}")
-    for label, key in (("次日关注", "focus"), ("回避方向", "avoid"), ("观察要点", "watch_points")):
+    for label, key in ((tr(lang, "次日关注", "Focus"), "focus"), (tr(lang, "回避方向", "Avoid"), "avoid"),
+                       (tr(lang, "观察要点", "Watch points"), "watch_points")):
         if result.get(key):
             lines.append(f"**{label}**\n" + "\n".join(f"- {x}" for x in result[key]))
     return "\n\n".join(x for x in lines if x)

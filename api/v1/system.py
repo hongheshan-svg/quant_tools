@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import PlainTextResponse
@@ -346,6 +346,33 @@ def test_search_settings(body: SearchTestBody, config: dict = Depends(get_config
 
     merged = {**config, "search": _merge_search(config.get("search") or {}, body.search)}
     return {"results": news_search.test_providers(merged, body.query.strip() or "贵州茅台")}
+
+
+# ---------- AI 输出语言 ----------
+
+class ReportSettingsBody(BaseModel):
+    language: Literal["zh", "en"]
+
+
+@router.get("/settings/report")
+def get_report_settings(config: dict = Depends(get_config)) -> dict[str, Any]:
+    from src.services.report_language import report_language
+
+    return {"language": report_language(config)}
+
+
+@router.put("/settings/report")
+def save_report_settings(body: ReportSettingsBody, request: Request, config: dict = Depends(get_config)) -> dict[str, Any]:
+    from src.config_loader import reload_config
+    from src.services.report_language import report_language
+    from src.settings_store import save_section
+
+    from api.app import apply_config
+
+    save_section("report", {**(config.get("report") or {}), "language": body.language})
+    new_config = reload_config()
+    apply_config(request.app, new_config)
+    return {"language": report_language(new_config)}
 
 
 # ---------- RSS 资讯源设置 ----------
