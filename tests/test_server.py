@@ -48,3 +48,19 @@ def test_use_system_browser_dir(monkeypatch):
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "/opt/browsers")
     server.use_system_browser_dir()
     assert server.os.environ["PLAYWRIGHT_BROWSERS_PATH"] == "/opt/browsers"
+
+
+def test_self_check_passes_and_reports_failures(monkeypatch, capsys):
+    assert server.self_check() == 0
+    assert "Self-check passed" in capsys.readouterr().out
+
+    import py_mini_racer
+
+    class Broken:
+        def eval(self, code):
+            raise OSError("icudtl.dat not found")
+
+    monkeypatch.setattr(py_mini_racer, "MiniRacer", Broken)
+    assert server.self_check() == 1
+    out = capsys.readouterr().out
+    assert "FAIL  mini_racer: OSError: icudtl.dat not found" in out and "ok    pinyin" in out

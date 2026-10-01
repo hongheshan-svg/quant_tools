@@ -1,4 +1,5 @@
 akshare>=1.14.0
+mini-racer>=0.13.2       # AKShare 用它执行 JS；旧版在打包后会到错误的位置找原生库
 openai>=1.0.0
 litellm>=1.80,<1.99
 json-repair>=0.30.0

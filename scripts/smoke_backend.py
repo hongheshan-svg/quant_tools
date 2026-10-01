@@ -4,8 +4,8 @@
     python scripts/smoke_backend.py            # 默认 dist/backend/quant_server/quant_server(.exe)
     python scripts/smoke_backend.py --exe PATH
 
-缺文件、缺隐藏导入只有运行到那段代码才会报错，所以除了健康检查，还请求了用到 AKShare、平台预设、
-内置策略、内置报告模板的接口。用临时数据目录运行，不启动定时任务，不需要联网。失败时打印后台日志并返回 1。
+缺文件、缺隐藏导入只有运行到那段代码才会报错，所以先运行 --self-check（MiniRacer、本地价格表、拼音、内置策略与模板、二维码），
+再启动服务请求健康检查和用到 AKShare、平台预设、内置策略、内置报告模板的接口。用临时数据目录运行，不启动定时任务，不需要联网。失败时打印后台日志并返回 1。
 输出在 GitHub Actions 日志里显示，用英文。
 """
 
@@ -44,6 +44,15 @@ def main() -> int:
     exe = Path(args.exe)
     if not exe.exists():
         print(f"Backend executable not found: {exe}")
+        return 1
+
+    # 先自检：实际执行 MiniRacer、本地价格表、拼音、内置策略与模板（接口冒烟覆盖不到这些代码路径）
+    check = subprocess.run([str(exe), "--self-check"], cwd=exe.parent, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=STARTUP_TIMEOUT)
+    print(check.stdout.strip())
+    if check.returncode:
+        print(check.stderr[-4000:])
+        print("Smoke test FAILED")
         return 1
 
     workdir = Path(tempfile.mkdtemp(prefix="quant-smoke-"))

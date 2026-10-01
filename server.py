@@ -88,11 +88,63 @@ def install_playwright_browser() -> None:
         logger.warning(f"Chromium 下载失败，依赖浏览器的采集会改用其他数据源：{e}")
 
 
+def self_check() -> int:
+    """打包产物自检：实际执行依赖原生库和内置数据文件的代码（缺文件、版本错配只有运行到才会报错），
+    全部通过返回 0。打包冒烟测试（scripts/smoke_backend.py）先运行它；输出在 CI 日志里显示，用英文。"""
+
+    def mini_racer() -> None:  # AKShare 的交易日历、新浪行情等接口用它执行 JS
+        from py_mini_racer import MiniRacer
+
+        assert MiniRacer().eval("[1, 2, 3].map(x => x * 2).join(',')") == "2,4,6"
+
+    def litellm_prices() -> None:  # 本地价格表（导入时不联网下载）
+        from src.analyzers.llm_usage import import_litellm
+
+        assert len(import_litellm().model_cost) > 100
+
+    def pinyin() -> None:  # 股票搜索的拼音首字母
+        from src.services.stock_search import name_initials
+
+        assert name_initials("贵州茅台")[0] == "gzmt"
+
+    def strategy_skills() -> None:
+        from src.services.strategy_skills import BUILTIN_DIR, load_skills
+
+        assert len(list(BUILTIN_DIR.glob("*.yaml"))) >= 19 and len(load_skills()) >= 19
+
+    def report_templates() -> None:
+        from jinja2.sandbox import ImmutableSandboxedEnvironment
+
+        from src.services.report_templates import BUILTIN_DIR
+
+        assert len(list(BUILTIN_DIR.glob("*.md.j2"))) >= 4
+        assert ImmutableSandboxedEnvironment().from_string("{{ x }}").render(x=1) == "1"
+
+    def qr_code() -> None:  # 分享图底部二维码
+        from src.services.report_image import _qr_data_uri
+
+        assert _qr_data_uri("https://example.com").startswith("data:image/png;base64,")
+
+    failed = 0
+    for check in (mini_racer, litellm_prices, pinyin, strategy_skills, report_templates, qr_code):
+        try:
+            check()
+            print(f"ok    {check.__name__}", flush=True)
+        except Exception as e:
+            failed += 1
+            print(f"FAIL  {check.__name__}: {type(e).__name__}: {e}", flush=True)
+    print("Self-check passed" if not failed else f"Self-check FAILED ({failed})", flush=True)
+    return 1 if failed else 0
+
+
 def main() -> None:
     pre = argparse.ArgumentParser(add_help=False)
     pre.add_argument("--workdir")
+    pre.add_argument("--self-check", action="store_true")
     known, _ = pre.parse_known_args()
-    # 打包后没有指定 --workdir 时，以可执行文件所在目录为数据目录（和旧版 EXE 一致）
+    if known.self_check:
+        sys.exit(self_check())
+    # 打包后没有指定 --workdir 时，以可执行文件所在目录为数据目录（便携运行）
     workdir = known.workdir or (os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else None)
     if workdir:
         prepare_workdir(workdir, bundle_dir())
@@ -111,6 +163,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=int(web.get("port", 8000)))
     parser.add_argument("--no-scheduler", action="store_true", help="不运行定时任务和聊天机器人")
     parser.add_argument("--workdir", help="存放 config/、data/、logs/ 的目录（默认当前目录）")
+    parser.add_argument("--self-check", action="store_true", help="自检打包产物（原生库、内置数据文件）后退出")
     args = parser.parse_args()
 
     setup_logging(config)
