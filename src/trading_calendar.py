@@ -130,6 +130,16 @@ def trade_days_only(dates):
     return [d for d in dates if is_trade_day(d)]
 
 
+def prev_trade_day(d: date | datetime | str | None = None) -> date:
+    """d 之前（不含 d）的最近一个交易日。"""
+    day = _to_date(d)
+    for _ in range(MAX_LOOKAHEAD_DAYS):
+        day -= timedelta(days=1)
+        if is_trade_day(day):
+            return day
+    return day
+
+
 def next_trade_day(d: date | datetime | str | None = None, include_self: bool = False) -> date:
     """d 之后（include_self=True 时含 d 当天）的第一个交易日。"""
     day = _to_date(d)

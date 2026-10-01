@@ -226,12 +226,17 @@ def test_collect_earnings_news_fallback_generates_minimum_items(monkeypatch):
 def test_market_collection_skipped_before_market_data_ready(monkeypatch):
     from src import trading_calendar
 
+    from src.collectors.stock_data import StockDataCollector
+
     orchestrator = _make_orchestrator(monkeypatch)
     monkeypatch.setattr(trading_calendar, "market_data_ready", lambda now=None: False)
-    monkeypatch.setattr("src.collectors.stock_data.StockDataCollector.__init__", lambda *a, **k: (_ for _ in ()).throw(AssertionError("should not collect")))
+    for name in ("_collect_realtime_quotes", "_collect_limit_up_pool", "_collect_dragon_tiger", "_collect_northbound_flow"):
+        monkeypatch.setattr(StockDataCollector, name, lambda *a, **k: (_ for _ in ()).throw(AssertionError("不能按今天的日期采集")))
+    # 只补齐最近一个交易日（按该交易日入库）
+    monkeypatch.setattr(StockDataCollector, "fill_last_session", lambda self, db_path, now=None: "exists 2026-09-30")
     assert orchestrator.collect_market_parallel() == {
         "realtime_quotes": "skipped", "limit_up_pool": "skipped", "dragon_tiger": "skipped", "northbound_flow": "skipped",
-        "fund_flow": "skipped",
+        "fund_flow": "skipped", "last_session": "exists 2026-09-30",
     }
     assert orchestrator._check_missing_sources({"market": orchestrator.collect_market_parallel()}) == [
         f"news.{s}" for s in orchestrator.required_news_sources

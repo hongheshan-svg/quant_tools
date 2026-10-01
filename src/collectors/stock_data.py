@@ -30,6 +30,9 @@ HTTP_OK_STATUS = 200
 PREFIXED_STOCK_CODE_LENGTH = 8
 STOCK_CODE_LENGTH = 6
 MIN_MARKET_OVERVIEW_SAMPLE_SIZE = 100
+# 今天没有行情时回退的交易日要有全市场行情（个股页按需补齐的日线只有少数股票，统计出的涨跌家数、成交额会失真）
+FALLBACK_OVERVIEW_SAMPLE_SIZE = 1000
+LAST_SESSION_CUTOFF_HHMM = (9, 15)  # 交易日 9:15 集合竞价开始后，行情接口不再返回上一交易日的收盘
 LIMIT_UP_CHANGE_THRESHOLD = 9.8
 LIMIT_DOWN_CHANGE_THRESHOLD = -9.8
 EXTREME_LOW_LIQUIDITY_AMOUNT_YI = 15000
@@ -49,6 +52,7 @@ TENCENT_TOTAL_MV_INDEX = 45
 TENCENT_CIRC_MV_INDEX = 44
 TENCENT_PE_INDEX = 39
 TENCENT_PB_INDEX = 46
+TENCENT_TIME_INDEX = 30   # 行情时间 YYYYMMDDHHMMSS
 NORTHBOUND_UNIT_SPLIT_THRESHOLD = 10000
 LIMIT_UP_PCT_TOLERANCE = 0.5  # 涨停价四舍五入导致实际涨幅略低于 10%/20%/30%
 # 实时行情默认的数据源顺序（data_sources.realtime 可调整）
@@ -263,7 +267,7 @@ class StockDataCollector(BaseCollector):
 
     @staticmethod
     def _latest_overview_date(session, before: str) -> str | None:
-        """before 之前最近一个行情样本足够的交易日（跳过旧版本在节假日写入的重复数据）"""
+        """before 之前最近一个有全市场行情的交易日（跳过旧版本在节假日写入的重复数据）"""
         from sqlalchemy import func
 
         from src import trading_calendar
@@ -272,7 +276,7 @@ class StockDataCollector(BaseCollector):
         dates = (session.query(SD.trade_date, func.count(SD.code)).filter(SD.trade_date < before)
                  .group_by(SD.trade_date).order_by(SD.trade_date.desc()).limit(10).all())
         for trade_date, count in dates:
-            if count > MIN_MARKET_OVERVIEW_SAMPLE_SIZE and trading_calendar.is_trade_day(trade_date):
+            if count >= FALLBACK_OVERVIEW_SAMPLE_SIZE and trading_calendar.is_trade_day(trade_date):
                 return trade_date
         return None
 
@@ -585,6 +589,101 @@ class StockDataCollector(BaseCollector):
         logger.warning(f"使用穷举代码列表: {len(codes)} 个")
         return codes
 
+    def _fetch_tencent_quotes(self) -> pd.DataFrame:
+        """腾讯财经API（qt.gtimg.cn），最稳定的实时行情数据源。"""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        import httpx
+
+        # 先获取全部A股代码列表
+        all_codes = self._get_all_stock_codes()
+        if not all_codes:
+            raise ConnectionError("无法获取股票代码列表")
+
+        batch_size = 80  # 腾讯每次可查约80只
+
+        # 构建所有批次查询串
+        batches = [
+            ",".join(all_codes[i:i + batch_size])
+            for i in range(0, len(all_codes), batch_size)
+        ]
+
+        def _fetch_batch(query: str) -> list[dict]:
+            """获取一个批次的行情数据。"""
+            batch_records = []
+            try:
+                resp = httpx.get(
+                    f"https://qt.gtimg.cn/q={query}",
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        "Referer": "https://gu.qq.com/",
+                    },
+                    timeout=15,
+                )
+                if resp.status_code != HTTP_OK_STATUS:
+                    return batch_records
+                # 解析腾讯行情格式: v_sz002131="51~利欧股份~002131~9.08~...~10.06~..."
+                # 字段索引: 1=名称, 3=最新价, 5=今开,
+                #   32=涨跌幅, 33=最高, 34=最低, 36=成交量(手),
+                #   37=成交额(万), 38=换手率, 39=市盈率(动态), 44=流通市值(亿), 45=总市值(亿), 46=市净率
+                for line in resp.text.strip().split(";"):
+                    line = line.strip()
+                    if "~" not in line:
+                        continue
+                    parts = line.split("~")
+                    if len(parts) < TENCENT_MIN_FIELDS:
+                        continue
+                    eq_idx = line.find('="')
+                    if eq_idx < 0:
+                        continue
+                    var_name = line[:eq_idx].strip()
+                    code_full = var_name.replace("v_", "").lower()
+                    bare_code = self._extract_bare_equity_code(code_full)
+                    if not bare_code:
+                        continue
+                    name = normalize_name(parts[1])
+                    price = _safe_float(parts[3])
+                    if not name or price is None or price <= 0:
+                        continue
+                    # 单位转换: 腾讯成交量=手→股(*100)（科创板已经是股，不再乘）, 成交额=万→元(*10000), 市值=亿→元(*1e8)
+                    vol_raw = _safe_float(parts[36])
+                    amt_raw = _safe_float(parts[37])
+                    tmv_raw = _safe_float(parts[TENCENT_TOTAL_MV_INDEX]) if len(parts) > TENCENT_TOTAL_MV_INDEX else None
+                    cmv_raw = _safe_float(parts[TENCENT_CIRC_MV_INDEX]) if len(parts) > TENCENT_CIRC_MV_INDEX else None
+                    batch_records.append({
+                        "代码": bare_code,
+                        "名称": name,
+                        "最新价": price,
+                        "涨跌幅": _safe_float(parts[32]),
+                        "最高": _safe_float(parts[33]),
+                        "最低": _safe_float(parts[34]),
+                        "今开": _safe_float(parts[5]),
+                        "成交量": (vol_raw if board_of(bare_code) == "科创板" else vol_raw * 100) if vol_raw else None,
+                        "成交额": amt_raw * 10000 if amt_raw else None,
+                        "换手率": _safe_float(parts[38]),
+                        "总市值": tmv_raw * 1e8 if tmv_raw else None,
+                        "流通市值": cmv_raw * 1e8 if cmv_raw else None,
+                        "市盈率": _safe_float(parts[TENCENT_PE_INDEX]) if len(parts) > TENCENT_PE_INDEX else None,
+                        "市净率": _safe_float(parts[TENCENT_PB_INDEX]) if len(parts) > TENCENT_PB_INDEX else None,
+                        "行情日期": _tencent_quote_date(parts[TENCENT_TIME_INDEX]),
+                    })
+            except Exception as e:
+                logger.debug(f"腾讯行情批次异常: {e}")
+            return batch_records
+
+        # 并发拉取（8线程，平衡速度和服务端友好度）
+        all_records = []
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = {pool.submit(_fetch_batch, q): q for q in batches}
+            for future in as_completed(futures):
+                with suppress(Exception):
+                    all_records.extend(future.result())
+
+        if not all_records:
+            raise ConnectionError("腾讯财经API无数据返回")
+        logger.info(f"腾讯财经API获取 {len(all_records)} 条行情")
+        return pd.DataFrame(all_records)
+
     def _collect_realtime_quotes(self, trade_date: str, db_path: str):
         """
         采集 A 股实时行情 —— 多源兜底策略。
@@ -594,98 +693,7 @@ class StockDataCollector(BaseCollector):
 
         # ——— 数据源定义 ———
         def _try_tencent():
-            """腾讯财经API（qt.gtimg.cn），最稳定的实时行情数据源。"""
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-
-            import httpx
-
-            # 先获取全部A股代码列表
-            all_codes = self._get_all_stock_codes()
-            if not all_codes:
-                raise ConnectionError("无法获取股票代码列表")
-
-            batch_size = 80  # 腾讯每次可查约80只
-
-            # 构建所有批次查询串
-            batches = [
-                ",".join(all_codes[i:i + batch_size])
-                for i in range(0, len(all_codes), batch_size)
-            ]
-
-            def _fetch_batch(query: str) -> list[dict]:
-                """获取一个批次的行情数据。"""
-                batch_records = []
-                try:
-                    resp = httpx.get(
-                        f"https://qt.gtimg.cn/q={query}",
-                        headers={
-                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                            "Referer": "https://gu.qq.com/",
-                        },
-                        timeout=15,
-                    )
-                    if resp.status_code != HTTP_OK_STATUS:
-                        return batch_records
-                    # 解析腾讯行情格式: v_sz002131="51~利欧股份~002131~9.08~...~10.06~..."
-                    # 字段索引: 1=名称, 3=最新价, 5=今开,
-                    #   32=涨跌幅, 33=最高, 34=最低, 36=成交量(手),
-                    #   37=成交额(万), 38=换手率, 39=市盈率(动态), 44=流通市值(亿), 45=总市值(亿), 46=市净率
-                    for line in resp.text.strip().split(";"):
-                        line = line.strip()
-                        if "~" not in line:
-                            continue
-                        parts = line.split("~")
-                        if len(parts) < TENCENT_MIN_FIELDS:
-                            continue
-                        eq_idx = line.find('="')
-                        if eq_idx < 0:
-                            continue
-                        var_name = line[:eq_idx].strip()
-                        code_full = var_name.replace("v_", "").lower()
-                        bare_code = self._extract_bare_equity_code(code_full)
-                        if not bare_code:
-                            continue
-                        name = normalize_name(parts[1])
-                        price = _safe_float(parts[3])
-                        if not name or price is None or price <= 0:
-                            continue
-                        # 单位转换: 腾讯成交量=手→股(*100)（科创板已经是股，不再乘）, 成交额=万→元(*10000), 市值=亿→元(*1e8)
-                        vol_raw = _safe_float(parts[36])
-                        amt_raw = _safe_float(parts[37])
-                        tmv_raw = _safe_float(parts[TENCENT_TOTAL_MV_INDEX]) if len(parts) > TENCENT_TOTAL_MV_INDEX else None
-                        cmv_raw = _safe_float(parts[TENCENT_CIRC_MV_INDEX]) if len(parts) > TENCENT_CIRC_MV_INDEX else None
-                        batch_records.append({
-                            "代码": bare_code,
-                            "名称": name,
-                            "最新价": price,
-                            "涨跌幅": _safe_float(parts[32]),
-                            "最高": _safe_float(parts[33]),
-                            "最低": _safe_float(parts[34]),
-                            "今开": _safe_float(parts[5]),
-                            "成交量": (vol_raw if board_of(bare_code) == "科创板" else vol_raw * 100) if vol_raw else None,
-                            "成交额": amt_raw * 10000 if amt_raw else None,
-                            "换手率": _safe_float(parts[38]),
-                            "总市值": tmv_raw * 1e8 if tmv_raw else None,
-                            "流通市值": cmv_raw * 1e8 if cmv_raw else None,
-                            "市盈率": _safe_float(parts[TENCENT_PE_INDEX]) if len(parts) > TENCENT_PE_INDEX else None,
-                            "市净率": _safe_float(parts[TENCENT_PB_INDEX]) if len(parts) > TENCENT_PB_INDEX else None,
-                        })
-                except Exception as e:
-                    logger.debug(f"腾讯行情批次异常: {e}")
-                return batch_records
-
-            # 并发拉取（8线程，平衡速度和服务端友好度）
-            all_records = []
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                futures = {pool.submit(_fetch_batch, q): q for q in batches}
-                for future in as_completed(futures):
-                    with suppress(Exception):
-                        all_records.extend(future.result())
-
-            if not all_records:
-                raise ConnectionError("腾讯财经API无数据返回")
-            logger.info(f"腾讯财经API获取 {len(all_records)} 条行情")
-            return pd.DataFrame(all_records)
+            return self._fetch_tencent_quotes()
 
         def _try_em():
             return get_em_client().stock_zh_a_spot_em()
@@ -739,7 +747,10 @@ class StockDataCollector(BaseCollector):
             return
         df = fetched.data
         logger.info(f"实时行情数据源 [{fetched.source}] 成功, {len(df)} 条")
+        self._save_quotes(df, trade_date, db_path)
 
+    def _save_quotes(self, df: pd.DataFrame, trade_date: str, db_path: str) -> None:
+        """把行情表按 trade_date 写入 stock_daily（已有的更新，没有的新增）"""
         try:
             # 使用列名→列索引映射 + itertuples（比 iterrows 快 5~10 倍）
             col_map = {c: i for i, c in enumerate(df.columns)}
@@ -812,6 +823,37 @@ class StockDataCollector(BaseCollector):
 
         except Exception as e:
             logger.error(f"实时行情入库失败: {e}")
+
+    def fill_last_session(self, db_path: str, now: datetime | None = None) -> str:
+        """节假日、开盘前：最近一个交易日缺全市场行情时，用腾讯行情补齐并补该日涨停池，返回处理结果。
+
+        此时行情接口返回的是最近一个交易日的收盘数据，按该交易日（不是今天）入库；逐条核对行情时间，
+        只保留属于该交易日的行（停牌股的行情时间更早，不写）。新装程序在节假日因此也有行情可用。
+        """
+        from src import trading_calendar
+        from src.database.models import StockDaily as SD
+
+        now = now or datetime.now()
+        if trading_calendar.is_trade_day(now) and (now.hour, now.minute) >= LAST_SESSION_CUTOFF_HHMM:
+            return "skipped"  # 集合竞价开始后行情不再是上一交易日的收盘
+        last = trading_calendar.prev_trade_day(now).strftime("%Y-%m-%d")
+        with get_db_session(db_path) as session:
+            existing = session.query(SD).filter(SD.trade_date == last).count()
+        if existing >= FALLBACK_OVERVIEW_SAMPLE_SIZE:
+            return f"exists {last}"
+        try:
+            df = self._fetch_tencent_quotes()
+        except Exception as e:
+            logger.warning(f"补齐最近交易日行情失败: {e}")
+            return f"error: {e}"
+        df = df[df["行情日期"] == last]
+        if len(df) < FALLBACK_OVERVIEW_SAMPLE_SIZE:
+            logger.warning(f"腾讯行情里属于 {last} 的只有 {len(df)} 条，不补齐")
+            return f"mismatch {last}"
+        self._save_quotes(df, last, db_path)
+        self._collect_limit_up_pool(last, db_path)
+        logger.info(f"已补齐最近交易日 {last} 的行情（{len(df)} 只）和涨停池")
+        return f"filled {last}"
 
     @staticmethod
     def _limit_up_rows_only(df: pd.DataFrame | None) -> pd.DataFrame | None:
@@ -1028,6 +1070,12 @@ class StockDataCollector(BaseCollector):
             logger.info(f"北向资金采集完成: {trade_date}, 净流入 {total_net:.2f} 亿")
         except Exception as e:
             logger.error(f"北向资金入库失败: {e}")
+
+
+def _tencent_quote_date(raw: str) -> str:
+    """腾讯行情字段 30（YYYYMMDDHHMMSS）转 YYYY-MM-DD，无法识别时返回空字符串"""
+    digits = str(raw or "").strip()[:8]
+    return f"{digits[:4]}-{digits[4:6]}-{digits[6:]}" if len(digits) == 8 and digits.isdigit() else ""
 
 
 def _safe_float(val) -> float | None:

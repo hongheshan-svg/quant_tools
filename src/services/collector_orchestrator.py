@@ -106,8 +106,16 @@ class CollectorOrchestrator:
         from src import trading_calendar
 
         if not trading_calendar.market_data_ready():
-            logger.info("非交易日或未到 9:25，跳过行情采集（接口此时返回的是上一个交易日的数据）")
-            return {k: "skipped" for k in ("realtime_quotes", "limit_up_pool", "dragon_tiger", "northbound_flow", "fund_flow")}
+            logger.info("非交易日或未到 9:25，跳过当天行情采集（接口此时返回的是上一个交易日的数据）")
+            result = {k: "skipped" for k in ("realtime_quotes", "limit_up_pool", "dragon_tiger", "northbound_flow", "fund_flow")}
+            try:
+                from src.collectors.stock_data import StockDataCollector
+
+                # 最近一个交易日缺行情时（如新装后遇到节假日）按该交易日补齐，否则各页面都没有数据
+                result["last_session"] = StockDataCollector(self.config).fill_last_session(self.db_path)
+            except Exception as e:
+                logger.warning(f"补齐最近交易日行情异常: {e}")
+            return result
         logger.info("并发采集行情数据...")
         try:
             from src.collectors.stock_data import StockDataCollector
