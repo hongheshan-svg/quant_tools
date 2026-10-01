@@ -87,6 +87,7 @@ cd apps/desktop && npm test                                 # node --test，不�
   - 打包时用 `build_desktop.py` 的 `--add-data` 把 `src/services/skills` 和内置报告模板 `src/services/templates` 内置，用户自定义策略放在 `config/strategies/`、自定义报告模板放在 `config/templates/`（数据目录）。
   - 运行时按字符串导入或带数据文件、原生库的包要加到脚本里的 `HIDDEN_IMPORTS`、`COLLECT_DATA`、`COLLECT_SUBMODULES`、`COLLECT_ALL`（例如 litellm 的价格表、akshare 的数据文件、py_mini_racer 的动态库）。打包后记得实际运行 `quant_server` 冒烟，缺文件只有运行到那段代码才会报错。
   - 打包的后台服务用 `--workdir` 指定数据目录，启动时把内置的示例配置复制进去（每次覆盖），股票池规则只在缺失时复制；没传 `--workdir` 时用可执行文件所在目录。它还会在后台执行 `playwright install chromium`。
+  - Playwright 检测到被 PyInstaller 打包时默认到安装包内找浏览器（`PLAYWRIGHT_BROWSERS_PATH=0`），所以打包运行时 `server.use_system_browser_dir()` 先把该变量指向系统缓存目录（`setup_status.default_browsers_dir()`），下载、启动和配置向导检查用同一个目录。
 - **旧版 PyQt6 EXE：** `powershell .\scripts\build_exe.ps1`，需要不在仓库里的 `AStockQuantQt6.spec`（`*.spec` 被 git 忽略）。运行时 `run_dashboard.py` 切换到 EXE 所在目录。
 
 ## 架构
@@ -126,6 +127,7 @@ cd apps/desktop && npm test                                 # node --test，不�
 
 - `create_app(config, *, pipeline=, start_scheduler=, static_dir=, auth=)`：测试可注入 `PipelineService`、关掉定时任务、指定前端目录和 `AuthStore`。`app.state` 上有 `pipeline`、`tasks`（`TaskManager`）、`auth`、`chat_store`、`background`（本进程是否运行定时任务和机器人）。
 - 路由在 `api/v1/`（system、market、stocks、screening、chat、watchlist、trading），统一前缀 `/api/v1`。其他路径托管 `apps/web/dist`（单页应用，找不到的路径返回 `index.html`；`/docs` 等 FastAPI 自带路由优先）。`DEFAULT_STATIC_DIR` 按仓库位置解析，与工作目录无关。
+- `DataQueryService` 的不少方法是给旧版 PyQt 界面写的，返回显示用格式（如统一资讯流的 `tags` 是「美股 | 头部企业」字符串、`level` 是中文）。Web 接口要转换成前端类型声明的格式（`/news` 由 `_web_news()` 把 `tags` 转为列表并加 `important`），不要直接透传。
 - **耗时操作走后台任务：** `tasks.submit(kind, fn, *args, dedupe_key=, label=)` 立即返回任务字典，前端轮询 `/api/v1/tasks/{id}`。被调用的函数如果有 `progress` 参数会自动传入，`progress(done, total)` 或 `progress(文字)` 都可以；结果经 `jsonable_encoder` 转换。同一 `dedupe_key` 的任务在执行中时直接返回已有任务。
 - **访问控制**（`api/auth.py`，`check_request()`）：没开 `web.auth_enabled` 时只允许本机（含 TestClient 的 `testclient`）；开了以后要登录 Cookie（`qt_session`，HMAC 签名，密码 PBKDF2 存在 `data/web_auth.json`，首次登录即设置密码）或 `Authorization: Bearer <web.api_token>`。`/api/v1/health` 和 `/api/v1/auth/*` 公开。
 - **设置接口：** 返回时把密钥替换成 `******`（大模型 Key 保留后 4 位），保存时掩码原样回传就保留原值（`_merge_llm`、`_merge_notifier`、`_merge_bot`）；用 `settings_store.save_section()` 写回，再 `apply_config(app, reload_config())` 让 pipeline 和问股会话使用新配置。新增配置备份/恢复：`GET /settings/export?include_secrets=` 导出（默认掩码 secret_keys 和 webhook URL），`POST /settings/import` 导入（`******` 从当前配置同一路径还原，还原不了的删除并给出警告；原子写入，与 `save_section()` 共用锁；导入会丢失文件注释）。
@@ -146,7 +148,10 @@ cd apps/desktop && npm test                                 # node --test，不�
 
 - React 19 + TypeScript + Vite + Tailwind 4 + react-router + zustand + recharts。`@/` 指向 `src/`。
 - 接口：`src/api/client.ts`（`http.get/post/put/del/upload`，401 时派发 `auth:required` 事件）、`src/api/endpoints.ts`（`api` 对象）、`src/api/types.ts`。新增接口时三处一起改。
-- 数据加载用 `useApi(fn, deps)`；后台任务用 `useTask().run(() => api.xxx(), { success })`，它会轮询到任务结束并显示进度，任务中心（右上角）列出全部任务。
+- 数据加载用 `useApi(fn, deps)`；后台任务用 `useTask().run(() => api.xxx(), { success })`，它会轮询到任务结束并显示进度，任务中心（右上角）列出全部任务。很多任务失败时返回 `{error: ...}` 且状态仍为 done，`useTask` 发现结果带非空 `error` 时提示错误而不是 success，结果照常返回。
+- 内容区有错误边界（`components/ErrorBoundary.tsx`，`resetKey` 为当前路径，切换页面清除错误）：页面渲染出错只替换内容区，侧栏照常可用。不要改成 `key={pathname}`，那会在 `/chat` → `/chat/:id` 这类跳转时重新挂载页面、丢掉进行中的状态。
+- effect 不能有返回值（除清理函数）：新版 Chromium 的 `scrollIntoView()` 返回 Promise，`useEffect(() => el.scrollIntoView())` 会被 React 当清理函数调用而整页报错；jsdom 没有 scrollIntoView，测试覆盖不到，要写成带花括号的函数体。
+- 前端测试的假数据要和接口实际返回一致（如资讯流的 `tags` 是列表），不一致的假数据会掩盖白屏问题。
 - 通用组件在 `src/components/ui.tsx`（Button、Card、Tabs、Modal、Field…）和 `DataTable.tsx`、`CandlestickChart.tsx`（SVG K 线）。`Modal` 用 portal 渲染到 `document.body`，叠放时只有最上层弹窗对辅助技术可见（下层 `aria-hidden`），Esc 只关最上层。颜色用 `index.css` 里的 CSS 变量（深色/浅色主题），A 股习惯红涨绿跌：`text-up` 红、`text-down` 绿。
 - **国际化**（`src/stores/lang.ts`、`src/i18n/index.ts`）：顶栏和登录页可切换中文/英文（保存在 localStorage `quant-lang`，默认中文）。中文原文作为 i18n key，英文词典分页面放在 `src/i18n/en/*.ts`（`import.meta.glob` 自动合并），组件内用 `const t = useT()`、非组件代码用 `t()`；只翻译界面文字，AI 回答/报告/新闻不翻译（AI 输出语言是后端的 `report.language`，与界面语言分开设置）。每个工作流的新译文放在自己的 `en/*.ts` 文件里。前端测试 `apps/web/src/__tests__/i18n-coverage.test.ts` 检查所有 `t()` 字面量都有译文、译文不含中文、占位符一致——新增文字时要同步补词典。
 - 在 Electron 里运行时 `window.quantDesktop`（`src/utils/desktop.ts`）可用，设置页据此显示「桌面端」页。
@@ -182,6 +187,7 @@ cd apps/desktop && npm test                                 # node --test，不�
 - `is_trade_day()` / `next_trade_day()` 只查内存，可在界面线程高频调用；没有日历或日期超出日历范围时退化为周一至周五。
 - 调度器、预测器负责联网刷新；桌面端启动时先读缓存再在后台刷新；自学习只读缓存。判断交易日一律用这个模块，不要再写跳过周末的简易规则。
 - `market_data_ready()`：交易日且已过 9:25。在此之前（包括节假日），行情接口返回的是上一个交易日的数据，所以按当天日期入库的行情和涨停池采集会直接跳过。
+  - 此时「采集数据」改为调用 `StockDataCollector.fill_last_session()`：最近一个交易日（`prev_trade_day()`）的行情不足全市场样本（`FALLBACK_OVERVIEW_SAMPLE_SIZE`，1000 只）时，用腾讯行情补齐，逐条核对行情时间（字段 30，`行情日期` 列），只写属于该交易日的行并按该交易日入库，同时按日期补该日涨停池；交易日 9:15 集合竞价开始后不补。新装程序遇到节假日因此也有行情可用。
 - 数据库里可能已经有旧版本在节假日写入的重复数据。按日期取数的分析代码（大盘环境、主线、信号绩效、自学习）要先用 `trade_days_only()` 或 `is_trade_day()` 过滤掉非交易日。
 
 ### 数据源
@@ -210,7 +216,7 @@ cd apps/desktop && npm test                                 # node --test，不�
 - 成交量单位各数据源不一致（腾讯、新浪、历史日线为股，东方财富为手），成交额统一为元。需要量比时用成交额比（策略选股就是这样做的）。
 - 按需补齐日线：`ensure_daily_history(code, db_path)`（`src/collectors/daily_history.py`）在本地近 150 天日线少于 60 根时联网下载，只写入缺失的交易日，失败的股票 30 分钟内不重试。个股详情、AI 诊断、问股工具、技术指标提醒都会调用它，相关测试要把它 monkeypatch 掉。
 - 个股新闻与公告：`get_stock_news(code)`（`src/collectors/stock_news.py`，东方财富资讯搜索和公告接口，普通 HTTP），进程内缓存 30 分钟。公告标题命中关键词时标注风险，其中立案、退市风险警示等是严重风险。「没有新闻」不算数据源失败（`is_valid` 放行空列表），也不能用数据集级的 `allow_stale`，否则会拿到别的股票的缓存。
-- 股票搜索：`StockSearch`（`src/services/stock_search.py`）用 `stock_info` 和最新一天行情建索引，按代码、名称、拼音首字母（`pypinyin`，多音字给出多种组合）匹配，进程内缓存 12 小时。索引名称和查询都先经 `normalize_name()`，所以「万科」「万 科」都能找到「万科A」。`pypinyin` 自带 PyInstaller hook，打包不用额外配置。
+- 股票搜索：`StockSearch`（`src/services/stock_search.py`）用 `stock_info` 和最新一天行情建索引，按代码、名称、拼音首字母（`pypinyin`，多音字给出多种组合）匹配，进程内缓存 12 小时（索引里还没有个股时 1 分钟后重建）。股票列表由常驻服务启动时的 `refresh_etf_list_background()` 一并刷新（为空或超过 1 天才联网，有更新即 `StockSearch.reset()`），节假日新装也能搜到个股。索引名称和查询都先经 `normalize_name()`，所以「万科」「万 科」都能找到「万科A」。`pypinyin` 自带 PyInstaller hook，打包不用额外配置。
 - 股票代码统一用 `src/utils/stock_code.py`（`bare_code`、`code_candidates`、`exchange_of`、`board_of`、`daily_limit_pct`），不要再手写代码前缀规则。北交所新代码以 92 开头，不是上交所。
 - **股票名称规范化：** 深交所列表和腾讯行情的简称含空格和全角字母（如「万  科Ａ」）。写入名称一律用 `stock_code.normalize_name()`（NFKC 转半角并删除空白），行情、股票列表、涨停池、龙虎榜、日线入库都已处理；按名称匹配资讯用 `name_variants()`（去掉 XD/XR/DR/N/C 标记、ST 前缀、结尾的 A/B）。`init_db()` 会一次性规范化 `stock_info` 和 `watchlist` 的旧名称，`stock_daily` 的旧行不迁移，读取处兜底。
 - 东方财富数据统一走 `em_client.get_em_client()`：这是一个 Playwright 单例，用来绕过 TLS 指纹检测，替代 AKShare 的 `ak.*_em()` 系列函数。不要直接调用 `ak.*_em()`。
@@ -224,7 +230,7 @@ cd apps/desktop && npm test                                 # node --test，不�
 ### 数据库（`src/database/`）
 
 - `db.py` 在模块级保存引擎和会话工厂单例，所以 `init_db(path)` 和 `get_db_session(path)` 只有第一次调用时传入的 `path` 生效。要切换数据库（比如测试里），先把 `db._engine` 和 `db._SessionFactory` 设为 `None`。
-- `get_db_session()` 退出时自动提交，出异常时回滚。
+- `get_db_session()` 退出时自动提交，出异常时回滚。会话工厂是默认的 `expire_on_commit=True`，退出 `with` 后 ORM 对象已过期，再读属性会抛 `DetachedInstanceError`（首页交易焦点曾因此 500），要在会话内把需要的值取出来。
 - 没有 Alembic。`init_db()` 执行 `create_all` 加 `_auto_migrate`，后者只会给模型里新增的列执行 `ALTER TABLE ... ADD COLUMN`。改列名、改类型、删列都要手动迁移。
 
 ### 配置（`src/config_loader.py`）
@@ -246,6 +252,7 @@ cd apps/desktop && npm test                                 # node --test，不�
 ### 大盘复盘、AI 研判与策略选股
 
 - `build_market_facts()`（`src/services/market_context.py`）把指数、涨跌家数、成交额、量化大盘环境、题材/行业主线、降温板块和财联社重要快讯汇总成 `MarketFacts`，供各 LLM 提示词共用。`news=False` 时不读快讯。
+- 市场概况 `StockDataCollector.collect_market_overview()` 存在进程内缓存（首页读它）：今天没有行情时按最近一个有全市场行情的交易日统计涨跌家数和成交额，结果带 `trade_date`（没有统计时为空）。`collect_all()` 里在行情采集完成后才计算，定时行情采集后也刷新，`server.py` 运行定时任务时启动后后台先算一次。大盘环境比较成交额时也要求前一天有全市场样本。
 - `MarketReviewService`（`src/services/market_review.py`）按趋势结构、资金情绪、主线板块复盘，输出次日姿态、仓位、关注与回避方向、观察要点。
   - **护栏：** 姿态不能比量化大盘环境更激进（冰点、防守最多给防守，均衡最多给均衡），被下调时仓位改用对应档位。
   - **存储：** 每个交易日一条（`market_review` 表），重新生成覆盖。已有收盘后生成的同语言复盘时直接复用，盘中生成的会在收盘后重新生成。`result["markdown"]` 经 `render_report("market_review", ...)`，有自定义模板时用模板。
@@ -307,7 +314,7 @@ cd apps/desktop && npm test                                 # node --test，不�
   - **多 API Key 支持：** primary、backup、vision 各角色的 `api_key`支持列表或逗号/换行分隔字符串，按顺序轮询。单个 Key 返回 401/403/429 时进入 10 分钟冷却（进程级），同一次调用里换下一个 Key；冷却期内该 Key 跳过。设置接口返回掩码列表，保存时按后 4 位还原（找不到对应原值的丢弃）。
   - 导入 LiteLLM 一律用 `llm_usage.import_litellm()`：它让 LiteLLM 使用本地价格表，否则导入时会联网下载。
   - **用量统计：** 每次调用（含命中缓存和失败）由 `record_usage()` 写进缓存库的 `llm_usage` 表，记录 token 和估算费用（`llm.pricing` 可自定义单价）。功能按调用栈里第一个 `src.`/`api.` 模块归类，映射表是 `FEATURE_LABELS`，新增调用 LLM 的模块要加进去，否则显示为「其他」。`usage_summary()` 供 Web【AI 用量】页使用。
-  - 主模型失败时切换到备用模型；备用模型的 Key 仍以 `your-` 开头时会被跳过。
+  - 主模型失败时切换到备用模型；备用模型的 Key 仍以 `your-` 开头时会被跳过。两者都没有可用 Key 时报错附带 `NO_MODEL_HINT`（提示去【设置 → AI 模型】填写），大盘复盘和 AI 问股遇到这种情况直接显示该说明。
   - **错误分类与参数恢复：** `classify_llm_error(exc)` 按异常类名、状态码和错误文本把失败分为 auth、quota、rate_limit、model_not_found、context_length、content_filter、unsupported_param、timeout、network、server、unknown，给出中文说明（`LLMErrorInfo`）。模型不支持 `response_format`/`temperature`/`max_tokens` 时，记入进程级 `_PARAM_FIXES`（按路由，`reset_key_state()` 一并清空），去掉该参数或改用 `max_completion_tokens` 后立即重试（不计重试次数、不等待，一次调用最多恢复 3 次）；auth、quota、model_not_found、context_length、content_filter 不在同一路由重试，直接切备用。`LLMClient.last_error` 记最近一次失败，全部失败时异常文案带分类说明；`/settings/llm/test` 失败返回 `kind`，发生参数调整时返回 `note`。
   - 响应缓存在 SQLite 里，缓存键是模型 + 提示词 + 参数的哈希，带 TTL。
   - `reload()` 可热切换模型平台。
