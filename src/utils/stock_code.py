@@ -6,6 +6,9 @@ A股股票代码工具
 
 from __future__ import annotations
 
+import re
+import unicodedata
+
 EXCHANGE_PREFIXES = ("sh", "sz", "bj")
 CODE_LENGTH = 6
 PREFIXED_CODE_LENGTH = 8
@@ -82,3 +85,31 @@ def diagnosis_code(code: str | None) -> str:
         if raw in INDEX_CODES:
             return raw
     return bare_code(raw)
+
+
+def normalize_name(name: str | None) -> str:
+    """规范化股票名称：NFKC 转半角后删除全部空白（交易所简称如「万  科Ａ」→「万科A」）。"""
+    text = unicodedata.normalize("NFKC", str(name or ""))
+    return "".join(ch for ch in text if not ch.isspace())
+
+
+_CJK = r"[一-鿿]"
+_EVENT_MARK = re.compile(rf"^(?:XD|XR|DR|N|C)(?=\*?ST|{_CJK})")
+_ST_PREFIX = re.compile(rf"^(?:S\*ST|\*ST|SST|ST|S)(?={_CJK})")
+_SHARE_CLASS = re.compile(rf"(?<={_CJK})[AB]$")
+
+
+def name_variants(name: str | None) -> list[str]:
+    """新闻/资讯匹配用的名称变体：原名、去掉 XD/N 等标记、去掉 ST 前缀、去掉结尾的 A/B 股后缀。"""
+    base = normalize_name(name)
+    variants = [base]
+    current = _EVENT_MARK.sub("", base)
+    variants.append(current)
+    current = _ST_PREFIX.sub("", current)
+    variants.append(current)
+    variants.append(_SHARE_CLASS.sub("", current))
+    result: list[str] = []
+    for v in variants:
+        if len(v) >= 2 and v not in result:
+            result.append(v)
+    return result

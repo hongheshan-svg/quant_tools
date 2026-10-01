@@ -14,6 +14,7 @@ from sqlalchemy import func
 from src.collectors.base import BaseCollector
 from src.database.db import get_db_session
 from src.database.models import StockInfo
+from src.utils.stock_code import normalize_name
 
 STOCK_CODE_LENGTH = 6
 DATE_DIGITS_LENGTH = 8
@@ -63,7 +64,7 @@ class StockInfoCollector(BaseCollector):
                 code = raw_code.zfill(STOCK_CODE_LENGTH)
                 results[code] = {
                     "code": code,
-                    "name": str(row.get(name_col) or "").strip(),
+                    "name": normalize_name(row.get(name_col)),
                     "exchange": exchange,
                     "list_date": _normalize_date(row.get(date_col)),
                 }

@@ -60,7 +60,24 @@ def init_db(db_path: str = "data/quant.db", echo: bool = False):
     engine = get_engine(db_path, echo)
     Base.metadata.create_all(engine)
     _auto_migrate(engine)
+    _normalize_stock_names(engine)
     logger.info("数据库表已创建/更新")
+
+
+def _normalize_stock_names(engine):
+    """一次性迁移：把 stock_info、watchlist 里带空格/全角字母的股票名称规范化（stock_daily 行太多，读取处兜底）。"""
+    try:
+        from src.utils.stock_code import normalize_name
+
+        with engine.begin() as conn:
+            for table in ("stock_info", "watchlist"):
+                rows = conn.execute(text(f"SELECT id, name FROM {table} WHERE name IS NOT NULL")).fetchall()
+                for row_id, name in rows:
+                    fixed = normalize_name(name)
+                    if fixed != name:
+                        conn.execute(text(f"UPDATE {table} SET name = :name WHERE id = :id"), {"name": fixed, "id": row_id})
+    except Exception as e:
+        logger.warning(f"股票名称规范化迁移失败: {e}")
 
 
 def _auto_migrate(engine):

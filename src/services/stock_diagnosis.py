@@ -28,6 +28,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from loguru import logger
+from sqlalchemy import or_
 
 from src.analyzers.decision import ACTION_LABELS, BULLISH_ACTIONS, normalize_action, score_to_action
 from src.config_loader import load_config
@@ -42,7 +43,7 @@ from src.database.models import (
 )
 from src.services.run_log import RunLog
 from src.trading.price_plan import sanitize_price_plan
-from src.utils.stock_code import bare_code, board_of, code_candidates
+from src.utils.stock_code import bare_code, board_of, code_candidates, name_variants, normalize_name
 
 CACHE_MINUTES = 30
 NEWS_DAYS = 3
@@ -367,7 +368,7 @@ class StockDiagnosisService:
                     "amount_yi": round((b.amount or 0) / 1e8, 2), "circ_mv_yi": round((b.circ_mv or 0) / 1e8, 1),
                     "pe": next((x.pe for x in bars if x.pe), None), "pb": next((x.pb for x in bars if x.pb), None),
                 }
-            name = next((b.name for b in bars if b.name), "")
+            name = normalize_name(next((b.name for b in bars if b.name), ""))
             recent = [f"{b.trade_date} 收{b.close} {b.change_pct:+.2f}%" for b in reversed(bars) if b.close and b.change_pct is not None]
 
             limit_ups = (
@@ -379,14 +380,14 @@ class StockDiagnosisService:
                 f"封单{(r.seal_amount or 0) / 1e8:.2f}亿 原因:{r.reason or r.sector or '-'}"
                 for r in limit_ups
             ]
-            name = name or next((r.name for r in limit_ups if r.name), "")
+            name = name or normalize_name(next((r.name for r in limit_ups if r.name), ""))
 
             since = datetime.now() - timedelta(days=NEWS_DAYS)
             news_lines = []
             if name:
                 news = (
                     session.query(FinanceNews.title, FinanceNews.source, FinanceNews.collected_at)
-                    .filter(FinanceNews.collected_at >= since, FinanceNews.title.contains(name))
+                    .filter(FinanceNews.collected_at >= since, or_(*[FinanceNews.title.contains(v) for v in (name_variants(name) or [name])]))
                     .order_by(FinanceNews.collected_at.desc()).limit(8).all()
                 )
                 news_lines = [f"[{src}] {title}" for title, src, _ in news]

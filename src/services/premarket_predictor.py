@@ -15,7 +15,7 @@ from datetime import date, datetime, timedelta
 from loguru import logger
 
 from src.analyzers.llm_client import LLMClient
-from src.utils.stock_code import code_candidates
+from src.utils.stock_code import code_candidates, normalize_name
 from src.config_loader import load_config
 from src.database.db import get_db_session
 from src.database.models import (
@@ -476,6 +476,7 @@ class LimitUpPredictor:
                     .scalar()
                     or session.query(StockInfo.name).filter(StockInfo.code == code).limit(1).scalar()
                 )
+                name = normalize_name(name)
                 if not name:
                     logger.warning(f"AI 预测的 {ai_name}({code}) 在行情库和股票列表中都不存在，已剔除")
                     continue

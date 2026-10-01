@@ -15,7 +15,7 @@ from src.collectors.base import BaseCollector
 from src.collectors.fund_flow import collect_fund_flow
 from src.collectors.limit_up_reasons import fetch_ths_limit_up_reasons
 from src.collectors.source_chain import fetch_with_fallback, source_health
-from src.utils.stock_code import board_of, daily_limit_pct
+from src.utils.stock_code import board_of, daily_limit_pct, normalize_name
 from src.collectors.em_client import get_em_client
 from src.database.db import get_db_session
 from src.database.models import (
@@ -621,7 +621,7 @@ class StockDataCollector(BaseCollector):
                         bare_code = self._extract_bare_equity_code(code_full)
                         if not bare_code:
                             continue
-                        name = parts[1]
+                        name = normalize_name(parts[1])
                         price = _safe_float(parts[3])
                         if not name or price is None or price <= 0:
                             continue
@@ -727,7 +727,7 @@ class StockDataCollector(BaseCollector):
                     continue
                 records.append(StockDaily(
                     code=code,
-                    name=str(tup[col_map["名称"]]) if "名称" in col_map else "",
+                    name=normalize_name(tup[col_map["名称"]]) if "名称" in col_map else "",
                     trade_date=trade_date,
                     open=_safe_float(tup[col_map["今开"]] if "今开" in col_map else None),
                     close=_safe_float(tup[col_map["最新价"]] if "最新价" in col_map else None),
@@ -857,7 +857,7 @@ class StockDataCollector(BaseCollector):
 
                 records.append(LimitUpStock(
                     code=code,
-                    name=str(tup[cm["名称"]]) if "名称" in cm else "",
+                    name=normalize_name(tup[cm["名称"]]) if "名称" in cm else "",
                     trade_date=trade_date,
                     close=_safe_float(tup[cm["最新价"]] if "最新价" in cm else None),
                     change_pct=_safe_float(tup[cm["涨跌幅"]] if "涨跌幅" in cm else None),
@@ -902,7 +902,7 @@ class StockDataCollector(BaseCollector):
             records = [
                 DragonTigerBoard(
                     code=str(tup[cm["代码"]]) if "代码" in cm else "",
-                    name=str(tup[cm["名称"]]) if "名称" in cm else "",
+                    name=normalize_name(tup[cm["名称"]]) if "名称" in cm else "",
                     trade_date=trade_date,
                     reason=(
                         str(tup[cm.get("解读", cm.get("上榜原因", 0))])

@@ -20,7 +20,7 @@ from loguru import logger
 from src.collectors.source_chain import source_health
 from src.database.db import get_db_session
 from src.database.models import StockDaily
-from src.utils.stock_code import bare_code, code_candidates, prefixed_code
+from src.utils.stock_code import bare_code, code_candidates, normalize_name, prefixed_code
 
 CHANGE_LOOKBACK_DAYS = 10   # 多取几天，区间第一天的涨跌幅也按前收计算
 ENSURE_MIN_BARS = 60        # 按需补齐：本地近期日线少于该数量时联网下载
@@ -192,6 +192,7 @@ def normalize_volume_unit(volume: float, amount: float, close: float) -> float:
 
 
 def records_from_daily_df(code: str, name: str, source: str, df) -> list[dict]:
+    name = normalize_name(name)
     records: list[dict] = []
 
     if source == "em":

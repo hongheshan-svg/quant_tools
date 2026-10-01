@@ -20,7 +20,7 @@ from sqlalchemy import func
 
 from src.database.db import get_db_session
 from src.database.models import StockDaily, StockInfo
-from src.utils.stock_code import bare_code
+from src.utils.stock_code import bare_code, normalize_name
 
 INDEX_TTL_HOURS = 12
 MAX_INITIAL_VARIANTS = 8
@@ -70,10 +70,10 @@ class StockSearch:
                 if latest:
                     for code, name in session.query(StockDaily.code, StockDaily.name).filter(StockDaily.trade_date == latest).all():
                         if name:
-                            names[bare_code(code)] = name.strip()
+                            names[bare_code(code)] = normalize_name(name)
                 for code, name in session.query(StockInfo.code, StockInfo.name).all():  # 交易所官方简称优先
                     if name:
-                        names[bare_code(code)] = name.strip()
+                        names[bare_code(code)] = normalize_name(name)
         except Exception as e:
             logger.warning(f"股票搜索索引构建失败: {e}")
         entries = [(code, name, name_initials(name), "stock") for code, name in sorted(names.items())
@@ -90,7 +90,7 @@ class StockSearch:
         return entries
 
     def search(self, text: str, limit: int = 20) -> list[dict[str, Any]]:
-        query = (text or "").strip()
+        query = normalize_name(text)
         if not query:
             return []
         lowered = _NON_ALNUM.sub("", query.lower())
