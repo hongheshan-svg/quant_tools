@@ -213,8 +213,11 @@ export function LLMSettingsForm() {
     setBusy(label)
     try {
       const r = await api.testLlm({ primary: role })
-      if (r.ok) toast.success(t('{label}连接正常：{reply}', { label: t(label), reply: r.reply ?? '' }))
-      else toast.error(t('{label}连接失败：{error}', { label: t(label), error: r.error ?? t('没有返回内容') }))
+      if (r.ok) {
+        toast.success(t('{label}连接正常：{reply}', { label: t(label), reply: r.reply ?? '' }))
+        if (r.note) toast.info(t(r.note))
+      }
+      else toast.error(t('{label}连接失败：{error}', { label: t(label), error: r.error ? t(r.error) : t('没有返回内容') }))
     } finally {
       setBusy('')
     }

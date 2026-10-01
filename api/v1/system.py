@@ -241,11 +241,18 @@ def test_llm(body: LLMSettingsBody, config: dict = Depends(get_config)) -> dict[
     from src.analyzers.llm_client import LLMClient
 
     llm = _merge_llm(config.get("llm") or {}, body.llm)
+    client = LLMClient({**llm, "cache_enabled": False, "backup": {}})
     try:
-        reply = LLMClient({**llm, "cache_enabled": False, "backup": {}}).chat("只回复两个字：正常", max_tokens=10)
+        reply = client.chat("只回复两个字：正常", max_tokens=10)
     except Exception as e:
-        return {"ok": False, "error": str(e)[:300]}
-    return {"ok": bool(reply), "reply": (reply or "")[:50]}
+        info = client.last_error
+        if info is None:
+            return {"ok": False, "error": str(e)[:300]}
+        return {"ok": False, "error": info.message, "kind": info.kind}
+    result: dict[str, Any] = {"ok": bool(reply), "reply": (reply or "")[:50]}
+    if client.last_param_fixes:
+        result["note"] = f"模型不支持 {'、'.join(dict.fromkeys(client.last_param_fixes))} 参数，已自动调整"
+    return result
 
 
 class LLMModelsBody(BaseModel):

@@ -91,6 +91,7 @@ def reset_key_state() -> None:
     with _key_lock:
         _key_start.clear()
         _key_cooldown.clear()
+        _PARAM_FIXES.clear()
 
 
 def _ordered_keys(route: LLMRoute) -> list[str]:
@@ -119,6 +120,102 @@ def is_key_error(exc: BaseException) -> bool:
     if code is None:
         code = getattr(getattr(exc, "response", None), "status_code", None)
     return code in KEY_ERROR_CODES
+
+
+@dataclass
+class LLMErrorInfo:
+    """一次 LLM 调用失败的分类：kind 见 classify_llm_error，message 是给用户看的中文说明。"""
+    kind: str
+    message: str
+    retryable: bool
+    param: str = ""
+
+
+_PARAM_NAMES = ("max_completion_tokens", "max_tokens", "response_format", "temperature")
+_UNSUPPORTED_HINTS = ("unsupported", "not supported", "does not support", "invalid", "unrecognized",
+                      "only the default", "unknown parameter", "not allowed", "不支持")
+MAX_PARAM_RECOVERIES = 3                               # 同一次调用最多自动调整参数的次数
+
+
+def _status_of(exc: BaseException) -> int | None:
+    code = getattr(exc, "status_code", None)
+    if code is None:
+        code = getattr(getattr(exc, "response", None), "status_code", None)
+    try:
+        return int(code) if code is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def classify_llm_error(exc: BaseException) -> LLMErrorInfo:
+    """按异常类名、HTTP 状态码和错误文本把失败归类，给出中文说明和是否值得重试。"""
+    names = {c.__name__ for c in type(exc).__mro__}
+    text = str(exc).lower()
+    code = _status_of(exc)
+
+    def has(*words: str) -> bool:
+        return any(w in text for w in words)
+
+    if code == 402 or has("insufficient_quota", "exceeded your current quota", "billing", "余额不足", "欠费", "insufficient balance"):
+        return LLMErrorInfo("quota", "账户余额不足或额度已用完", False)
+    if code in (401, 403) or names & {"AuthenticationError", "PermissionDeniedError"} \
+            or has("invalid api key", "incorrect api key", "authentication", "permission denied"):
+        return LLMErrorInfo("auth", "API Key 无效或没有权限，请检查 Key 是否填对、是否开通了该模型", False)
+    if code == 429 or "RateLimitError" in names or has("rate limit", "too many requests"):
+        return LLMErrorInfo("rate_limit", "请求太频繁被限流，请稍后再试或配置多个 Key", True)
+    if has("context_length_exceeded", "maximum context length", "too many tokens", "上下文长度") \
+            or "ContextWindowExceededError" in names:
+        return LLMErrorInfo("context_length", "输入内容超过模型的上下文长度", False)
+    if has("content_filter", "content policy", "safety", "敏感", "审核") or "ContentPolicyViolationError" in names:
+        return LLMErrorInfo("content_filter", "内容被模型平台的安全审核拦截", False)
+    if code == 400 and has(*_UNSUPPORTED_HINTS):
+        found = [(text.find(n), n) for n in _PARAM_NAMES if n in text]
+        if found:
+            param = min(found)[1]
+            return LLMErrorInfo("unsupported_param", f"模型不支持参数 {param}，已自动去掉后重试", True, param)
+    if (code == 404 and "model" in text) or has("model_not_found", "does not exist", "模型不存在", "unknown model"):
+        return LLMErrorInfo("model_not_found", "模型名称不存在，请用「获取模型列表」选择正确的模型", False)
+    if any("Timeout" in n for n in names) or has("timed out", "timeout"):
+        return LLMErrorInfo("timeout", "请求超时，请检查网络或调大超时时间", True)
+    if names & {"APIConnectionError", "ConnectionError", "ConnectError"} or has(
+            "connection refused", "connection reset", "connection error", "name or service not known", "ssl"):
+        return LLMErrorInfo("network", "无法连接到模型服务，请检查 Base URL 和网络", True)
+    if (code is not None and 500 <= code < 600) or has("overloaded", "service unavailable"):
+        return LLMErrorInfo("server", "模型服务暂时不可用（服务端错误）", True)
+    return LLMErrorInfo("unknown", f"调用失败：{str(exc)[:100]}", True)
+
+
+# 进程级参数调整：路由 -> 需要调整的参数集合（max_tokens=改用 max_completion_tokens；max_completion_tokens=两者都去掉）
+_PARAM_FIXES: dict[tuple, set[str]] = {}
+
+
+def _record_param_fix(route: LLMRoute, param: str) -> bool:
+    """记下该路由不支持的参数；已经记过（调整无效）时返回 False。"""
+    with _key_lock:
+        fixes = _PARAM_FIXES.setdefault(route.route_id, set())
+        if param in fixes:
+            return False
+        fixes.add(param)
+        return True
+
+
+def _apply_param_fixes(route: LLMRoute, kwargs: dict) -> dict:
+    """按该路由已记录的调整改写请求参数，返回新字典。"""
+    with _key_lock:
+        fixes = set(_PARAM_FIXES.get(route.route_id, ()))
+    if not fixes:
+        return kwargs
+    out = dict(kwargs)
+    if "response_format" in fixes:
+        out.pop("response_format", None)
+    if "temperature" in fixes:
+        out.pop("temperature", None)
+    if "max_completion_tokens" in fixes:
+        out.pop("max_tokens", None)
+        out.pop("max_completion_tokens", None)
+    elif "max_tokens" in fixes and "max_tokens" in out:
+        out["max_completion_tokens"] = out.pop("max_tokens")
+    return out
 
 
 def build_route(cfg: dict) -> "LLMRoute | None":
@@ -211,6 +308,8 @@ class LLMClient:
         self.backup_client = self._build_client(self.backup_cfg)
         self.vision_client = self._build_client(self.vision_cfg)
         self._openai_clients: dict[tuple, Any] = {}
+        self.last_error: LLMErrorInfo | None = None       # 最近一次失败的分类
+        self.last_param_fixes: list[str] = []             # 本次 chat 自动调整过的参数
 
     def reload(self, new_config: dict):
         """热重载：用新配置重建客户端，无需重启程序。"""
@@ -358,6 +457,8 @@ class LLMClient:
         Returns:
             LLM 返回的文本
         """
+        self.last_error = None
+        self.last_param_fixes = []
         # 缓存命中（只按主模型 key 缓存，命中直接返回）
         primary_model = self.primary_cfg.get("model", "deepseek-chat")
         cache_key = self._cache_key(
@@ -395,6 +496,8 @@ class LLMClient:
                 self._cache_set(cache_key, result)
                 return result
 
+        if self.last_error:
+            raise RuntimeError(f"所有LLM模型均调用失败：{self.last_error.message}")
         raise RuntimeError("所有LLM模型均调用失败")
 
     def chat_vision(
@@ -468,7 +571,10 @@ class LLMClient:
 
         provider = client.provider
         feature = caller_feature()
-        for attempt in range(1, self.max_retries + 2):
+        kwargs = _apply_param_fixes(client, kwargs)
+        attempt = 1
+        recoveries = 0
+        while True:
             started = time.monotonic()
             try:
                 content, usage = self._complete_rotating(client, kwargs)
@@ -481,13 +587,25 @@ class LLMClient:
                 return content
             except AllKeysUnavailable as e:
                 logger.error(f"LLM [{provider}] {e}")
+                cause = e.__cause__
+                self.last_error = classify_llm_error(cause) if cause else LLMErrorInfo("rate_limit", str(e), True)
                 record_usage(self.usage_path, provider=provider, model=model, feature=feature, success=False,
                              latency_ms=int((time.monotonic() - started) * 1000))
                 return None
             except Exception as e:
                 err_str = str(e)[:120]
-                if attempt >= self.max_retries + 1:
-                    logger.error(f"LLM [{provider}] {self.max_retries+1}次均失败: {err_str}")
+                info = classify_llm_error(e)
+                self.last_error = info
+                # 模型不支持某个参数：记下调整，立即用新参数重试（不计入重试次数、不等待）
+                if info.kind == "unsupported_param" and recoveries < MAX_PARAM_RECOVERIES:
+                    if _record_param_fix(client, info.param):
+                        recoveries += 1
+                        self.last_param_fixes.append(info.param)
+                        logger.warning(f"LLM [{provider}] 模型不支持参数 {info.param}，自动调整后重试: {err_str}")
+                        kwargs = _apply_param_fixes(client, kwargs)
+                        continue
+                if not info.retryable or attempt >= self.max_retries + 1:
+                    logger.error(f"LLM [{provider}] 调用失败（{info.kind}，共尝试{attempt}次）: {err_str}")
                     record_usage(self.usage_path, provider=provider, model=model, feature=feature, success=False,
                                  latency_ms=int((time.monotonic() - started) * 1000))
                     return None
@@ -497,22 +615,24 @@ class LLMClient:
                     f"LLM [{provider}] 第{attempt}次失败，{delay:.1f}s后重试: {err_str}"
                 )
                 time.sleep(delay)
-        return None
+                attempt += 1
 
     def _complete_rotating(self, route: LLMRoute, kwargs: dict) -> tuple[str, dict]:
         """按 Key 轮换发起请求：401/403/429 时该 Key 冷却并立即换下一个（不计入重试），其他错误直接抛出。"""
         keys = _ordered_keys(route)
         if not keys:
             raise AllKeysUnavailable("所有 API Key 都在冷却中")
+        last_exc: Exception | None = None
         for key in keys:
             try:
                 return self._complete(dataclasses.replace(route, api_key=key), kwargs)
             except Exception as e:
-                if not is_key_error(e):
+                if not is_key_error(e) or classify_llm_error(e).kind == "unsupported_param":
                     raise
+                last_exc = e
                 _cool_key(route, key)
                 logger.warning(f"LLM [{route.provider}] Key {_mask_key(key)} 被拒绝或限流，冷却 {KEY_COOLDOWN_SECONDS}s 并换下一个: {str(e)[:80]}")
-        raise AllKeysUnavailable("所有 API Key 均被拒绝或限流")
+        raise AllKeysUnavailable("所有 API Key 均被拒绝或限流") from last_exc
 
     def chat_stream(
         self,
@@ -542,35 +662,50 @@ class LLMClient:
                                       "timeout": self.timeout_seconds, "stream": True}
             if response_format == "json" and route.provider not in NO_JSON_MODE:
                 kwargs["response_format"] = {"type": "json_object"}
+            kwargs = _apply_param_fixes(route, kwargs)
             keys = _ordered_keys(route)
             if not keys:
                 last_error = "所有 API Key 都在冷却中"
                 logger.warning(f"LLM [{route.provider}] {last_error}，流式调用跳过{name}")
                 continue
+            recovered = False
+            next_route = False
             for key in keys:
-                started = time.monotonic()
-                produced = False
-                usage: dict = {}
-                try:
-                    for text in self._stream_once(dataclasses.replace(route, api_key=key), kwargs, usage):
-                        produced = True
-                        yield text
-                    self._record_stream(route, cfg, feature, started, usage, True)
-                    return
-                except GeneratorExit:
-                    self._record_stream(route, cfg, feature, started, usage, produced)
-                    raise
-                except Exception as e:
-                    last_error = str(e)[:120]
-                    if not is_key_error(e) or produced:
-                        self._record_stream(route, cfg, feature, started, usage, False)
-                    if produced:
+                while True:
+                    started = time.monotonic()
+                    produced = False
+                    usage: dict = {}
+                    try:
+                        for text in self._stream_once(dataclasses.replace(route, api_key=key), kwargs, usage):
+                            produced = True
+                            yield text
+                        self._record_stream(route, cfg, feature, started, usage, True)
+                        return
+                    except GeneratorExit:
+                        self._record_stream(route, cfg, feature, started, usage, produced)
                         raise
-                    if is_key_error(e):
-                        _cool_key(route, key)
-                        logger.warning(f"LLM [{route.provider}] Key {_mask_key(key)} 被拒绝或限流，冷却 {KEY_COOLDOWN_SECONDS}s 并换下一个: {last_error}")
-                        continue
-                    logger.warning(f"LLM [{route.provider}] 流式调用失败，切换下一个模型: {last_error}")
+                    except Exception as e:
+                        info = classify_llm_error(e)
+                        last_error = info.message if info.kind != "unknown" else str(e)[:120]
+                        # 模型不支持某个参数：每个路由恢复一次，用调整后的参数重发
+                        if (info.kind == "unsupported_param" and not produced and not recovered
+                                and _record_param_fix(route, info.param)):
+                            recovered = True
+                            logger.warning(f"LLM [{route.provider}] 流式调用：模型不支持参数 {info.param}，自动调整后重试")
+                            kwargs = _apply_param_fixes(route, kwargs)
+                            continue
+                        if not is_key_error(e) or produced:
+                            self._record_stream(route, cfg, feature, started, usage, False)
+                        if produced:
+                            raise
+                        if is_key_error(e):
+                            _cool_key(route, key)
+                            logger.warning(f"LLM [{route.provider}] Key {_mask_key(key)} 被拒绝或限流，冷却 {KEY_COOLDOWN_SECONDS}s 并换下一个: {str(e)[:120]}")
+                        else:
+                            logger.warning(f"LLM [{route.provider}] 流式调用失败，切换下一个模型: {str(e)[:120]}")
+                            next_route = True
+                        break
+                if next_route:
                     break
         raise RuntimeError(f"所有LLM模型均流式调用失败{('：' + last_error) if last_error else ''}")
 
