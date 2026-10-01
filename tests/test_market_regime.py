@@ -126,3 +126,19 @@ def test_emotion_cycle_rules():
     assert cycle(DayStats(limit_up=52, max_height=5, limit_down=21), prev, 0.55) == "震荡"  # 普跌日，涨停略多不算升温
     assert cycle(DayStats(limit_up=40, max_height=3), prev, -1.0) == "退潮"
     assert cycle(DayStats(limit_up=25, max_height=2), prev, 0.5) == "冰点"
+
+
+def test_partial_previous_day_skips_amount_change(tmp_path):
+    """前一天只有个股页按需补齐的少量日线时不比较成交额（曾得出「成交额 +44004%」），涨停相关指标照常计算"""
+    db_path = _init(tmp_path)
+    with get_db_session(db_path) as session:
+        for i in range(400):
+            session.add(StockDaily(code=f"{600000 + i}", name=f"S{i}", trade_date=TODAY, change_pct=2.0 if i < 300 else -2.0, amount=1e9))
+        for i in range(20):
+            session.add(StockDaily(code=f"{600000 + i}", name=f"S{i}", trade_date=PREV, change_pct=1.0, amount=1e9))
+            session.add(LimitUpStock(code=f"{600000 + i}", name=f"S{i}", trade_date=PREV, continuous_days=1))
+        session.add(LimitUpStock(code="600000", name="S0", trade_date=TODAY, continuous_days=2))
+    m = MarketRegimeAnalyzer({"database": {"sqlite_path": db_path}}).analyze(overview=INDEX_UP).metrics
+    assert m["amount_change_pct"] is None
+    assert m["promotion_rate"] == 5.0
+    _reset_db_engine()

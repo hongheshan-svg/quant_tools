@@ -203,7 +203,8 @@ class MarketRegimeAnalyzer:
 
         # 3. 量能：较前一交易日成交额变化
         amount_change = None
-        if prev and prev.amount_yi > 0 and today.amount_yi > 0:
+        # 前一天要有全市场行情：个股页按需补齐的日线只有少数股票，拿来比较会得出「成交额 +40000%」
+        if prev and prev.up + prev.down >= MIN_MARKET_SAMPLE and prev.amount_yi > 0 and today.amount_yi > 0:
             amount_change = (today.amount_yi / prev.amount_yi - 1) * 100
             volume = 20 if amount_change >= 10 else 14 if amount_change >= -5 else 8 if amount_change >= -15 else 3
             reasons.append(f"成交额 {today.amount_yi:,.0f} 亿（{amount_change:+.1f}%）")
