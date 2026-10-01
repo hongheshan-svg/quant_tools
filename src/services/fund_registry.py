@@ -6,6 +6,8 @@ ETF 与指数注册表：内置主要 A 股指数，ETF 列表来自新浪（aks
 - 指数与个股的 6 位代码会冲突（000001 上证指数 vs 平安银行），指数的规范代码一律带交易所前缀
   （sh000300、sz399006、bj899050），任何地方都不能对指数代码调用 bare_code
 - 裸 6 位数字只按 ETF 匹配，裸 000300 不当作指数
+- 中证指数公司独有、没有交易所代码的指数（93xxxx 等）沿用 sh 前缀作为规范代码（与沪市股票、B 股代码段不冲突），
+  别名带 .csi；日线来自中证指数官网，国证自由现金流（sz980092）腾讯只有 1 天历史，日线来自国证指数官网
 ETF 与指数的行情存 fund_daily，不写入 stock_daily。
 """
 
@@ -24,7 +26,8 @@ from src.database.models import FundInfo
 ETF_REFRESH_DAYS = 7
 ETF_PREFIXES = ("50", "51", "52", "56", "58", "15", "16")  # 场内基金代码段，与个股不冲突
 
-_INDEX_ROWS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+# (规范代码, 名称, 别名, 日线来源)；来源省略时为腾讯 K 线，csindex / cnindex 为中证、国证指数官网
+_INDEX_ROWS: tuple[tuple, ...] = (
     ("sh000001", "上证指数", ("上证综指", "上证综合指数", "shzs")),
     ("sz399001", "深证成指", ("深成指", "深证成份指数", "szcz")),
     ("sz399006", "创业板指", ("创业板指数", "创业板", "cybz")),
@@ -48,14 +51,28 @@ _INDEX_ROWS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("sz399989", "中证医疗", ("医疗指数",)),
     ("sz399997", "中证白酒", ("白酒指数",)),
     ("sz399967", "中证军工", ("军工指数",)),
+    ("sz399324", "深证红利", ("深证红利指数",)),
+    ("sh000941", "新能源", ("中证新能源", "新能源指数")),
+    ("sz399296", "创成长", ("创业板成长", "创成长指数")),
+    ("sz399365", "国证粮食", ("粮食指数",)),
+    ("sz980092", "自由现金流", ("国证自由现金流", "980092.cni"), "cnindex"),
+    ("sh932365", "中证现金流", ("中证全指自由现金流",), "csindex"),
+    ("sh932366", "300现金流", ("沪深300自由现金流",), "csindex"),
+    ("sh930955", "红利低波100", ("中证红利低波动100", "红利低波"), "csindex"),
+    ("sh931446", "东证红利低波", ("中证东方红红利低波动",), "csindex"),
+    ("sh931052", "国信价值", ("中证国信价值",), "csindex"),
+    ("sh931643", "科创创业50", ("中证科创创业50", "双创50"), "csindex"),
+    ("sh930606", "中证钢铁", ("钢铁指数",), "csindex"),
 )
 
 
 def _build_indexes() -> list[dict[str, Any]]:
     items = []
-    for code, name, aliases in _INDEX_ROWS:
-        bare, exchange = code[2:], code[:2]
-        items.append({"code": code, "name": name, "aliases": [*aliases, f"{bare}.{exchange}"]})
+    for code, name, aliases, *rest in _INDEX_ROWS:
+        source = rest[0] if rest else "tencent"
+        bare = code[2:]
+        suffix = "csi" if source == "csindex" else code[:2]
+        items.append({"code": code, "name": name, "aliases": [*aliases, f"{bare}.{suffix}"], "source": source})
     return items
 
 

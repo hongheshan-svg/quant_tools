@@ -20,6 +20,10 @@ from src.database.models import FundDaily
 from src.utils.stock_code import EXCHANGE_PREFIXES, exchange_of
 
 KLINE_URL = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+CSINDEX_URL = "https://www.csindex.com.cn/csindex-home/perf/index-perf"
+CNINDEX_URL = "https://hq.cnindex.com.cn/market/market/getIndexDailyDataWithDataFormat"
+YI = 1e8                      # 中证、国证官网的成交额单位是亿元
+SOURCE_LABELS = {"tencent": "腾讯", "csindex": "中证指数", "cnindex": "国证指数"}
 LOTS_TO_SHARES = 100          # 腾讯成交量单位是手
 ENSURE_CALENDAR_DAYS = 150
 ENSURE_RETRY_MINUTES = 30
@@ -89,19 +93,94 @@ def parse_kline(code: str, payload: dict, days: int) -> list[dict]:
     return bars
 
 
+def _pct(value) -> float:
+    """「0.84%」或 0.84 → 0.84"""
+    return _to_float(str(value).rstrip("%")) if value is not None else 0.0
+
+
+def parse_csindex(code: str, payload: dict, days: int) -> list[dict]:
+    """解析中证指数官网 index-perf 的响应（tradeDate 为 YYYYMMDD，成交额单位亿元）。"""
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    if not rows:
+        raise ValueError(f"中证指数官网没有返回 {code} 的日线")
+    bars = []
+    for row in sorted(rows, key=lambda r: str(r.get("tradeDate") or "")):
+        raw = str(row.get("tradeDate") or "")
+        close = _to_float(row.get("close"))
+        if len(raw) != 8 or close <= 0:
+            continue
+        bars.append({
+            "code": code, "name": str(row.get("indexNameCn") or ""), "trade_date": f"{raw[:4]}-{raw[4:6]}-{raw[6:]}",
+            "open": _to_float(row.get("open")), "high": _to_float(row.get("high")), "low": _to_float(row.get("low")),
+            "close": close, "volume": _to_float(row.get("tradingVol")), "amount": _to_float(row.get("tradingValue")) * YI,
+            "change_pct": _pct(row.get("changePct")),
+        })
+    return bars[-days:]
+
+
+def parse_cnindex(code: str, payload: dict, days: int) -> list[dict]:
+    """解析国证指数官网的日线：每行 [日期, _, 最高, 开盘, 最低, 收盘, 涨跌, 涨跌幅%, 成交额(亿元), 成交量, _]。
+    成交量单位不明确，记 0（腾讯来源的指数也不记成交额、成交量）。"""
+    data = (payload.get("data") or {}) if isinstance(payload, dict) else {}
+    rows = data.get("data") if isinstance(data, dict) else None
+    if not rows:
+        raise ValueError(f"国证指数官网没有返回 {code} 的日线")
+    name = str(data.get("indexName") or "")
+    bars = []
+    for row in sorted((r for r in rows if isinstance(r, list) and len(r) >= 9), key=lambda r: str(r[0])):
+        close = _to_float(row[5])
+        if close <= 0:
+            continue
+        bars.append({
+            "code": code, "name": name, "trade_date": str(row[0])[:10],
+            "open": _to_float(row[3]), "high": _to_float(row[2]), "low": _to_float(row[4]), "close": close,
+            "volume": 0.0, "amount": _to_float(row[8]) * YI, "change_pct": _pct(row[7]),
+        })
+    return bars[-days:]
+
+
+def _index_source(code: str) -> str:
+    if not is_index(code):
+        return "tencent"
+    from src.services.fund_registry import INDEX_CODES
+
+    return (INDEX_CODES.get(code.strip().lower()) or {}).get("source", "tencent")
+
+
+def _download(code: str, source: str, days: int) -> list[dict]:
+    headers = {"User-Agent": "Mozilla/5.0"}
+    if source == "tencent":
+        resp = httpx.get(KLINE_URL, params={"param": f"{tx_symbol(code)},day,,,{days + 1},qfq"}, timeout=15, headers=headers)
+        resp.raise_for_status()
+        return parse_kline(code, resp.json(), days)
+    # 官网按日期区间取数：按 1.6 倍交易日折算日历天数，多取一些再截断
+    end = datetime.now()
+    start = end - timedelta(days=int(days * 1.6) + 20)
+    if source == "csindex":
+        params = {"indexCode": code[2:], "startDate": start.strftime("%Y%m%d"), "endDate": end.strftime("%Y%m%d")}
+        resp = httpx.get(CSINDEX_URL, params=params, timeout=20, headers=headers)
+        resp.raise_for_status()
+        return parse_csindex(code, resp.json(), days)
+    params = {"indexCode": code[2:], "startDate": start.strftime("%Y-%m-%d"), "endDate": end.strftime("%Y-%m-%d"), "frequency": "day"}
+    resp = httpx.get(CNINDEX_URL, params=params, timeout=20, headers=headers)
+    resp.raise_for_status()
+    return parse_cnindex(code, resp.json(), days)
+
+
 def fetch_fund_daily(code: str, days: int = 250) -> list[dict]:
-    """下载 ETF/指数最近 days 根日线（按日期升序）；网络或解析失败抛异常。"""
-    symbol = tx_symbol(code)
+    """下载 ETF/指数最近 days 根日线（按日期升序）；网络或解析失败抛异常。
+    ETF 和多数指数用腾讯 K 线；中证、国证独有的指数按注册表的来源用官网接口。"""
+    source = _index_source(code)
+    label = SOURCE_LABELS.get(source, source)
     begin = time.monotonic()
     try:
-        resp = httpx.get(KLINE_URL, params={"param": f"{symbol},day,,,{days + 1},qfq"}, timeout=15,
-                         headers={"User-Agent": "Mozilla/5.0"})
-        resp.raise_for_status()
-        bars = parse_kline(code, resp.json(), days)
+        bars = _download(code, source, days)
+        if not bars:
+            raise ValueError(f"{label}没有返回 {code} 的日线")
     except Exception as e:
-        source_health.record("基金日线", "腾讯", False, str(e)[:200], time.monotonic() - begin)
+        source_health.record("基金日线", label, False, str(e)[:200], time.monotonic() - begin)
         raise
-    source_health.record("基金日线", "腾讯", True, elapsed=time.monotonic() - begin)
+    source_health.record("基金日线", label, True, elapsed=time.monotonic() - begin)
     return bars
 
 

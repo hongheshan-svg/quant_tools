@@ -355,3 +355,70 @@ def test_watchlist_accepts_funds(db_path):
     assert not service.add("sh000300").get("ok")  # 重复添加
     assert not service.add("sh000300", include_funds=False).get("ok")
     assert service.add("600519").get("ok")
+
+
+# ---------- 中证、国证官网来源的指数 ----------
+
+CSINDEX_PAYLOAD = {"code": "200", "msg": "Success", "data": [
+    {"tradeDate": "20260930", "indexCode": "932365", "indexNameCn": "中证现金流", "open": 4595.25, "high": 4653.08,
+     "low": 4594.27, "close": 4644.13, "changePct": 0.97, "tradingVol": 1596354709.0, "tradingValue": 190.07},
+    {"tradeDate": "20260929", "indexCode": "932365", "indexNameCn": "中证现金流", "open": 4590.0, "high": 4610.0,
+     "low": 4580.0, "close": 4599.63, "changePct": -0.12, "tradingVol": 1.2e9, "tradingValue": 150.0},
+]}
+CNINDEX_PAYLOAD = {"code": 200, "data": {"indexName": "自由现金流", "data": [
+    ["2026-09-30", 5014.3957, 5027.5969, 4969.0434, 4968.4146, 5014.3957, 41.5916, "0.84%", 274.49, 2631.0, None],
+]}}
+
+
+def test_new_indexes_and_sources():
+    from src.services.fund_registry import INDEX_CODES, INDEXES
+
+    assert len(INDEXES) == 35
+    assert INDEX_CODES["sh932365"]["source"] == "csindex" and "932365.csi" in INDEX_CODES["sh932365"]["aliases"]
+    assert INDEX_CODES["sz980092"]["source"] == "cnindex" and INDEX_CODES["sz399324"]["source"] == "tencent"
+    assert len({i["code"] for i in INDEXES}) == len(INDEXES)
+
+
+@pytest.mark.parametrize("text", ["中证现金流", "中证全指自由现金流", "sh932365", "932365.CSI"])
+def test_resolve_csi_index(db_path, text):
+    from src.services.fund_registry import resolve_fund
+
+    found = resolve_fund(text, db_path)
+    assert found and found["kind"] == "index" and found["code"] == "sh932365"
+
+
+def test_parse_official_index_sites():
+    from src.collectors import fund_data
+
+    bars = fund_data.parse_csindex("sh932365", CSINDEX_PAYLOAD, 5)
+    assert [b["trade_date"] for b in bars] == ["2026-09-29", "2026-09-30"]              # 按日期升序
+    last = bars[-1]
+    assert (last["open"], last["close"], last["change_pct"], last["name"]) == (4595.25, 4644.13, 0.97, "中证现金流")
+    assert last["amount"] == pytest.approx(190.07e8)
+    cni = fund_data.parse_cnindex("sz980092", CNINDEX_PAYLOAD, 5)[0]
+    assert (cni["open"], cni["high"], cni["low"], cni["close"]) == (4969.0434, 5027.5969, 4968.4146, 5014.3957)
+    assert cni["change_pct"] == 0.84 and cni["amount"] == pytest.approx(274.49e8) and cni["volume"] == 0
+    with pytest.raises(ValueError):
+        fund_data.parse_csindex("sh932365", {"data": []}, 5)
+
+
+def test_fetch_routes_by_index_source(monkeypatch):
+    from src.collectors import fund_data
+
+    urls = []
+
+    def fake_get(url, params=None, **k):
+        urls.append(url)
+        if "csindex" in url:
+            assert params["indexCode"] == "932365"
+            return _Resp(CSINDEX_PAYLOAD)
+        if "cnindex" in url:
+            assert params["indexCode"] == "980092"
+            return _Resp(CNINDEX_PAYLOAD)
+        return _Resp(_kline_payload("sz399324", _bars(3)))
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    assert fund_data.fetch_fund_daily("sh932365", 10)[-1]["close"] == 4644.13
+    assert fund_data.fetch_fund_daily("sz980092", 10)[-1]["close"] == 5014.3957
+    fund_data.fetch_fund_daily("sz399324", 3)
+    assert [u.split("/")[2] for u in urls] == ["www.csindex.com.cn", "hq.cnindex.com.cn", "web.ifzq.gtimg.cn"]
