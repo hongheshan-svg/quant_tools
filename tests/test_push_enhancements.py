@@ -68,7 +68,7 @@ def chan(monkeypatch):
     _Chan.image_ok = True
     rendered: list[tuple] = []
 
-    def fake_render(title, markdown, footer=""):
+    def fake_render(title, markdown, footer="", brand="", qr_url=""):
         rendered.append((title, markdown))
         return PNG
 

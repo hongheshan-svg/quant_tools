@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 
 from api.deps import get_config, get_pipeline, get_tasks
 from api.tasks import TaskManager
@@ -51,6 +51,25 @@ def market_regime(pipeline: PipelineService = Depends(get_pipeline)) -> dict[str
 @router.get("/market/review")
 def latest_review(pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any] | None:
     return pipeline.latest_market_review()
+
+
+@router.get("/market/review/image")
+def review_image(trade_date: str | None = None, pipeline: PipelineService = Depends(get_pipeline),
+                 config: dict = Depends(get_config)) -> Response:
+    """大盘复盘分享图 PNG（带品牌配置）；没有复盘 404，渲染失败 503。"""
+    from src.services import report_image
+    from src.services.market_review import MarketReviewService
+
+    review = MarketReviewService(pipeline.config).get(trade_date)
+    if not review or not review.get("markdown"):
+        raise HTTPException(status_code=404, detail="没有大盘复盘")
+    title = f"{review.get('trade_date') or trade_date or ''} 大盘复盘".strip()
+    try:
+        png = report_image.render_markdown_image(title, review["markdown"], **report_image.share_options(config))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    return Response(png, media_type="image/png",
+                    headers={"Content-Disposition": f'attachment; filename="market-review-{review.get("trade_date", "")}.png"'})
 
 
 @router.post("/market/review")

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from loguru import logger
 
-from api.deps import get_pipeline, get_tasks
+from api.deps import get_config, get_pipeline, get_tasks
 from api.tasks import TaskManager
 from src.services.pipeline_service import PipelineService
 from src.utils.stock_code import bare_code
@@ -79,13 +79,15 @@ def diagnosis_markdown(diagnosis_id: int, pipeline: PipelineService = Depends(ge
 
 
 @router.get("/diagnoses/{diagnosis_id}/image")
-def diagnosis_image(diagnosis_id: int, pipeline: PipelineService = Depends(get_pipeline)) -> Response:
+def diagnosis_image(diagnosis_id: int, pipeline: PipelineService = Depends(get_pipeline), config: dict = Depends(get_config)) -> Response:
     from src.services import report_image
 
     row = _get_or_404(pipeline, diagnosis_id)
     title, body = _diagnosis_markdown(row)
     try:
-        png = report_image.render_markdown_image(title, body, "AI 诊断仅供参考，不构成投资建议")
+        opts = report_image.share_options(config)
+        opts["footer"] = opts["footer"] or "AI 诊断仅供参考，不构成投资建议"
+        png = report_image.render_markdown_image(title, body, **opts)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
     return Response(png, media_type="image/png", headers={"Content-Disposition": _attachment(row, "png")})

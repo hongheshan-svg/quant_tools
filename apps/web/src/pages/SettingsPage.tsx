@@ -530,6 +530,17 @@ export function NotifierForm() {
             <Input type="number" aria-label={t('图片最大字数')} value={image.max_chars ?? 8000} onChange={(e) => setNested('image', 'max_chars', e.target.value === '' ? '' : Number(e.target.value))} />
           </Field>
         </div>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field label={t('品牌名（显示在分享图顶部，留空不显示）')}>
+            <Input aria-label={t('分享图品牌名')} value={image.brand ?? ''} onChange={(e) => setNested('image', 'brand', e.target.value)} />
+          </Field>
+          <Field label={t('底部文字')}>
+            <Input aria-label={t('分享图底部文字')} value={image.footer ?? '仅供学习研究，不构成投资建议'} onChange={(e) => setNested('image', 'footer', e.target.value)} />
+          </Field>
+          <Field label={t('二维码链接（http/https，留空不显示）')}>
+            <Input aria-label={t('分享图二维码链接')} value={image.qr_url ?? ''} onChange={(e) => setNested('image', 'qr_url', e.target.value)} />
+          </Field>
+        </div>
       </fieldset>
       <fieldset className="space-y-2 rounded-md border border-line p-3">
         <legend className="px-1 text-sm text-accent">{t('系统错误通知（定时任务出错时推送，路由见上表「系统错误」）')}</legend>

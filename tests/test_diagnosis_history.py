@@ -167,7 +167,7 @@ def test_api_markdown(seeded):
 def test_api_image(seeded, monkeypatch):
     client, _, _, ids = seeded
     monkeypatch.setattr(report_image, "render_png", lambda html, width=760: PNG)
-    monkeypatch.setattr(report_image, "render_markdown_image", lambda title, md, footer="": PNG)
+    monkeypatch.setattr(report_image, "render_markdown_image", lambda title, md, footer="", brand="", qr_url="": PNG)
     r = client.get(f"/api/v1/stocks/diagnoses/{ids['a']}/image")
     assert r.status_code == 200 and r.headers["content-type"].startswith("image/png")
     assert r.content == PNG

@@ -158,12 +158,12 @@ def _use_image(config: dict, name: str, kind: str | None, content: str) -> bool:
     return len(content) <= limit
 
 
-def _send_as_image(notifier: Any, name: str, title: str, content: str) -> bool:
+def _send_as_image(notifier: Any, name: str, title: str, content: str, config: dict | None = None) -> bool:
     """渲染分享图并发送；渲染失败或发送失败返回 False，由调用方回退成文字。"""
     try:
-        from src.services.report_image import render_markdown_image
+        from src.services.report_image import render_markdown_image, share_options
 
-        png = render_markdown_image(title, content)
+        png = render_markdown_image(title, content, **share_options(config))
         if notifier.send_image(title, png):
             return True
         logger.warning(f"[{name}] 图片推送失败，回退为文字: {title}")
@@ -181,7 +181,7 @@ def broadcast(config: dict, title: str, content: str, kind: str | None = None) -
     for name in enabled_channels(config, kind):
         try:
             notifier = NOTIFIERS[name](config)
-            if _use_image(config, name, kind, content) and _send_as_image(notifier, name, title, content):
+            if _use_image(config, name, kind, content) and _send_as_image(notifier, name, title, content, config):
                 results[name] = True
                 continue
             results[name] = notifier.send(title, content)

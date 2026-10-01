@@ -173,7 +173,12 @@ export function WatchlistPage() {
           {list.error && <ErrorBox message={list.error} onRetry={list.reload} />}
           <DataTable columns={columns} rows={list.data ?? []} rowKey={(r) => r.code} onRowClick={(r) => navigate(`/stocks/${r.code}`)} empty={t('还没有自选股，用上方搜索框添加，或批量导入')} />
         </Card>
-        <Card title={t('决策仪表盘')} actions={report.data && <span className="text-xs text-muted">{report.data.created_at}</span>}>
+        <Card title={t('决策仪表盘')} actions={report.data && (
+          <span className="flex items-center gap-3">
+            <span className="text-xs text-muted">{report.data.created_at}</span>
+            <a className="inline-flex items-center rounded-md border border-line px-3 py-1.5 text-sm font-medium hover:bg-panel-2" href={api.watchlistReportImageUrl()} target="_blank" rel="noreferrer">{t('分享图')}</a>
+          </span>
+        )}>
           {report.data ? <Markdown text={report.data.markdown} /> : <p className="text-sm text-muted">{t('还没有仪表盘，点「分析全部并推送」生成')}</p>}
         </Card>
       </div>

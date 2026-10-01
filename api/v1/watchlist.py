@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from pydantic import BaseModel, Field
 
 from api.deps import bad_request, get_config, get_pipeline, get_tasks
@@ -92,6 +92,23 @@ async def import_image(
 @router.get("/report")
 def latest_report(pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any] | None:
     return pipeline.latest_watchlist_report()
+
+
+@router.get("/report/image")
+def report_image(pipeline: PipelineService = Depends(get_pipeline), config: dict = Depends(get_config)) -> Response:
+    """最近一份自选股决策仪表盘的分享图 PNG；没有仪表盘 404，渲染失败 503。"""
+    from src.services import report_image as image_service
+
+    report = pipeline.latest_watchlist_report()
+    if not report or not report.get("markdown"):
+        raise HTTPException(status_code=404, detail="没有自选股决策仪表盘")
+    title = f"自选股决策仪表盘 {report.get('trade_date') or ''}".strip()
+    try:
+        png = image_service.render_markdown_image(title, report["markdown"], **image_service.share_options(config))
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    return Response(png, media_type="image/png",
+                    headers={"Content-Disposition": f'attachment; filename="watchlist-report-{report.get("trade_date", "")}.png"'})
 
 
 @router.post("/report")

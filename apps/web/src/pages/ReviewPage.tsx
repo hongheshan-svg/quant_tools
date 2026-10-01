@@ -25,7 +25,14 @@ export function ReviewPage() {
       {data && (
         <Card
           title={<span className="flex items-center gap-2">{t('{date} 复盘', { date: data.trade_date })} {data.stance && <Badge tone={data.stance === '进攻' ? 'up' : data.stance === '防守' ? 'down' : 'warn'}>{t(data.stance)}</Badge>}</span>}
-          actions={<span className="text-xs text-muted">{t('生成于 {time}', { time: data.created_at })}</span>}
+          actions={(
+            <span className="flex items-center gap-3">
+              <span className="text-xs text-muted">{t('生成于 {time}', { time: data.created_at })}</span>
+              {!data.error && (
+                <a className="inline-flex items-center rounded-md border border-line px-3 py-1.5 text-sm font-medium hover:bg-panel-2" href={api.reviewImageUrl(data.trade_date)} target="_blank" rel="noreferrer">{t('分享图')}</a>
+              )}
+            </span>
+          )}
         >
           {data.error ? <ErrorBox message={data.error} /> : <Markdown text={data.markdown} />}
         </Card>

@@ -27,3 +27,4 @@ baostock>=0.8.9
 pytdx>=1.72
 efinance>=0.5.5
 tushare>=1.4.0
+qrcode[png]>=7.4
