@@ -7,7 +7,7 @@ name: Release
 #   （不上传 builder-debug.yml：各系统同名，合并时会互相覆盖）。
 # - Docker：amd64、arm64 分别在原生 runner 上构建（不用 QEMU 模拟），按 digest 推送后合并成多架构镜像，
 #   标签为版本号、主.次版本、latest 和 sha，发布到 ghcr.io/<owner>/<repo>。
-# - 发布说明：scripts/release_notes.py 生成（版本亮点取自 .github/release-notes/<tag>.md），后面追加 GitHub 自动生成的变更列表。
+# - 发布说明（中文）：scripts/release_notes.py 生成，版本亮点取自 .github/release-notes/<tag>.md，末尾附与上一个版本对比的完整变更记录链接。
 # 手动运行（workflow_dispatch）是演练：桌面端打包后上传为构建产物，Docker 只构建不推送，不创建 Release。
 
 on:
@@ -209,7 +209,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      # 拉取全部历史和标签，发布说明要用 git describe 找上一个版本标签
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Download packages
         uses: actions/download-artifact@v8
@@ -227,4 +230,3 @@ jobs:
           files: assets/*
           fail_on_unmatched_files: true
           body_path: release-notes.md
-          generate_release_notes: true

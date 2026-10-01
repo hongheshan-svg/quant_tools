@@ -400,8 +400,8 @@ cd apps/desktop && npm test                                 # node --test，不�
   - `ci.yml`（后端测试、前端 lint/测试/构建、桌面端测试）：推送 main、PR 时运行，只改文档（`*.md` 等）不运行，同一分支有新提交时取消旧任务；后端测试不安装 PyInstaller。也作为 `release.yml` 的前置（`workflow_call`）。
   - `daily-analysis.yml`（工作日 16:40 `main.py --once`）：需要仓库变量 `ENABLE_DAILY_ANALYSIS=true`。配置来自 Secret `SETTINGS_YAML` 或按段映射为 `QUANT__` 环境变量的单独 Secret（LLM、各推送渠道、搜索源都支持）。支持 workflow_dispatch 新增 `stocks` 输入诊断指定股票、`no_notify` 不推送。数据库用 actions/cache 保留到下一次运行。
   - `network-smoke.yml`（`check_sources.py`，`ENABLE_NETWORK_SMOKE=true`）。
-  - `release.yml`（`v*` 标签发布）：先调用 CI，通过后并行打包桌面端（Windows、macOS、Linux，各自冒烟测试后台服务）和 Docker 镜像（amd64、arm64 分别在原生 runner 上构建，按 digest 推送后合并成多架构镜像，标签为版本号、主.次版本、latest、sha），最后创建 Release：说明由 `scripts/release_notes.py` 生成（版本亮点写在 `.github/release-notes/<tag>.md`，发版前补上），后面追加 GitHub 自动生成的变更列表；需要 electron-builder 生成的 latest*.yml 和 *.blockmap。手动运行是演练：桌面端只上传为构建产物，Docker 只构建不推送，不创建 Release。
-  - GitHub 上显示的工作流、任务、步骤名称、手动运行的输入说明和 CI 脚本输出用英文，YAML 注释仍用中文。
+  - `release.yml`（`v*` 标签发布）：先调用 CI，通过后并行打包桌面端（Windows、macOS、Linux，各自冒烟测试后台服务）和 Docker 镜像（amd64、arm64 分别在原生 runner 上构建，按 digest 推送后合并成多架构镜像，标签为版本号、主.次版本、latest、sha），最后创建 Release：中文说明由 `scripts/release_notes.py` 生成（版本亮点写在 `.github/release-notes/<tag>.md`，发版前补上；末尾附与上一个版本标签对比的完整变更记录链接，所以发布任务的 checkout 要 `fetch-depth: 0`），不用 GitHub 自动生成的英文变更列表；需要 electron-builder 生成的 latest*.yml 和 *.blockmap。手动运行是演练：桌面端只上传为构建产物，Docker 只构建不推送，不创建 Release。
+  - GitHub 上显示的工作流、任务、步骤名称、手动运行的输入说明和 CI 脚本输出用英文，YAML 注释仍用中文；Release 说明用中文。
 - Actions 里给布尔配置映射 Secret 时要写成 `${{ secrets.X != '' && 'true' || '' }}`：直接写比较表达式在 Secret 为空时得到字符串 `false`，会覆盖 `SETTINGS_YAML` 里的设置；空字符串才会被忽略。
 
 ## 约定
