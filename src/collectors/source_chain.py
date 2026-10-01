@@ -35,6 +35,9 @@ def has_data(data: Any) -> bool:
         return True
 
 
+NO_DATA = "无数据"  # 源正常返回但没有数据（区别于请求出错）
+
+
 @dataclass
 class FetchResult:
     data: Any = None
@@ -134,7 +137,7 @@ def fetch_with_fallback(
                     source_health.record(dataset, name, True, elapsed=elapsed)
                     _last_good[dataset] = (data, name, datetime.now())
                     return FetchResult(data=data, source=name, fetched_at=datetime.now(), errors=result.errors)
-                result.errors[name] = "无数据"
+                result.errors[name] = NO_DATA
             except Exception as e:
                 result.errors[name] = str(e)[:ERROR_MAX_CHARS] or type(e).__name__
                 logger.warning(f"[{dataset}] {name} 第{attempt}次失败: {e}")

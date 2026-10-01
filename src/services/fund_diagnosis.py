@@ -30,6 +30,7 @@ from src.services.stock_diagnosis import (
     STABILITY_DAYS,
     StockDiagnosisService,
     _step_factory,
+    news_section,
     note_guardrail_change,
 )
 
@@ -225,7 +226,8 @@ class FundDiagnosisService(StockDiagnosisService):
                     .order_by(FinanceNews.collected_at.desc()).limit(8).all()
                 )
             news_lines = [f"[{src}] {title}" for title, src in rows]
-        news_lines += self._web_search_lines("" if kind == "index" else code, name, news_lines)
+        web_lines, web_status, _ = self._web_search("" if kind == "index" else code, name, news_lines)
+        news_lines += web_lines
 
         present = {
             "行情": bool(quote), "日线": len(closes) >= MIN_DAILY_BARS, "技术面": bool(tech.brief()),
@@ -248,7 +250,7 @@ class FundDiagnosisService(StockDiagnosisService):
             f"【技术面】{tech_text or '数据不足'}",
             f"【对应主线】{theme_text}",
             f"【大盘环境】{regime.summary()}",
-            "【相关资讯】" + ("；".join(news_lines) if news_lines else "近期无相关资讯"),
+            news_section(news_lines, web_status),
             f"【数据完整度】{data_quality['score']}%" + (f"（缺少：{'、'.join(data_quality['missing'])}）" if data_quality["missing"] else ""),
             f"说明：这是{KIND_LABELS[kind]}，没有涨跌停、资金流、筹码、业绩和公告数据，请只基于以上数据判断。",
         ]

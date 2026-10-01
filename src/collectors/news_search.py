@@ -20,7 +20,7 @@ from typing import Any, Callable, Iterable
 import httpx
 from loguru import logger
 
-from src.collectors.source_chain import fetch_with_fallback
+from src.collectors.source_chain import NO_DATA, fetch_with_fallback
 
 DATASET = "news_search"
 PROVIDERS: dict[str, str] = {"bocha": "博查", "tavily": "Tavily", "serpapi": "SerpAPI", "brave": "Brave", "searxng": "SearXNG"}
@@ -307,11 +307,33 @@ def _filter(results: list[SearchResult], days: int, limit: int) -> list[SearchRe
     return out[:limit]
 
 
+# 搜索状态：有结果 / 搜过但没有结果 / 全部服务都请求失败 / 未启用
+STATUS_OK, STATUS_EMPTY, STATUS_FAILED, STATUS_DISABLED = "ok", "empty", "failed", "disabled"
+_last_status = threading.local()
+
+
+def last_search_status() -> tuple[str, str]:
+    """当前线程最近一次 search() 的 (状态, 失败原因)；还没搜过时为 ("", "")。
+    报告据此说明消息面是否可信：只要有一个服务正常返回（哪怕没有结果）就是 empty，所有服务都出错才是 failed。"""
+    return getattr(_last_status, "value", ("", ""))
+
+
+def clear_search_status() -> None:
+    _last_status.value = ("", "")
+
+
 def search(query: str, config: dict, *, max_results: int | None = None, days: int | None = None,
            use_cache: bool = True) -> list[SearchResult]:
-    """联网搜索新闻；未启用、全部失败或无结果都返回空列表。"""
+    """联网搜索新闻；未启用、全部失败或无结果都返回空列表（状态见 last_search_status()）。"""
+    results, status, reason = _search(query, config, max_results=max_results, days=days, use_cache=use_cache)
+    _last_status.value = (status, reason)
+    return results
+
+
+def _search(query: str, config: dict, *, max_results: int | None, days: int | None,
+            use_cache: bool) -> tuple[list[SearchResult], str, str]:
     if not query or not is_enabled(config):
-        return []
+        return [], STATUS_DISABLED, ""
     limit = max_results or _int(config, "max_results", 8)
     days = days or _int(config, "days", 7)
     cache_key = (query, limit, days)
@@ -320,7 +342,7 @@ def search(query: str, config: dict, *, max_results: int | None = None, days: in
         with _lock:
             hit = _cache.get(cache_key)
             if hit and time.monotonic() - hit[0] < ttl:
-                return list(hit[1])
+                return list(hit[1]), STATUS_OK, ""
 
     def make(provider: str) -> Callable[[], list[SearchResult]]:
         return lambda: _filter(_request_provider(provider, query, limit, days, config), days, limit)
@@ -329,12 +351,17 @@ def search(query: str, config: dict, *, max_results: int | None = None, days: in
         fetched = fetch_with_fallback(DATASET, [(p, make(p)) for p in configured_providers(config)])
     except Exception as e:
         logger.warning(f"[搜索] 联网搜索失败: {e}")
-        return []
+        return [], STATUS_FAILED, str(e)
     results = list(fetched.data or []) if fetched.ok else []
     if results and ttl > 0:
         with _lock:
             _cache[cache_key] = (time.monotonic(), results)
-    return list(results)
+    if results:
+        return list(results), STATUS_OK, ""
+    errors = {k: v for k, v in fetched.errors.items() if v != NO_DATA}
+    if errors and len(errors) == len(fetched.errors):
+        return [], STATUS_FAILED, "；".join(f"{PROVIDERS.get(k, k)}：{v}" for k, v in errors.items())
+    return [], STATUS_EMPTY, ""
 
 
 def search_stock_news(code: str, name: str, config: dict, limit: int = 5,

@@ -167,6 +167,20 @@ def note_guardrail_change(run_log: RunLog, raw: dict, result: dict[str, Any]) ->
         run_log.note(f"{ACTION_LABELS.get(original, original)}降为{ACTION_LABELS.get(final, final)}：{reasons}"[:200])
 
 
+def news_section(lines: list[str], web_status: str) -> str:
+    """提示词里的【相关资讯】：如实说明消息面的覆盖范围，避免模型把「没搜到 / 没搜」当成「没有利空」。"""
+    from src.collectors import news_search
+
+    if lines:
+        note = "（联网搜索失败，以上只有本地资讯，消息面可能不完整）" if web_status == news_search.STATUS_FAILED else ""
+        return "【相关资讯】" + "；".join(lines) + note
+    if web_status == news_search.STATUS_EMPTY:
+        return "【相关资讯】近期无相关资讯（已联网搜索）"
+    if web_status == news_search.STATUS_FAILED:
+        return "【相关资讯】联网搜索失败，本地资讯也没有相关内容，无法确认近期消息面，不能据此认为没有利空"
+    return "【相关资讯】本地资讯近期无相关内容（未启用联网搜索，消息面覆盖有限，不能据此认为没有利空）"
+
+
 class StockDiagnosisService:
     """单只股票的 AI 诊断。"""
 
@@ -373,18 +387,29 @@ class StockDiagnosisService:
 
     def _web_search_lines(self, code: str, name: str, existing: list[str], sector_terms: list[str] | None = None,
                           tagged: bool = False) -> list[str]:
-        """联网搜索的个股新闻（未启用搜索时不调用）；与已有资讯按标题去重，最多 5 条。
+        """联网搜索的个股新闻（未启用搜索时不调用）；与已有资讯按标题去重，最多 5 条。"""
+        return self._web_search(code, name, existing, sector_terms, tagged)[0]
+
+    def _web_search(self, code: str, name: str, existing: list[str], sector_terms: list[str] | None = None,
+                    tagged: bool = False) -> tuple[list[str], str, str]:
+        """同 _web_search_lines()，另返回搜索状态（ok/empty/failed/disabled）和失败原因。
         tagged 为真时每行加 [直接]/[行业]/[宏观] 前缀，并在末尾附最主要的一条依据。"""
         from src.collectors import news_search
         from src.collectors.news_relevance import score_news
 
         if not news_search.is_enabled(self.config):
-            return []
+            return [], news_search.STATUS_DISABLED, ""
+        news_search.clear_search_status()
         try:
             results = news_search.search_stock_news(code, name, self.config, limit=5, sector_terms=sector_terms or ())
         except Exception as e:
             logger.debug(f"联网搜索个股新闻失败: {e}")
-            return []
+            return [], news_search.STATUS_FAILED, str(e)
+        status, reason = news_search.last_search_status()
+        if results:
+            status = news_search.STATUS_OK
+        elif status != news_search.STATUS_FAILED:   # 搜到的都被相关度过滤掉，也算「没有结果」
+            status = news_search.STATUS_EMPTY
         lines = []
         for r in results:
             if any(r.title in line for line in existing):
@@ -395,7 +420,7 @@ class StockDiagnosisService:
                 rel = r.relevance or score_news(r.title, r.snippet, r.url, r.source, code, name, sector_terms or ())
                 line = f"[{CATEGORY_LABELS_SHORT[rel['category']]}] {line}" + (f"（{rel['reasons'][0]}）" if rel["reasons"] else "")
             lines.append(line)
-        return lines[:5]
+        return lines[:5], status, reason
 
     def build_context(self, code: str, run_log: RunLog | None = None) -> dict[str, Any]:
         """汇总诊断所需数据，返回 {"name", "quote", "text", ...}；text 为交给 LLM 的完整上下文。"""
@@ -563,13 +588,16 @@ class StockDiagnosisService:
                 bg_count += 1
         news_lines = [line for _, line in entries]
         web_count = 0
+        web_status = news_search.STATUS_DISABLED
         if news_search.is_enabled(self.config):  # 未启用联网搜索时不记录这一步
             with step("联网搜索") as s:
-                web_lines = self._web_search_lines(code, name, news_lines, sector_terms=sector_terms, tagged=True)
+                web_lines, web_status, web_reason = self._web_search(code, name, news_lines, sector_terms=sector_terms, tagged=True)
                 web_count = len(web_lines)
                 web_cats = {c: sum(1 for ln in web_lines if ln.startswith(f"[{CATEGORY_LABELS_SHORT[c]}]")) for c in CATEGORY_LABELS_SHORT}
                 s.detail = (f"{web_count} 条（直接 {web_cats['direct']}，行业 {web_cats['sector']}，"
                             f"宏观 {web_cats['macro']}，过滤 {dropped}）")
+                if web_status == news_search.STATUS_FAILED:
+                    s.ok, s.detail = False, f"失败：{web_reason}"[:200]
             for ln in web_lines:
                 entries.append((next((c for c, short in CATEGORY_LABELS_SHORT.items() if ln.startswith(f"[{short}]")), "sector"), ln))
         entries.sort(key=lambda e: NEWS_CATEGORY_ORDER[e[0]])   # 直接 → 行业 → 宏观，稳定排序保留原顺序
@@ -606,7 +634,7 @@ class StockDiagnosisService:
             "【近期涨停】" + ("；".join(limit_up_lines) if limit_up_lines else "近期无涨停"),
             "【主线地位】" + (f"{role['role']}，所属{role['dimension']}{theme.brief()}" if role and theme else "不在近期涨停主线中"),
             f"【大盘环境】{regime.summary()}",
-            "【相关资讯】" + ("；".join(news_lines) if news_lines else "近期无相关资讯"),
+            news_section(news_lines, web_status),
             "【近 30 天公告】" + ("；".join(notice_lines) if notice_lines else "无"),
             "【AI舆情】" + ("；".join(sentiment_lines) if sentiment_lines else "无"),
             "【龙虎榜】" + ("；".join(dragon_lines) if dragon_lines else "近期未上榜"),

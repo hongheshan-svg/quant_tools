@@ -499,3 +499,65 @@ def test_chat_tool_web_search(monkeypatch):
     monkeypatch.setattr(news_search, "search", lambda *a, **k: [])
     text = ChatTools({"database": {"sqlite_path": "data/none.db"}, **cfg()}).call("web_search", {"query": "固态电池"})
     assert "没有配置联网搜索" not in text and text
+
+
+# ---------- 搜索状态：没结果和失败分开 ----------
+
+def test_search_status_ok_empty_failed_disabled(monkeypatch):
+    R = news_search.SearchResult
+    config = cfg(providers=("bocha", "tavily"), cache_minutes=0)
+    assert news_search.search("q", {"search": {"enabled": False}}) == []
+    assert news_search.last_search_status()[0] == news_search.STATUS_DISABLED
+
+    def all_fail(provider, query, limit, days, config):
+        raise RuntimeError(f"{provider} 超时")
+    monkeypatch.setattr(news_search, "_request_provider", all_fail)
+    assert news_search.search("q", config) == []
+    status, reason = news_search.last_search_status()
+    assert status == news_search.STATUS_FAILED and "博查" in reason and "超时" in reason
+
+    # 一个出错、一个正常但没有结果：算「没有结果」，不算失败
+    monkeypatch.setattr(news_search, "_request_provider",
+                        lambda p, q, limit, days, config: (_ for _ in ()).throw(RuntimeError("x")) if p == "bocha" else [])
+    assert news_search.search("q2", config) == []
+    assert news_search.last_search_status()[0] == news_search.STATUS_EMPTY
+
+    monkeypatch.setattr(news_search, "_request_provider",
+                        lambda p, q, limit, days, config: [R(title="标题", url="https://a/1", snippet="", source="", published=_day(1), provider=p)])
+    assert news_search.search("q3", config)
+    assert news_search.last_search_status() == (news_search.STATUS_OK, "")
+
+
+def test_search_status_is_per_thread(monkeypatch):
+    import threading
+
+    monkeypatch.setattr(news_search, "_request_provider", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("down")))
+    news_search.search("q", cfg(cache_minutes=0))
+    seen = []
+    t = threading.Thread(target=lambda: seen.append(news_search.last_search_status()))
+    t.start(); t.join()
+    assert seen == [("", "")] and news_search.last_search_status()[0] == news_search.STATUS_FAILED
+
+
+def test_news_section_discloses_coverage():
+    from src.services.stock_diagnosis import news_section
+
+    assert news_section(["[直接] 公告"], news_search.STATUS_OK) == "【相关资讯】[直接] 公告"
+    assert "已联网搜索" in news_section([], news_search.STATUS_EMPTY)
+    failed = news_section([], news_search.STATUS_FAILED)
+    assert "联网搜索失败" in failed and "不能据此认为没有利空" in failed
+    assert "未启用联网搜索" in news_section([], news_search.STATUS_DISABLED)
+    assert news_section(["本地一条"], news_search.STATUS_FAILED).endswith("消息面可能不完整）")
+
+
+def test_diagnosis_marks_failed_web_search(tmp_path, monkeypatch, offline_diag):
+    monkeypatch.setattr(news_search, "_request_provider", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("HTTP 500")))
+    service = _diag_service(tmp_path, cfg(cache_minutes=0))
+    from src.services.run_log import RunLog
+    log = RunLog()
+    text = service.build_context("002594", run_log=log)["text"]
+    assert "联网搜索失败" in text and "不能据此认为没有利空" in text
+    step = next(s for s in log.to_dict()["steps"] if s["name"] == "联网搜索")
+    assert step["ok"] is False and "HTTP 500" in step["detail"]
+    from tests.test_stock_diagnosis import _reset_db_engine
+    _reset_db_engine()

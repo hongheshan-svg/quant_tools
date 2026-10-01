@@ -14,10 +14,11 @@ MAX_DETAIL = 200
 
 
 class _Step:
-    """step() 上下文里可写的对象，用来设置 detail。"""
+    """step() 上下文里可写的对象，用来设置 detail；不抛异常也可以把 ok 设为 False 记为失败。"""
 
     def __init__(self) -> None:
         self.detail = ""
+        self.ok = True
 
 
 class RunLog:
@@ -43,7 +44,7 @@ class RunLog:
         except BaseException as e:
             self._append(name, False, (time.perf_counter() - start) * 1000, str(e) or type(e).__name__, "data")
             raise
-        self._append(name, True, (time.perf_counter() - start) * 1000, s.detail, "data")
+        self._append(name, s.ok, (time.perf_counter() - start) * 1000, s.detail, "data")
 
     def add(self, name: str, ok: bool = True, ms: int = 0, detail: str = "") -> None:
         self._append(name, ok, ms, detail, "data")
