@@ -20,6 +20,7 @@ from src.database.db import get_db_session
 from src.database.models import MarketReview
 from src.services.market_context import build_market_facts
 from src.services.report_language import display, language_directive, report_language, tr
+from src.services.report_templates import render_report
 
 STANCE_RANK = {"防守": 0, "均衡": 1, "进攻": 2}
 REGIME_MAX_STANCE = {"冰点": "防守", "防守": "防守", "均衡": "均衡", "进攻": "进攻"}
@@ -135,7 +136,7 @@ class MarketReviewService:
             "regime": regime.summary() if regime is not None else "",
             "language": lang,
         }
-        result["markdown"] = render_markdown(result)
+        result["markdown"] = render_report("market_review", result, render_markdown(result))
         return result
 
     def _save(self, result: dict[str, Any]) -> None:

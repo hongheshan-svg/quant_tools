@@ -23,6 +23,7 @@ from src.config_loader import load_config
 from src.database.db import get_db_session
 from src.database.models import WatchlistReport
 from src.services.report_language import display, report_language, tr
+from src.services.report_templates import render_report
 from src.services.watchlist import WatchlistService
 
 MARKET_CLOSE = "15:00"
@@ -238,12 +239,13 @@ class WatchlistReportService:
             pool.shutdown(wait=not timed_out, cancel_futures=True)
 
         trade_date = now.strftime("%Y-%m-%d")
-        markdown = render_dashboard(trade_date, items, failed, lang)
+        counts = {label: sum(1 for it in items if bucket_of(it["action"])[1] == label) for _, label, _ in BUCKETS}
+        markdown = render_report("watchlist", {"trade_date": trade_date, "items": items, "failed": failed, "counts": counts, "language": lang},
+                                 render_dashboard(trade_date, items, failed, lang))
         self._save(trade_date, markdown, items, failed)
         pushed = self._push(trade_date, markdown, lang) if push else False
         if push:
             self._push_groups(trade_date, items, failed, groups, lang)
-        counts = {label: sum(1 for it in items if bucket_of(it["action"])[1] == label) for _, label, _ in BUCKETS}
         logger.info(f"自选股决策仪表盘 {trade_date}：{len(items)} 只完成，{len(failed)} 只失败，推送 {pushed}")
         return {"trade_date": trade_date, "total": len(stocks), "done": len(items), "failed": failed,
                 "counts": counts, "markdown": markdown, "pushed": pushed, "timed_out": timed_out}

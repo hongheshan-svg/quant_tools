@@ -11,11 +11,12 @@ import { useTask } from '@/hooks/useTask'
 import { useT } from '@/i18n'
 import { EmailGroupsEditor } from '@/pages/settings/EmailGroupsEditor'
 import { ConfigCheckSection } from '@/pages/settings/ConfigCheckSection'
+import { TemplatesPanel } from '@/pages/settings/TemplatesPanel'
 import { ReportLanguageSection } from '@/pages/settings/ReportLanguageSection'
 import { toast } from '@/stores/toast'
 import { getDesktop, type DesktopInfo, type QuantDesktop } from '@/utils/desktop'
 
-type TabKey = 'llm' | 'notifier' | 'bot' | 'search' | 'intelligence' | 'scheduler' | 'backup' | 'security' | 'desktop'
+type TabKey = 'llm' | 'notifier' | 'bot' | 'search' | 'intelligence' | 'scheduler' | 'templates' | 'backup' | 'security' | 'desktop'
 
 export function SettingsPage() {
   const t = useT()
@@ -23,7 +24,7 @@ export function SettingsPage() {
   const initialTab = params.get('tab')
   const desktop = getDesktop()
   const [tab, setTab] = useState<TabKey>(() =>
-    (['llm', 'notifier', 'bot', 'search', 'intelligence', 'scheduler', 'backup', 'security'] as string[]).includes(initialTab ?? '') || (initialTab === 'desktop' && desktop) ? (initialTab as TabKey) : 'llm')
+    (['llm', 'notifier', 'bot', 'search', 'intelligence', 'scheduler', 'templates', 'backup', 'security'] as string[]).includes(initialTab ?? '') || (initialTab === 'desktop' && desktop) ? (initialTab as TabKey) : 'llm')
   const tabs: { key: TabKey; label: string }[] = [
     { key: 'llm', label: t('AI 模型') },
     { key: 'notifier', label: t('推送') },
@@ -31,6 +32,7 @@ export function SettingsPage() {
     { key: 'search', label: t('联网搜索') },
     { key: 'intelligence', label: t('资讯源') },
     { key: 'scheduler', label: t('定时任务') },
+    { key: 'templates', label: t('报告模板') },
     { key: 'backup', label: t('备份与恢复') },
     { key: 'security', label: t('登录安全') },
   ]
@@ -47,6 +49,7 @@ export function SettingsPage() {
         {tab === 'search' && <SearchForm />}
         {tab === 'intelligence' && <IntelligenceForm />}
         {tab === 'scheduler' && <SchedulerPanel />}
+        {tab === 'templates' && <TemplatesPanel />}
         {tab === 'backup' && <BackupPanel />}
         {tab === 'security' && <SecurityForm />}
         {tab === 'desktop' && desktop && <DesktopPanel desktop={desktop} />}

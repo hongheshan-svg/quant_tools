@@ -91,6 +91,16 @@ export const SETTINGS_HELP: Record<string, HelpSection> = {
       { label: '注意', text: '导出的是配置，不包含数据库中的行情、信号和订单数据；数据在数据目录的 data/quant.db 中，需要另行备份。' },
     ],
   },
+  templates: {
+    title: '报告模板',
+    summary: '用 Jinja2 模板自定义个股诊断、自选股决策仪表盘、大盘复盘和日报的 Markdown 格式，推送和下载都会使用。',
+    items: [
+      { label: '内置格式', text: '没有自定义模板时使用内置格式；模板出错（语法错误、渲染异常、结果为空）时自动回退内置格式并记录日志。' },
+      { label: '变量', text: '模板开头的注释列出了可用变量；变量 default 是内置格式的完整原文，可只在前后追加内容。' },
+      { label: '预览与保存', text: '预览使用最近一份真实数据（没有时用示例数据）；保存前会检查语法，错误会指出行号。「恢复内置」会删除自定义模板。' },
+      { label: '存放位置', text: '自定义模板保存在数据目录的 config/templates/，文件名为 名称.md.j2。' },
+    ],
+  },
   security: {
     title: '登录安全',
     summary: '控制访问网页的方式。默认只允许本机访问；需要手机或局域网访问时必须开启登录。',
@@ -189,6 +199,16 @@ export const SETTINGS_HELP_EN: Record<string, HelpSection> = {
       { label: 'Export', text: 'By default API keys, Webhooks and other secrets are not included; if you tick "Include secrets", the exported file contains plaintext secrets, so keep it safe and do not send it to others or commit it to a repository.' },
       { label: 'Import', text: 'Importing overwrites the whole current settings.yaml and takes effect immediately, so confirm before proceeding. The content must be valid YAML, and missing settings are filled with defaults.' },
       { label: 'Note', text: 'The export contains configuration only, not the market data, signals and orders in the database; that data is in data/quant.db in the data directory and must be backed up separately.' },
+    ],
+  },
+  templates: {
+    title: 'Report Templates',
+    summary: 'Customize the Markdown format of stock diagnoses, the watchlist dashboard, the market review and the daily report with Jinja2 templates; pushes and downloads use them.',
+    items: [
+      { label: 'Built-in format', text: 'Without a custom template the built-in format is used; if a template fails (syntax error, render error, empty result) it falls back to the built-in format and logs a warning.' },
+      { label: 'Variables', text: 'The comment at the top of the template lists the available variables; the variable default holds the full built-in text, so you can just add content before or after it.' },
+      { label: 'Preview and save', text: 'Preview uses the latest real data (sample data if there is none); the syntax is checked before saving and errors name the line. "Restore built-in" deletes the custom template.' },
+      { label: 'Location', text: 'Custom templates are stored in config/templates/ in the data directory, named name.md.j2.' },
     ],
   },
   security: {

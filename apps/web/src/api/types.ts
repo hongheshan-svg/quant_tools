@@ -982,6 +982,26 @@ export interface ReportSettings {
   language: ReportLanguage
 }
 
+export interface ReportTemplateInfo {
+  name: string
+  label: string
+  custom: boolean
+  path: string
+}
+
+export interface ReportTemplate {
+  name: string
+  label: string
+  custom: boolean
+  text: string
+}
+
+export interface ReportTemplatePreview {
+  ok: boolean
+  markdown: string
+  error?: string
+}
+
 export interface SearchSettings {
   search: {
     enabled?: boolean

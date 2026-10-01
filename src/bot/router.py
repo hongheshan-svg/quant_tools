@@ -158,12 +158,13 @@ class CommandRouter:
             return self._chat(message, message.text.strip(), progress)
         code, name = resolved
         progress(f"正在诊断 {name}({code})，大约需要半分钟…")
+        from src.services.report_templates import render_report
         from src.services.stock_diagnosis import render_markdown
 
         result = self.pipeline.diagnose_stock(code)
         if result.get("error"):
             return f"诊断 {name}({code}) 失败：{result['error']}"
-        return render_markdown(result)
+        return render_report("diagnosis", result, render_markdown(result))
 
     def _batch(self, message: BotMessage, args: str, progress) -> str | None:
         tokens = [t for t in _SPLIT.split(args.strip()) if t]
@@ -246,10 +247,11 @@ class CommandRouter:
 
     def _market(self, message: BotMessage, args: str, progress) -> str:
         from src.services.market_review import render_markdown
+        from src.services.report_templates import render_report
 
         review = self.pipeline.latest_market_review()
         if review and not review.get("error"):
-            return f"### 大盘复盘 {review.get('trade_date', '')}\n\n{render_markdown(review)}"
+            return f"### 大盘复盘 {review.get('trade_date', '')}\n\n{render_report('market_review', review, render_markdown(review))}"
         regime = self.pipeline.market_regime() or {}
         summary = regime.get("summary") or f"大盘环境：{regime.get('regime', '未知')}"
         return f"### 大盘\n\n{summary}\n\n今天还没有生成大盘复盘（收盘后自动生成）。"

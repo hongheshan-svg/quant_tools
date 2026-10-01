@@ -161,6 +161,13 @@ export const api = {
   llmModels: (role: string, config: Record<string, unknown>) => http.post<{ models: string[] }>('/settings/llm/models', { role, config }),
   reportSettings: () => http.get<T.ReportSettings>('/settings/report'),
   saveReportSettings: (language: T.ReportLanguage) => http.put<T.ReportSettings>('/settings/report', { language }),
+  reportTemplates: () => http.get<T.ReportTemplateInfo[]>('/settings/templates'),
+  reportTemplate: (name: string) => http.get<T.ReportTemplate>(`/settings/templates/${encodeURIComponent(name)}`),
+  saveReportTemplate: (name: string, text: string) =>
+    http.put<{ ok: boolean; custom: boolean }>(`/settings/templates/${encodeURIComponent(name)}`, { text }),
+  deleteReportTemplate: (name: string) => http.del<{ ok: boolean; custom: boolean }>(`/settings/templates/${encodeURIComponent(name)}`),
+  previewReportTemplate: (name: string, text: string) =>
+    http.post<T.ReportTemplatePreview>(`/settings/templates/${encodeURIComponent(name)}/preview`, { text }),
   searchSettings: () => http.get<T.SearchSettings>('/settings/search'),
   saveSearch: (search: Record<string, unknown>) => http.put<{ search: T.SearchSettings['search'] }>('/settings/search', { search }),
   testSearch: (search: Record<string, unknown>, query: string) =>

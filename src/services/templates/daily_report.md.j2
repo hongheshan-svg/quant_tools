@@ -1,0 +1,8 @@
+{# 日报模板（Jinja2）。
+可用变量：title 标题、date 日期、各段正文（可能为空）：market 大盘、review AI 复盘、themes 主线梯队、signals 今日信号、
+orders 待确认订单、account 模拟盘账户、performance 信号绩效、source_health 数据源健康、disclaimer 免责声明、
+sections 全部非空段落的列表、default 内置格式的完整原文。 #}
+{% for s in sections %}
+{{ s }}
+
+{% endfor %}

@@ -60,11 +60,12 @@ def delete_diagnosis(diagnosis_id: int, pipeline: PipelineService = Depends(get_
 
 def _diagnosis_markdown(row: dict[str, Any]) -> tuple[str, str]:
     """返回（标题, markdown 正文）。"""
+    from src.services.report_templates import render_report
     from src.services.stock_diagnosis import render_markdown
 
     title = f"{row['name'] or row['code']}({row['code']}) AI 诊断 · {row['created_at']}"
     try:
-        body = render_markdown(row["result"])
+        body = render_report("diagnosis", row["result"], render_markdown(row["result"]))
     except (KeyError, TypeError):
         body = f"**诊断记录数据不完整**：{row['result'].get('one_sentence', '')}"
     return title, body

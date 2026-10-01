@@ -1,0 +1,20 @@
+{# 自选股决策仪表盘模板（Jinja2）。
+可用变量：trade_date 交易日、items 诊断完成的股票列表（code、name、action、action_label、score、one_sentence、
+battle_plan、catalysts、risks、guardrails、change）、failed 未完成列表（code、name、error）、
+counts 各档数量（键为「买入/加仓」「持有/观望」「减仓/卖出/回避」）、default 内置格式的完整原文。 #}
+## {{ trade_date }} 自选股决策仪表盘
+
+共 {{ items | length + failed | length }} 只 | 买入/加仓 {{ counts['买入/加仓'] }} 持有/观望 {{ counts['持有/观望'] }} 减仓/卖出/回避 {{ counts['减仓/卖出/回避'] }}
+
+{% for it in items | sort(attribute='score', reverse=true) %}
+- **{{ it.name or it.code }}**：{{ it.action_label }}｜评分 {{ it.score }}｜{{ it.one_sentence or '-' }}
+{% endfor %}
+{% if failed %}
+
+### 未完成
+{% for f in failed %}
+- {{ f.name or f.code }}：{{ f.error }}
+{% endfor %}
+{% endif %}
+
+> 仅供学习研究，不构成投资建议

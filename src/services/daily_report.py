@@ -16,6 +16,7 @@ from src.database.db import get_db_session
 from src.database.models import TradeOrder, TradeSignal
 from src.notifier import broadcast, enabled_channels
 from src.services.report_language import report_language, tr
+from src.services.report_templates import render_report
 from src.trading.constants import ORDER_STATUS_PENDING_CONFIRM
 
 MAX_SIGNALS = 10
@@ -61,18 +62,21 @@ class DailyReportService:
         """返回 (标题, markdown 正文)。overview 为空时现场采集市场概况。"""
         today = date.today().strftime("%Y-%m-%d")
         self._regime_date = ""
-        sections = [
-            self._market_section(self._market_overview() if overview is None else overview),
-            self._review_section(),
-            self._theme_section(),
-            self._signal_section(today),
-            self._order_section(),
-            self._account_section(),
-            self._performance_section(),
-            self._source_health_section(),
-            tr(self.lang, "> 仅供学习研究，不构成投资建议", "> For study and research only; not investment advice"),
-        ]
-        return tr(self.lang, f"A股量化日报 {today}", f"A-share Quant Daily {today}"), "\n\n".join(s for s in sections if s)
+        named = {
+            "market": self._market_section(self._market_overview() if overview is None else overview),
+            "review": self._review_section(),
+            "themes": self._theme_section(),
+            "signals": self._signal_section(today),
+            "orders": self._order_section(),
+            "account": self._account_section(),
+            "performance": self._performance_section(),
+            "source_health": self._source_health_section(),
+            "disclaimer": tr(self.lang, "> 仅供学习研究，不构成投资建议", "> For study and research only; not investment advice"),
+        }
+        title = tr(self.lang, f"A股量化日报 {today}", f"A-share Quant Daily {today}")
+        body = "\n\n".join(s for s in named.values() if s)
+        data = {"title": title, "date": today, "sections": [s for s in named.values() if s], "language": self.lang, **named}
+        return title, render_report("daily_report", data, body)
 
     def _market_overview(self) -> dict:
         try:

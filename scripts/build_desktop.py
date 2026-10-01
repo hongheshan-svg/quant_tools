@@ -71,6 +71,8 @@ def pyinstaller_args() -> list[str]:
         "--add-data", f"{web_dist}{sep}web",
         # 内置问股策略（strategy_skills.BUILTIN_DIR = Path(__file__).parent / "skills"）
         "--add-data", f"{ROOT / 'src' / 'services' / 'skills'}{sep}src/services/skills",
+        # 内置报告模板示例（report_templates.BUILTIN_DIR = Path(__file__).parent / "templates"）
+        "--add-data", f"{ROOT / 'src' / 'services' / 'templates'}{sep}src/services/templates",
     ]
     for name in HIDDEN_IMPORTS:
         args += ["--hidden-import", name]

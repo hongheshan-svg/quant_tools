@@ -1,0 +1,29 @@
+{# 个股诊断模板（Jinja2）。
+可用变量：name 名称、code 代码、action 操作建议（buy/add/hold/watch/reduce/sell/avoid）、action_label 操作建议文字、
+score 评分、confidence 信心、one_sentence 一句话结论、created_at 诊断时间、trade_date 行情日、
+guardrails 护栏列表、position_advice（no_position 空仓、has_position 持仓）、
+battle_plan（buy_price 买入、stop_loss 止损、target_price 目标、suggested_position 建议仓位）、
+theme_role（theme 题材、phase 阶段、role 角色）、market_regime 大盘、catalysts 利好列表、risks 风险列表、
+checklist 检查清单（status、item、note）、analysis 综合分析、data_quality、agents、fund_flow、chips、earnings、valuation，
+default 内置格式的完整原文（可在前后加内容）。 #}
+## {{ name }}（{{ code }}）：{{ action_label }}｜评分 {{ score }}｜信心 {{ confidence or '-' }}
+
+{% if one_sentence %}
+**{{ one_sentence }}**
+
+{% endif %}
+诊断时间 {{ created_at }}（行情 {{ trade_date }}）
+
+{% if battle_plan and (battle_plan.buy_price or battle_plan.stop_loss or battle_plan.target_price) %}
+### 作战计划
+- 买入 {{ battle_plan.buy_price or '-' }}，止损 {{ battle_plan.stop_loss or '-' }}，目标 {{ battle_plan.target_price or '-' }}
+
+{% endif %}
+{% if risks %}
+### 风险提示
+{% for r in risks %}
+- {{ r }}
+{% endfor %}
+
+{% endif %}
+> 仅供学习研究，不构成投资建议

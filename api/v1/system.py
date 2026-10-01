@@ -697,3 +697,65 @@ def _import_check(text: str) -> dict[str, Any]:
         return check_config(_deep_merge_dict(load_example(), raw), raw)
     except Exception:
         return {}
+
+
+# ---------- 报告模板 ----------
+
+class TemplateBody(BaseModel):
+    text: str
+
+
+def _template_name(name: str) -> str:
+    from src.services.report_templates import TEMPLATE_NAMES
+
+    if name not in TEMPLATE_NAMES:
+        raise not_found("报告模板不存在")
+    return name
+
+
+@router.get("/settings/templates")
+def list_report_templates() -> list[dict[str, Any]]:
+    from src.services import report_templates
+
+    return report_templates.list_templates()
+
+
+@router.get("/settings/templates/{name}")
+def get_report_template(name: str) -> dict[str, Any]:
+    from src.services import report_templates
+
+    _template_name(name)
+    custom = next(t["custom"] for t in report_templates.list_templates() if t["name"] == name)
+    return {"name": name, "label": report_templates.TEMPLATE_NAMES[name], "custom": custom, "text": report_templates.get_template(name)}
+
+
+@router.put("/settings/templates/{name}")
+def save_report_template(name: str, body: TemplateBody) -> dict[str, Any]:
+    from src.services import report_templates
+
+    _template_name(name)
+    try:
+        report_templates.save_template(name, body.text)
+    except ValueError as e:
+        raise bad_request(str(e)) from e
+    return {"ok": True, "custom": True}
+
+
+@router.delete("/settings/templates/{name}")
+def delete_report_template(name: str) -> dict[str, Any]:
+    from src.services import report_templates
+
+    _template_name(name)
+    report_templates.delete_template(name)
+    return {"ok": True, "custom": False}
+
+
+@router.post("/settings/templates/{name}/preview")
+def preview_report_template(name: str, body: TemplateBody, config: dict = Depends(get_config)) -> dict[str, Any]:
+    from src.services import report_templates
+
+    _template_name(name)
+    try:
+        return {"ok": True, "markdown": report_templates.preview(name, body.text, config=config)}
+    except ValueError as e:
+        return {"ok": False, "error": str(e), "markdown": ""}
