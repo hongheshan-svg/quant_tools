@@ -15,7 +15,7 @@ from src import settings_store
 from src import trading_calendar
 from src.database import db as db_module
 from src.database.db import get_db_session, init_db
-from src.database.models import StockDaily, StockInfo
+from src.database.models import StockDaily, StockInfo, StockScore
 from src.services.stock_search import StockSearch
 
 
@@ -149,6 +149,17 @@ def test_stock_and_market_endpoints(env, monkeypatch):
     assert client.get("/api/v1/market/review").json() is None
     assert client.get("/api/v1/tasks/nope").status_code == 404
 
+
+
+def test_dashboard_with_scores_and_daily(env):
+    """有评分且评分日有行情时，交易焦点要带涨幅；曾在会话关闭后读 ORM 属性导致首页接口 500"""
+    client, _, config = env
+    with get_db_session(config["database"]["sqlite_path"]) as s:
+        s.add(StockScore(code="600519", name="贵州茅台", score_date="2026-09-25", composite_score=80, rank=1, recommendation="buy"))
+    resp = client.get("/api/v1/dashboard")
+    assert resp.status_code == 200
+    focus = resp.json()["trade_focus"]
+    assert focus[0]["code"] == "600519" and focus[0]["change_pct"] == 1.0
 
 def test_watchlist_and_real_endpoints(env):
     client, _, _ = env

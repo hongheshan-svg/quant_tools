@@ -1007,6 +1007,8 @@ class DataQueryService:
                     daily = sd_map_orm.get(code)
                     if _is_yizi_ban(lu, daily):
                         yizi_codes.add(code)
+                # 会话退出时提交会让 ORM 对象过期，之后再读属性会报 DetachedInstanceError，在会话内取出涨幅
+                change_map = {code: r.change_pct for code, r in sd_map_orm.items()}
 
                 if yizi_codes:
                     logger.info(f"展示层一字板过滤: 剔除 {len(yizi_codes)} 只一字板")
@@ -1024,13 +1026,12 @@ class DataQueryService:
             rank_counter += 1
             sig = signal_map.get(code, {})
             lim = limit_map.get(code, {})
-            daily = sd_map_orm.get(code)
             rows.append(
                 {
                     "rank": rank_counter,
                     "code": code,
                     "name": item.get("name"),
-                    "change_pct": daily.change_pct if daily else None,
+                    "change_pct": change_map.get(code),
                     "recommendation": item.get("recommendation"),
                     "signal_type": sig.get("signal_type", ""),
                     "signal_strength": sig.get("signal_strength"),
