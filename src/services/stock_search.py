@@ -23,6 +23,14 @@ from src.database.models import StockDaily, StockInfo
 from src.utils.stock_code import bare_code, normalize_name
 
 INDEX_TTL_HOURS = 12
+# 常用简称（多数不是全称的连续子串，按名称包含匹配搜不到）；输入与简称完全一致时排在最前
+ALIASES: dict[str, tuple[str, ...]] = {
+    "000001": ("平银",), "000858": ("五粮",), "600000": ("浦发",), "600016": ("民生",), "600028": ("石化",),
+    "600030": ("中信",), "600036": ("招行",), "600519": ("茅台", "茅子"), "600900": ("长电",), "601988": ("中行",),
+    "601398": ("工行",), "601166": ("兴业",), "601318": ("平安",), "601328": ("交行",), "601939": ("建行",),
+    "601088": ("神华",), "601857": ("石油",), "300059": ("东财",), "002415": ("海康",), "601012": ("隆基",),
+    "601288": ("农行",), "002594": ("比亚",), "300750": ("宁德", "宁王"),
+}
 EMPTY_INDEX_TTL_SECONDS = 60   # 还没有个股（股票列表和行情都为空）时，1 分钟后重建，不缓存 12 小时
 MAX_INITIAL_VARIANTS = 8
 _NON_ALNUM = re.compile(r"[^0-9a-z]")
@@ -107,6 +115,8 @@ class StockSearch:
                 rank = self._rank(query, lowered, code_query, code[2:], name, initials)
             else:
                 rank = self._rank(query, lowered, code_query, code, name, initials)
+                if kind == "stock" and query in ALIASES.get(code, ()):
+                    rank = 0
             if rank is not None:
                 scored.append((rank, kind != "stock", code, name, kind))
         scored.sort()

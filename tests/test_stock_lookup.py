@@ -208,6 +208,22 @@ def test_stock_search(search):
     assert search.search("") == [] and search.search("不存在的股票") == []
 
 
+def test_stock_search_aliases(search):
+    """常用简称不是全称的连续子串（招行、宁王），按名称匹配搜不到"""
+    from src.database.models import StockInfo as SI
+    from src.services.stock_search import StockSearch
+
+    with get_db_session(search.db_path) as session:
+        session.add(SI(code="600036", name="招商银行", exchange="sh"))
+        session.add(SI(code="300750", name="宁德时代", exchange="sz"))
+        session.add(SI(code="600037", name="歌华有线", exchange="sh"))
+    StockSearch.reset()
+    assert search.search("招行")[0] == {"code": "600036", "name": "招商银行", "kind": "stock"}
+    assert search.search("宁王")[0]["code"] == "300750"
+    assert search.search("茅子")[0]["code"] == "600519"
+    assert search.search("宁德")[0]["code"] == "300750"
+
+
 def test_name_initials():
     from src.services.stock_search import name_initials
 
