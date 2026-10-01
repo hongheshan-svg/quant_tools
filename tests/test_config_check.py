@@ -215,6 +215,12 @@ def test_watchlist_max_stocks_range(val, bad):
     assert bool(find(run({"watchlist": {"max_stocks": val}}), "watchlist.max_stocks", "error")) is bad
 
 
+@pytest.mark.parametrize("val,bad", [(0, False), (30, False), (-1, True)])
+def test_zero_default_minutes_allow_zero(val, bad):
+    """示例默认为 0 的分钟项（watchlist.timeout_minutes，0 表示不限）允许 0，不允许负数。"""
+    assert bool(find(run({"watchlist": {"timeout_minutes": val}}), "watchlist.timeout_minutes", "error")) is bad
+
+
 @pytest.mark.parametrize("val,bad", [(0, True), (1, False), (65535, False), (65536, True), (-1, True)])
 def test_web_port_range(val, bad):
     assert bool(find(run({"web": {"port": val}}), "web.port", "error")) is bad

@@ -134,6 +134,11 @@ def _check_formats(config: dict, raw: dict | None, example: dict, issues: list[d
             if isinstance(value, dict):
                 walk(value, sub)
             elif (str(key).endswith("_minutes") or str(key).endswith("interval")) and _is_number(value) and value <= 0:
+                default = _get(example, sub)
+                if _is_number(default) and default == 0:  # 示例默认就是 0 的项（如 watchlist.timeout_minutes）0 表示不限
+                    if value < 0:
+                        _err(issues, sub, "不能小于 0（0 表示不限）")
+                    continue
                 _err(issues, sub, "必须大于 0")
     walk(config, ())
 
