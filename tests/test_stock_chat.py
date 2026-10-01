@@ -144,3 +144,10 @@ def test_render_chat_markdown():
     text = render_chat_markdown([turn], pending="止损放哪", status="正在查询：日线走势…")
     assert "> 查询：最新行情、技术面" in text and text.endswith("**🧑 止损放哪**\n\n*正在查询：日线走势…*")
     assert "*AI 调用失败*" in render_chat_markdown([ChatTurn(question="q", error="AI 调用失败")])
+
+
+def test_ask_explains_missing_model():
+    from src.analyzers.llm_client import NO_MODEL_HINT
+
+    chat = StockChatSession({}, llm=ScriptedLLM([RuntimeError(f"所有LLM模型均调用失败：{NO_MODEL_HINT}")]), tools=FakeTools())
+    assert chat.ask("茅台").error == NO_MODEL_HINT

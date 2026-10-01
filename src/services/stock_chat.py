@@ -17,6 +17,7 @@ from typing import Any, Callable, Iterator
 
 from loguru import logger
 
+from src.analyzers.llm_client import NO_MODEL_HINT
 from src.config_loader import load_config
 from src.services.chat_tools import TOOL_LABELS, ChatTools, tools_prompt
 from src.services.report_language import report_language
@@ -187,6 +188,11 @@ SYSTEM_PROMPT = """你是 A 股短线投研助手，通过调用工具获取数�
 {{"answer": "给用户的回答（markdown）"}}"""
 
 
+
+def _failure_text(error: Exception) -> str:
+    """模型调用失败时给用户看的说明：没配置模型时直接说去哪里填，其余情况笼统提示"""
+    return NO_MODEL_HINT if NO_MODEL_HINT in str(error) else "AI 调用失败，请检查 AI 设置或稍后重试"
+
 @dataclass
 class ChatTurn:
     question: str
@@ -233,7 +239,7 @@ class StockChatSession:
                 reply = self.llm.chat_json(user_message=self._user_message(turn, final), system_message=system)
             except Exception as e:
                 logger.error(f"AI 问股调用失败: {e}")
-                turn.error = "AI 调用失败，请检查 AI 设置或稍后重试"
+                turn.error = _failure_text(e)
                 break
             answer = str((reply or {}).get("answer") or "").strip()
             calls = [c for c in (reply or {}).get("tool_calls") or [] if isinstance(c, dict) and c.get("name")]
@@ -316,7 +322,7 @@ class StockChatSession:
                             yield {"type": "delta", "text": item}
                 except Exception as e:
                     logger.error(f"AI 问股调用失败: {e}")
-                    turn.error = "AI 调用失败，请检查 AI 设置或稍后重试"
+                    turn.error = _failure_text(e)
                     yield {"type": "error", "message": turn.error}
                     break
                 if not ok:

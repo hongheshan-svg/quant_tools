@@ -34,6 +34,8 @@ NO_JSON_MODE = ("anthropic", "ollama")                 # 不传 response_format�
 KEY_COOLDOWN_SECONDS = 600                             # Key 遇到 401/403/429 后的冷却时间
 KEY_ERROR_CODES = (401, 403, 429)
 KEY_ERROR_NAMES = ("AuthenticationError", "RateLimitError", "PermissionDeniedError")
+# 主模型和备用模型都没有可用 Key（未填写或仍是 your- 占位）时的提示
+NO_MODEL_HINT = "未配置可用的大模型 API Key，请在【设置 → AI 模型】填写主模型的 API Key"
 
 
 def parse_keys(value: Any) -> list[str]:
@@ -498,6 +500,8 @@ class LLMClient:
 
         if self.last_error:
             raise RuntimeError(f"所有LLM模型均调用失败：{self.last_error.message}")
+        if self.primary_client is None and self.backup_client is None:
+            raise RuntimeError(f"所有LLM模型均调用失败：{NO_MODEL_HINT}")
         raise RuntimeError("所有LLM模型均调用失败")
 
     def chat_vision(
@@ -707,6 +711,8 @@ class LLMClient:
                         break
                 if next_route:
                     break
+        if not last_error and self.primary_client is None and self.backup_client is None:
+            last_error = NO_MODEL_HINT
         raise RuntimeError(f"所有LLM模型均流式调用失败{('：' + last_error) if last_error else ''}")
 
     def _record_stream(self, route: LLMRoute, cfg: dict, feature: str, started: float, usage: dict, success: bool) -> None:

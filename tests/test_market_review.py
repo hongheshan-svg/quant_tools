@@ -132,6 +132,10 @@ def test_review_errors(config, monkeypatch):
     result = MarketReviewService(config, llm=FakeLLM(error=RuntimeError("所有LLM模型均调用失败"))).generate()
     assert "AI 未返回有效结果" in result["error"]
     assert render_markdown(result).startswith("**复盘失败**")
+    # 没配置模型时直接说明去哪里填
+    from src.analyzers.llm_client import NO_MODEL_HINT
+    result = MarketReviewService(config, llm=FakeLLM(error=RuntimeError(f"所有LLM模型均调用失败：{NO_MODEL_HINT}"))).generate()
+    assert result["error"] == NO_MODEL_HINT
     assert MarketReviewService(config).get() is None
 
 

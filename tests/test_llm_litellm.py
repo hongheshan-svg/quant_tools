@@ -123,3 +123,15 @@ def test_caller_feature_mapping():
     exec("from src.analyzers.llm_usage import caller_feature\ndef f():\n    return caller_feature()", module.__dict__)
     assert module.f() == "AI 问股"
     assert caller_feature() == "其他"
+
+
+def test_no_usable_model_explains_missing_key(tmp_path, fake):
+    """主模型和备用模型都只有 your- 占位 Key 时，报错要说明去哪里填，而不是笼统的「均调用失败」"""
+    client = _client(tmp_path, cache_enabled=False,
+                     primary={"provider": "deepseek", "api_key": "your-deepseek-api-key-here", "model": "deepseek-chat"},
+                     backup={"provider": "openai", "api_key": "your-openai-api-key-here", "model": "gpt-4o"})
+    with pytest.raises(RuntimeError, match="所有LLM模型均调用失败：未配置可用的大模型 API Key"):
+        client.chat("x")
+    with pytest.raises(RuntimeError, match="未配置可用的大模型 API Key"):
+        list(client.chat_stream("x"))
+    assert fake.calls == []

@@ -15,6 +15,7 @@ from typing import Any
 
 from loguru import logger
 
+from src.analyzers.llm_client import NO_MODEL_HINT
 from src.config_loader import load_config
 from src.database.db import get_db_session
 from src.database.models import MarketReview
@@ -86,6 +87,8 @@ class MarketReviewService:
             raw = self.llm.chat_json(user_message=f"复盘日期：{trade_date}\n\n{facts.text()}", system_message=SYSTEM_PROMPT + language_directive(lang, REVIEW_ENUMS))
         except Exception as e:
             logger.error(f"大盘复盘 LLM 调用失败: {e}")
+            if NO_MODEL_HINT in str(e):
+                return {"trade_date": trade_date, "error": NO_MODEL_HINT}
             raw = {}
         if not raw:
             return {"trade_date": trade_date, "error": "AI 未返回有效结果，请检查 AI 设置或稍后重试"}
