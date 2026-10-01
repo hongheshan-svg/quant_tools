@@ -233,7 +233,11 @@ def build_route(cfg: dict) -> "LLMRoute | None":
     base_url = str(cfg.get("base_url") or "").strip() or None
     if provider in NATIVE_PROVIDERS:
         return LLMRoute(provider, model, f"{provider}/{model}", api_key, base_url, tuple(keys))
-    return LLMRoute(provider, model, f"openai/{model}", api_key, base_url or "https://api.deepseek.com", tuple(keys))
+    # 没填 Base URL 时用该平台预设的地址（只用环境变量配置平台和 Key 时常见），未知平台才回退 DeepSeek
+    from src.analyzers.llm_platforms import AI_PLATFORMS
+
+    preset = (AI_PLATFORMS.get(provider) or {}).get("base_url") or "https://api.deepseek.com"
+    return LLMRoute(provider, model, f"openai/{model}", api_key, base_url or preset, tuple(keys))
 
 
 def list_models(role_cfg: dict, timeout: float = 10) -> list[str]:

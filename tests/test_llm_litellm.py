@@ -135,3 +135,15 @@ def test_no_usable_model_explains_missing_key(tmp_path, fake):
     with pytest.raises(RuntimeError, match="未配置可用的大模型 API Key"):
         list(client.chat_stream("x"))
     assert fake.calls == []
+
+
+def test_build_route_uses_platform_preset_base_url():
+    """没填 Base URL 时用平台预设地址（原来一律回退到 DeepSeek，只用环境变量配置时会请求错平台）"""
+    from src.analyzers.llm_platforms import AI_PLATFORMS
+
+    for provider in ("qwen", "aihubmix", "anspire", "minimax", "openrouter", "stepfun", "xai"):
+        route = build_route({"provider": provider, "api_key": "k", "model": "m"})
+        assert (route.target, route.api_base) == ("openai/m", AI_PLATFORMS[provider]["base_url"])
+    assert build_route({"provider": "openrouter", "api_key": "k", "model": "m", "base_url": "https://proxy/v1"}).api_base == "https://proxy/v1"
+    assert build_route({"provider": "unknown-x", "api_key": "k", "model": "m"}).api_base == "https://api.deepseek.com"
+    assert all(p["base_url"].startswith("https://") for k, p in AI_PLATFORMS.items() if k not in ("anthropic", "gemini", "ollama", "custom"))
