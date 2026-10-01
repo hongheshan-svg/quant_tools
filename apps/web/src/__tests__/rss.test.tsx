@@ -92,4 +92,29 @@ describe('NewsPage RSS items', () => {
     expect((await screen.findAllByText(/RSS·路透中文/)).length).toBeGreaterThan(0)
     expect(screen.getByText(/央行降准/)).toBeInTheDocument()
   })
+
+  it('renders tags and highlights important items', async () => {
+    stub([], [
+      { time: '18:30', source: '华尔街见闻', level: '头部财报', title: '[华尔街见闻] 台积电扩产', url: '', tags: ['美股', '头部企业'], important: true },
+      { time: '18:20', source: '财联社', level: '普通快讯', title: '[财联社] 普通快讯', url: '', tags: [], important: false },
+    ])
+    render(<MemoryRouter initialEntries={['/news']}><AppRoutes authEnabled={false} /></MemoryRouter>)
+    const title = await screen.findByText(/台积电扩产/)
+    expect(title).toHaveClass('text-up')
+    expect(screen.getByText('头部企业')).toBeInTheDocument()
+    expect(screen.getByText(/普通快讯/)).not.toHaveClass('text-up')
+  })
+})
+
+describe('page crash', () => {
+  it('keeps the menu usable when a page throws', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    // 旧接口把 tags 返回成字符串，曾让整个界面白屏、菜单点不动
+    stub([], [{ time: '18:30', source: '华尔街见闻', level: '', title: '坏数据', url: '', tags: '美股 | 头部企业' }])
+    render(<MemoryRouter initialEntries={['/news']}><AppRoutes authEnabled={false} /></MemoryRouter>)
+    expect(await screen.findByText('页面出错')).toBeInTheDocument()
+    fireEvent.click(screen.getAllByRole('link', { name: /设置/ })[0])
+    expect(await screen.findByRole('tab', { name: '资讯源' })).toBeInTheDocument()
+    expect(screen.queryByText('页面出错')).not.toBeInTheDocument()
+  })
 })

@@ -4,11 +4,12 @@ import {
   MessagesSquare, Microscope, Moon, Newspaper, Settings, Star, Sun, Wallet,
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import { NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { api } from '@/api/endpoints'
 import { useLang, useT } from '@/i18n'
 import { useThemeStore } from '@/stores/theme'
 import { cn } from '@/utils/cn'
+import { ErrorBoundary } from './ErrorBoundary'
 import { StockSearch } from './StockSearch'
 import { TaskCenter } from './TaskCenter'
 
@@ -56,6 +57,7 @@ export function Layout({ authEnabled }: { authEnabled: boolean }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const { theme, toggle } = useThemeStore()
   const navigate = useNavigate()
+  const location = useLocation()
   const t = useT()
   const [lang, setLang] = useLang()
 
@@ -131,7 +133,9 @@ export function Layout({ authEnabled }: { authEnabled: boolean }) {
           </div>
         </header>
         <main className="min-w-0 flex-1 overflow-y-auto p-3 md:p-5">
-          <Outlet />
+          <ErrorBoundary key={location.pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
     </div>
