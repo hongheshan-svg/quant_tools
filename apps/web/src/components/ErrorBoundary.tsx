@@ -2,12 +2,17 @@ import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { useT } from '@/i18n'
 import { Button, Card } from './ui'
 
-// 页面渲染出错时只替换内容区，侧栏和顶栏照常可用；Layout 按路径设置 key，切换页面即重置
-export class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+// 页面渲染出错时只替换内容区，侧栏和顶栏照常可用；resetKey（当前路径）变化时清除错误。
+// 不用 key 重置：key 变化会重新挂载页面，/chat → /chat/:id 这类同页跳转会丢掉进行中的状态
+export class ErrorBoundary extends Component<{ children: ReactNode; resetKey?: string }, { error: Error | null }> {
   state = { error: null as Error | null }
 
   static getDerivedStateFromError(error: Error) {
     return { error }
+  }
+
+  componentDidUpdate(prev: { resetKey?: string }) {
+    if (this.state.error && prev.resetKey !== this.props.resetKey) this.setState({ error: null })
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {

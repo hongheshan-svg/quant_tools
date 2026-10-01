@@ -133,7 +133,7 @@ export function Layout({ authEnabled }: { authEnabled: boolean }) {
           </div>
         </header>
         <main className="min-w-0 flex-1 overflow-y-auto p-3 md:p-5">
-          <ErrorBoundary key={location.pathname}>
+          <ErrorBoundary resetKey={location.pathname}>
             <Outlet />
           </ErrorBoundary>
         </main>
