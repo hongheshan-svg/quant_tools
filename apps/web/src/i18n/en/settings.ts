@@ -55,6 +55,10 @@ export default {
   '百度文心 (ERNIE)': 'Baidu ERNIE',
   '豆包 (Doubao)': 'Doubao',
   '硅基流动 (SiliconFlow)': 'SiliconFlow',
+  'AIHubMix（聚合平台）': 'AIHubMix (aggregator)',
+  'Anspire Open（模型 + 搜索）': 'Anspire Open (models + search)',
+  'OpenRouter（聚合平台）': 'OpenRouter (aggregator)',
+  '阶跃星辰 (StepFun)': 'StepFun',
   'Ollama（本地模型，无需 API Key）': 'Ollama (local models, no API Key needed)',
   '自定义 (OpenAI 兼容)': 'Custom (OpenAI-compatible)',
   // 聊天机器人

@@ -73,6 +73,42 @@ AI_PLATFORMS: dict[str, dict] = {
         "models": ["qwen2.5:14b", "qwen2.5:7b", "llama3.1:8b"],
         "default_model": "qwen2.5:14b",
     },
+    "aihubmix": {
+        "name": "AIHubMix（聚合平台）",
+        "base_url": "https://aihubmix.com/v1",
+        "models": ["gpt-5.5", "claude-sonnet-4-6", "gemini-3.1-pro-preview"],
+        "default_model": "gpt-5.5",
+    },
+    "anspire": {
+        "name": "Anspire Open（模型 + 搜索）",
+        "base_url": "https://open-gateway.anspire.cn/v6",
+        "models": ["Doubao-Seed-2.0-lite", "Doubao-Seed-2.0-pro", "qwen3.5-flash", "MiniMax-M2.7"],
+        "default_model": "Doubao-Seed-2.0-lite",
+    },
+    "minimax": {
+        "name": "MiniMax",
+        "base_url": "https://api.minimax.io/v1",
+        "models": ["MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.7-highspeed"],
+        "default_model": "MiniMax-M2.7",
+    },
+    "openrouter": {
+        "name": "OpenRouter（聚合平台）",
+        "base_url": "https://openrouter.ai/api/v1",
+        "models": ["~anthropic/claude-sonnet-latest", "~openai/gpt-latest"],
+        "default_model": "~anthropic/claude-sonnet-latest",
+    },
+    "stepfun": {
+        "name": "阶跃星辰 (StepFun)",
+        "base_url": "https://api.stepfun.com/v1",
+        "models": ["step-2-16k", "step-1-32k", "step-1-flash"],
+        "default_model": "step-2-16k",
+    },
+    "xai": {
+        "name": "xAI (Grok)",
+        "base_url": "https://api.x.ai/v1",
+        "models": ["grok-4", "grok-3-mini"],
+        "default_model": "grok-4",
+    },
     "custom": {
         "name": "自定义 (OpenAI 兼容)",
         "base_url": "",
