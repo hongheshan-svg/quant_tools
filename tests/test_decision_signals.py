@@ -387,3 +387,23 @@ def test_scheduler_registration():
     assert "signal_lifecycle" in {j.id for j in sched.get_jobs()}
     assert any(fn.__name__ == JOBS["signal_lifecycle"][1].__name__ for fn in ONCE_STEPS["learn"][1]) or \
         len(ONCE_STEPS["learn"][1]) >= 2
+
+
+# ---------- 手动关闭 / 作废 ----------
+
+def test_manual_close_and_invalidate(svc, db_path):
+    sid = svc.record_from_diagnosis(_result(), 1)
+    sid = sid["id"] if isinstance(sid, dict) else sid
+    assert svc.set_status(sid, "expired") == (False, "只能改为：已关闭、已失效")
+    assert svc.set_status(9999, "closed") == (False, "决策信号不存在")
+    assert svc.set_status(sid, "closed", "  已卖出  ") == (True, "")
+    row = svc.get(sid)
+    assert (row["status"], row["status_label"], row["status_reason"]) == ("closed", "已关闭", "手动关闭：已卖出")
+    ok, err = svc.set_status(sid, "invalidated")
+    assert not ok and "当前状态为「已关闭」" in err                  # 已结束的不能再改
+    assert svc.evaluate()["evaluated"] == 0                          # 手动结束的不再评估
+
+    other = svc.record_from_diagnosis(_result(code="601919"), 2)
+    other = other["id"] if isinstance(other, dict) else other
+    assert svc.set_status(other, "invalidated") == (True, "")
+    assert svc.get(other)["status_reason"] == "手动作废"

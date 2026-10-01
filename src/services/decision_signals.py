@@ -3,7 +3,7 @@
 
 个股 / ETF / 指数诊断给出买入、加仓、减仓、卖出、回避时生成一条决策信号，带观察期（有效期）、失效条件和价格计划：
 - 状态：active（观察中）→ invalidated（出现相反信号）/ replaced（被同方向新信号替代）/ expired（观察期结束）/
-  hit_target（多头触及目标价）/ hit_stop（多头触及止损价）
+  hit_target（多头触及目标价）/ hit_stop（多头触及止损价）；用户也可以手动关闭（closed）或作废（invalidated）观察中的信号
 - 后验评估 evaluate()：以诊断行情日收盘价为基准，统计之后 1/3/5 日收益和观察期内最大不利/有利波动
 - 复盘 review()：某只标的历史信号的命中率和偏差，写进下次诊断的提示词
 
@@ -39,8 +39,9 @@ FEEDBACKS = ("useful", "not_useful")
 TERMINAL_STATUSES = ("expired", "hit_target", "hit_stop")
 STATUS_LABELS = {
     "active": "观察中", "invalidated": "已失效", "replaced": "已替代", "expired": "已到期",
-    "hit_target": "触及目标", "hit_stop": "触及止损",
+    "hit_target": "触及目标", "hit_stop": "触及止损", "closed": "已关闭",
 }
+MANUAL_STATUSES = {"closed": "手动关闭", "invalidated": "手动作废"}   # 用户可以把观察中的信号改成这些状态
 
 
 def _round(value: float | None, digits: int = 2) -> float | None:
@@ -378,6 +379,21 @@ class DecisionSignalService:
             item = self._to_dict(row)
         item["hit"] = self.is_hit(item)
         return item
+
+    def set_status(self, signal_id: int, status: str, reason: str = "") -> tuple[bool, str]:
+        """手动结束观察中的信号（关闭或作废），之后不再评估；返回 (成功, 错误说明)。已结束的信号不能改回观察中。"""
+        if status not in MANUAL_STATUSES:
+            return False, f"只能改为：{'、'.join(STATUS_LABELS[s] for s in MANUAL_STATUSES)}"
+        with get_db_session(self.db_path) as session:
+            row = session.get(DecisionSignal, signal_id)
+            if not row:
+                return False, "决策信号不存在"
+            if row.status != "active":
+                return False, f"只有观察中的信号可以手动结束，当前状态为「{STATUS_LABELS.get(row.status, row.status)}」"
+            note = (reason or "").strip()[:200]
+            row.status = status
+            row.status_reason = MANUAL_STATUSES[status] + (f"：{note}" if note else "")
+        return True, ""
 
     def set_feedback(self, signal_id: int, feedback: str | None, note: str = "") -> bool:
         """记录用户反馈（useful / not_useful / None 清除）；信号不存在或反馈非法返回 False。"""

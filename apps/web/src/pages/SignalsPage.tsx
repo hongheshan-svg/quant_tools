@@ -6,7 +6,7 @@ import { api } from '@/api/endpoints'
 import type { DecisionSignal, SkillPerformanceRow } from '@/api/types'
 import { DataTable, type Column } from '@/components/DataTable'
 import { StockSearch } from '@/components/StockSearch'
-import { Badge, Button, Card, ErrorBox, Modal, PageHeader, Pct, Select, Spinner, Stat, Tabs, Textarea } from '@/components/ui'
+import { Badge, Button, Card, ErrorBox, Input, Modal, PageHeader, Pct, Select, Spinner, Stat, Tabs, Textarea } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
 import { useT } from '@/i18n'
 import { useTask } from '@/hooks/useTask'
@@ -19,10 +19,10 @@ const PROFILE_FILTERS: Record<string, string> = { conservative: '保守', balanc
 const PAGE_SIZE = 50
 const ACTIONS: Record<string, string> = { buy: '买入', add: '加仓', reduce: '减仓', sell: '卖出', avoid: '回避' }
 const STATUSES: Record<string, string> = {
-  active: '有效', invalidated: '已失效', replaced: '被替代', expired: '已过期', hit_target: '止盈', hit_stop: '止损',
+  active: '有效', invalidated: '已失效', replaced: '被替代', expired: '已过期', hit_target: '止盈', hit_stop: '止损', closed: '已关闭',
 }
 const STATUS_TONE: Record<string, 'default' | 'up' | 'down' | 'warn' | 'accent'> = {
-  active: 'accent', invalidated: 'warn', replaced: 'default', expired: 'default', hit_target: 'up', hit_stop: 'down',
+  active: 'accent', invalidated: 'warn', replaced: 'default', expired: 'default', hit_target: 'up', hit_stop: 'down', closed: 'default',
 }
 const DAYS = [{ v: 7, t: '近 7 天' }, { v: 30, t: '近 30 天' }, { v: 90, t: '近 90 天' }, { v: 0, t: '不限' }]
 
@@ -163,7 +163,22 @@ function DetailModal({ signal, onClose, onSaved }: { signal: DecisionSignal; onC
   const [feedback, setFeedback] = useState<string>(signal.feedback ?? '')
   const [note, setNote] = useState(signal.feedback_note ?? '')
   const [saving, setSaving] = useState(false)
+  const [reason, setReason] = useState('')
+  const [ending, setEnding] = useState('')
 
+  const end = async (status: 'closed' | 'invalidated') => {
+    setEnding(status)
+    try {
+      await api.setSignalStatus(signal.id, status, reason)
+      toast.success(status === 'closed' ? t('已关闭信号') : t('已作废信号'))
+      onSaved()
+      onClose()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : t('保存失败'))
+    } finally {
+      setEnding('')
+    }
+  }
   const save = async (value: 'useful' | 'not_useful') => {
     setSaving(true)
     try {
@@ -203,6 +218,16 @@ function DetailModal({ signal, onClose, onSaved }: { signal: DecisionSignal; onC
         <Stat label={t('最大不利')} value={<span className="num">{fmtPct(signal.max_adverse_pct, 2, false)}</span>} />
         <Stat label={t('最大有利')} value={<span className="num">{fmtPct(signal.max_favorable_pct, 2, false)}</span>} sub={t('结果：{r}', { r: hitText })} />
       </div>
+      {signal.status === 'active' && (
+        <div className="mt-4">
+          <div className="mb-1 text-sm text-muted">{t('手动结束这条信号（之后不再评估）')}</div>
+          <div className="flex flex-wrap gap-2">
+            <Input className="min-w-0 flex-1" placeholder={t('原因（可选），如：已卖出、逻辑变了')} value={reason} onChange={(e) => setReason(e.target.value)} />
+            <Button loading={ending === 'closed'} onClick={() => void end('closed')}>{t('关闭信号')}</Button>
+            <Button variant="danger" loading={ending === 'invalidated'} onClick={() => void end('invalidated')}>{t('作废信号')}</Button>
+          </div>
+        </div>
+      )}
       <div className="mt-4">
         <div className="mb-1 text-sm text-muted">{t('这条信号对你有帮助吗？')}</div>
         <Textarea rows={2} placeholder={t('备注（可选）')} value={note} onChange={(e) => setNote(e.target.value)} />

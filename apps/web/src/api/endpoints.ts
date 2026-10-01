@@ -74,6 +74,8 @@ export const api = {
   saveDiagnosisSettings: (diagnosis: T.DiagnosisSettings) => http.put<{ diagnosis: T.DiagnosisSettings }>('/settings/diagnosis', { diagnosis }),
   signalReview: (code: string) => http.get<T.SignalReview>(`/signals/review/${code}`),
   signal: (id: number) => http.get<T.DecisionSignal>(`/signals/${id}`),
+  setSignalStatus: (id: number, status: 'closed' | 'invalidated', reason = '') =>
+    http.put<T.DecisionSignal>(`/signals/${id}/status`, { status, reason }),
   signalFeedback: (id: number, feedback: 'useful' | 'not_useful' | null, note = '') =>
     http.put<T.DecisionSignal>(`/signals/${id}/feedback`, { feedback, note }),
   evaluateSignals: () => http.post<T.Task<Record<string, number>>>('/signals/evaluate'),

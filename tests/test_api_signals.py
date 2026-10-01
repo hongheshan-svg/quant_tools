@@ -90,3 +90,12 @@ def test_evaluate_task(seeded):
     done = _wait(client, task)
     assert done["status"] == "done"
     assert "evaluated" in done["result"]
+
+
+def test_set_status_endpoint(seeded):
+    client, _, ids = seeded
+    r = client.put(f"/api/v1/signals/{ids[0]}/status", json={"status": "closed", "reason": "已卖出"})
+    assert r.status_code == 200 and r.json()["status"] == "closed" and r.json()["status_reason"] == "手动关闭：已卖出"
+    assert client.put(f"/api/v1/signals/{ids[1]}/status", json={"status": "closed"}).status_code == 400   # 已到期
+    assert client.put(f"/api/v1/signals/{ids[0]}/status", json={"status": "active"}).status_code == 400
+    assert client.put("/api/v1/signals/99999/status", json={"status": "closed"}).status_code == 404

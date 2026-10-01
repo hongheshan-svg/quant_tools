@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from api.deps import get_config, get_tasks, not_found
@@ -57,6 +57,23 @@ def get_signal(signal_id: int, config: dict[str, Any] = Depends(get_config)):
     if not item:
         raise not_found("决策信号不存在")
     return item
+
+
+class StatusBody(BaseModel):
+    status: str
+    reason: str = ""
+
+
+@router.put("/{signal_id}/status")
+def set_status(signal_id: int, body: StatusBody, config: dict[str, Any] = Depends(get_config)):
+    """手动关闭（closed）或作废（invalidated）观察中的信号。"""
+    service = DecisionSignalService(config)
+    ok, error = service.set_status(signal_id, body.status, body.reason)
+    if not ok:
+        if error == "决策信号不存在":
+            raise not_found(error)
+        raise HTTPException(status_code=400, detail=error)
+    return service.get(signal_id)
 
 
 @router.put("/{signal_id}/feedback")

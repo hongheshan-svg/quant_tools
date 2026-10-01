@@ -20,6 +20,7 @@ function stub(calls: { url: string; method: string; body?: string }[]) {
     let body: unknown = {}
     if (/\/signals\/stats/.test(url)) body = stats
     else if (/\/signals\/7\/feedback/.test(url)) body = { ok: true }
+    else if (/\/signals\/7\/status/.test(url)) body = { ...item, status: 'closed', status_reason: '手动关闭：已卖出' }
     else if (/\/signals\/7/.test(url)) body = item
     else if (/\/signals\/review\//.test(url)) body = { samples: 0, hits: 0, hit_rate: 0, avg_ret: 0, avg_adverse: 0, bias: '', text: '样本不足' }
     else if (/\/signals/.test(url)) body = list
@@ -56,5 +57,17 @@ describe('决策信号页', () => {
     await waitFor(() => expect(calls.some((c) => c.method === 'PUT' && /\/signals\/7\/feedback/.test(c.url))).toBe(true))
     const put = calls.find((c) => c.method === 'PUT')!
     expect(put.body).toContain('useful')
+  })
+
+  it('观察中的信号可以手动关闭', async () => {
+    const calls: { url: string; method: string; body?: string }[] = []
+    stub(calls)
+    renderAt('/signals')
+    fireEvent.click(await screen.findByText('贵州茅台'))
+    fireEvent.change(await screen.findByPlaceholderText(/原因（可选）/), { target: { value: '已卖出' } })
+    fireEvent.click(screen.getByRole('button', { name: '关闭信号' }))
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT' && /\/signals\/7\/status/.test(c.url))).toBe(true))
+    const put = calls.find((c) => /\/status/.test(c.url))!
+    expect(JSON.parse(put.body!)).toEqual({ status: 'closed', reason: '已卖出' })
   })
 })
