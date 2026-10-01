@@ -94,9 +94,10 @@ test('package.json 声明 electron-updater 与 GitHub 发布源', () => {
   assert.ok(pub.some((p) => p.provider === 'github' && p.owner === 'hongheshan-svg' && p.repo === 'quant_tools'))
 })
 
-test('发布工作流上传 yml 与 blockmap', () => {
-  const file = path.join(__dirname, '..', '..', '..', '.github', 'workflows', 'desktop-release.yml')
+test('发布工作流上传三个平台的安装包、latest*.yml 与 blockmap', () => {
+  const file = path.join(__dirname, '..', '..', '..', '.github', 'workflows', 'release.yml')
   const text = fs.readFileSync(file, 'utf8')
-  assert.match(text, /\*\.yml/)
+  assert.match(text, /latest\*\.yml/)
   assert.match(text, /\*\.blockmap/)
+  for (const ext of ['exe', 'dmg', 'AppImage']) assert.match(text, new RegExp(`\\*\\.${ext}`))
 })
