@@ -284,7 +284,36 @@ export interface DiagnosisRecord {
   run_log: RunLog | null
 }
 
+export interface PhaseDecision {
+  phase?: string
+  phase_label?: string
+  trading_window?: string
+  immediate_action?: string
+  watch_conditions?: string[]
+  next_check_time?: string
+  data_limitations?: string[]
+}
+
+export interface SignalAttribution {
+  technical?: number | null
+  news?: number | null
+  fundamentals?: number | null
+  market?: number | null
+  strongest_bullish?: string
+  strongest_bearish?: string
+}
+
+export interface MarketPhase {
+  phase?: string
+  label?: string
+  now?: string
+  effective_daily_bar_date?: string | null
+}
+
 export interface Diagnosis {
+  phase_decision?: PhaseDecision
+  signal_attribution?: SignalAttribution
+  market_phase?: MarketPhase
   code: string
   name: string
   trade_date: string

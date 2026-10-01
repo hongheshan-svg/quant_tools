@@ -19,6 +19,7 @@ from loguru import logger
 
 from src.database.db import get_db_session
 from src.database.models import FinanceNews, FundDaily, StockDiagnosis
+from src.services import market_phase
 from src.services.run_log import RunLog
 from src.services.stock_diagnosis import (
     CACHE_MINUTES,
@@ -47,6 +48,7 @@ THEME_KEYWORDS = (
 FUND_SYSTEM_PROMPT = """你是一位 A 股 ETF / 指数分析师，负责对单个 ETF 或宽基/行业指数生成【决策仪表盘】。
 
 分析原则：
+- 先看【市场阶段】：盘前/非交易日给开盘计划，盘中给当下可执行动作和观察条件，盘后按完整交易日复盘
 - 先看大盘环境，再看该标的自身的趋势、均线、MACD、RSI 和量能，最后看所属行业/题材是否处于市场主线
 - ETF 和指数没有涨跌停、没有个股财报和公告风险，重点是趋势、位置和资金/量能配合；指数本身不能直接买入，
   只能理解为对应 ETF 或指数基金的方向判断
@@ -70,6 +72,8 @@ FUND_SYSTEM_PROMPT = """你是一位 A 股 ETF / 指数分析师，负责对单�
   "checklist": [{"item": "检查项（如趋势/均线/量能/大盘环境/主线/消息面）", "status": "pass/warn/fail", "note": "说明"}],
   "invalidation": "失效条件：出现什么情况说明判断错了（如跌破某价、放量滞涨，40字以内）",
   "horizon_days": 观察期，1到20的整数（交易日数，通常 3-5）,
+  "phase_decision": {"trading_window": "当前阶段的操作窗口（如开盘后 30 分钟观察承接）", "immediate_action": "现在立刻做什么（盘前/非交易日不能是立即买卖）", "watch_conditions": ["触发条件1", "触发条件2"], "next_check_time": "下次检查时间（如 10:00、下一交易日 9:25）"},
+  "signal_attribution": {"technical": 技术面贡献0-100, "news": 资讯情绪贡献0-100, "fundamentals": 基本面贡献0-100, "market": 大盘环境贡献0-100, "strongest_bullish": "最强看多信号", "strongest_bearish": "最强看空信号"},
   "analysis": "综合分析（100字以内）"
 }"""
 
@@ -227,8 +231,10 @@ class FundDiagnosisService(StockDiagnosisService):
             "bar_count": len(closes),
         }
         theme_text = f"对应主线：{theme.brief()}" if theme else "无对应主线"
+        phase_ctx = market_phase.current_phase()
         sections = [
             f"标的：{name}({code}) {KIND_LABELS[kind]}",
+            market_phase.phase_prompt_section(phase_ctx, (quote or {}).get("trade_date", "")),
             "【行情】" + (f"{quote['trade_date']} 收盘 {quote['close']}（{quote['change_pct']:+.2f}%）"
                         + (f"，成交约 {quote['amount_yi']} 亿" if quote.get("amount_yi") else "") if quote else "暂无"),
             "【近期走势】" + ("；".join(recent) if recent else "暂无"),
@@ -247,6 +253,7 @@ class FundDiagnosisService(StockDiagnosisService):
             "position": None, "real_position": None, "text": "\n".join(sections), "data_quality": data_quality,
             "flow_text": "", "flow_ratio": None, "chip": None, "earnings_text": "", "earnings_risk": "",
             "risk_notices": [], "valuation_text": "",
+            "phase": phase_ctx,
         }
 
     @staticmethod

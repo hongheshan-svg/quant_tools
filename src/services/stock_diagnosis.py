@@ -41,6 +41,8 @@ from src.database.models import (
     StockDaily,
     StockDiagnosis,
 )
+from src.analyzers.attribution import normalize_attribution
+from src.services import market_phase
 from src.services.run_log import RunLog
 from src.trading.price_plan import sanitize_price_plan
 from src.utils.stock_code import bare_code, board_of, code_candidates, name_variants, normalize_name
@@ -68,6 +70,7 @@ DATA_QUALITY_WEIGHTS = {"行情": 20, "日线": 15, "技术面": 10, "资金流"
 SYSTEM_PROMPT = """你是一位专注 A 股短线（涨停板、连板接力、主线龙头）的交易分析师，负责对单只股票生成【决策仪表盘】。
 
 分析原则：
+- 先看【市场阶段】：盘前/非交易日给开盘计划，盘中给当下可执行动作和观察条件，盘后按完整交易日复盘
 - 先看大盘环境和情绪周期，再看个股所在主线的阶段与地位，最后看个股自身的涨停质量与技术面
 - 主线龙头、封板早、封单大、未炸板的强于跟风股；降温/退潮板块的跟风股以回避为主
 - 高位连板和偏离 5 日线过远要提示风险，但涨停股本身远离均线不等于不能参与
@@ -90,6 +93,8 @@ SYSTEM_PROMPT = """你是一位专注 A 股短线（涨停板、连板接力、�
   "checklist": [{"item": "检查项（如主线地位/封板质量/技术形态/大盘环境/消息面）", "status": "pass/warn/fail", "note": "说明"}],
   "invalidation": "失效条件：出现什么情况说明判断错了（如跌破某价、放量滞涨，40字以内）",
   "horizon_days": 观察期，1到20的整数（交易日数，通常 3-5）,
+  "phase_decision": {"trading_window": "当前阶段的操作窗口（如开盘后 30 分钟观察承接）", "immediate_action": "现在立刻做什么（盘前/非交易日不能是立即买卖）", "watch_conditions": ["触发条件1", "触发条件2"], "next_check_time": "下次检查时间（如 10:00、下一交易日 9:25）"},
+  "signal_attribution": {"technical": 技术面贡献0-100, "news": 资讯情绪贡献0-100, "fundamentals": 基本面贡献0-100, "market": 大盘环境贡献0-100, "strongest_bullish": "最强看多信号", "strongest_bearish": "最强看空信号"},
   "analysis": "综合分析（100字以内）"
 }"""
 
@@ -462,8 +467,10 @@ class StockDiagnosisService:
             "bar_count": bar_count,
         }
 
+        phase_ctx = market_phase.current_phase()
         sections = [
             f"股票：{name}({code}) {board_of(code)}",
+            market_phase.phase_prompt_section(phase_ctx, (quote or {}).get("trade_date", "")),
             "【行情】" + self._quote_text(quote),
             "【近期走势】" + ("；".join(recent) if recent else "暂无"),
             f"【技术面】{tech.brief() or '数据不足'}" + (f"；利好信号：{'、'.join(tech.reasons)}" if tech.reasons else ""),
@@ -493,6 +500,7 @@ class StockDiagnosisService:
             "earnings_text": describe_earnings(earnings), "earnings_risk": earnings_risk(earnings),
             "risk_notices": risk_notices,
             "valuation_text": valuation_text(quote.get("pe"), quote.get("pb")) if quote else "",
+            "phase": phase_ctx,
         }
 
     @staticmethod
@@ -589,6 +597,13 @@ class StockDiagnosisService:
                 else:
                     guardrails.append(note + "，风险优先，保留减仓/回避建议")
 
+        phase_ctx = context.get("phase")
+        phase_decision: dict = {}
+        if phase_ctx:
+            action, confidence, phase_decision, phase_notes = market_phase.phase_guardrails(
+                action, confidence, raw.get("phase_decision"), phase_ctx, (context["quote"] or {}).get("trade_date", ""))
+            guardrails.extend(phase_notes)
+
         plan_raw = raw.get("battle_plan") or {}
         plan = sanitize_price_plan(
             context["code"], context["name"], (context["quote"] or {}).get("close"),
@@ -630,6 +645,9 @@ class StockDiagnosisService:
             "calibration": self._calibration_line(context.get("calibration") or {}, context["code"]),
             "invalidation": str(raw.get("invalidation") or "")[:MAX_INVALIDATION_LEN].strip(),
             "horizon_days": _horizon(raw.get("horizon_days")),
+            "phase_decision": phase_decision,
+            "signal_attribution": normalize_attribution(raw.get("signal_attribution")),
+            "market_phase": {k: phase_ctx.get(k) for k in ("phase", "label", "now", "effective_daily_bar_date")} if phase_ctx else {},
         }
 
     def _save(self, result: dict[str, Any]) -> int | None:
@@ -643,6 +661,42 @@ class StockDiagnosisService:
             session.add(row)
             session.flush()
             return row.id
+
+
+ATTRIBUTION_LABELS = (("technical", "技术面"), ("news", "资讯"), ("fundamentals", "基本面"), ("market", "大盘"))
+
+
+def _phase_markdown(result: dict[str, Any]) -> list[str]:
+    """阶段决策和信号归因两节，字段为空时不输出。"""
+    lines: list[str] = []
+    pd = result.get("phase_decision") or {}
+    body = []
+    if pd.get("phase_label"):
+        body.append(f"- 阶段：{pd['phase_label']}")
+    for key, label in (("trading_window", "操作窗口"), ("immediate_action", "立即行动")):
+        if pd.get(key):
+            body.append(f"- {label}：{pd[key]}")
+    if pd.get("watch_conditions"):
+        body.append("- 观察条件：")
+        body += [f"  - {c}" for c in pd["watch_conditions"]]
+    if pd.get("next_check_time"):
+        body.append(f"- 下次检查：{pd['next_check_time']}")
+    if pd.get("data_limitations"):
+        body.append("- 数据限制：" + "；".join(pd["data_limitations"]))
+    if len(body) > 1 or (body and not pd.get("phase_label")):
+        lines += ["### 阶段决策", "\n".join(body)]
+    attr = result.get("signal_attribution") or {}
+    parts = [f"{label} {attr[key]}%" for key, label in ATTRIBUTION_LABELS if attr.get(key) is not None]
+    abody = []
+    if parts:
+        abody.append("- 贡献度：" + "，".join(parts))
+    if attr.get("strongest_bullish"):
+        abody.append(f"- 最强看多：{attr['strongest_bullish']}")
+    if attr.get("strongest_bearish"):
+        abody.append(f"- 最强看空：{attr['strongest_bearish']}")
+    if abody:
+        lines += ["### 信号归因", "\n".join(abody)]
+    return lines
 
 
 def render_markdown(result: dict[str, Any]) -> str:
@@ -667,6 +721,7 @@ def render_markdown(result: dict[str, Any]) -> str:
     plan_items = [f"{label} {plan[key]:.2f}" for key, label in (("buy_price", "买入"), ("stop_loss", "止损"), ("target_price", "目标")) if plan.get(key)]
     if plan_items or plan.get("suggested_position"):
         lines += ["### 作战计划", "- " + "，".join(plan_items + ([plan["suggested_position"]] if plan.get("suggested_position") else []))]
+    lines += _phase_markdown(result)
     if result["theme_role"]:
         role = result["theme_role"]
         lines.append(f"**主线地位**：{role['theme']}（{role['phase']}）{role['role']}")
