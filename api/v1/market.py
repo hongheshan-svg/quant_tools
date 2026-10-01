@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
@@ -28,9 +29,21 @@ def dashboard(pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, An
     return snapshot
 
 
+# 统一资讯流里需要置顶标红的级别（level 是给旧桌面端显示的中文）
+IMPORTANT_NEWS_LEVELS = {"红色重大", "重要快讯", "头部财报", "重大国际"}
+
+
+def _web_news(row: dict[str, Any]) -> dict[str, Any]:
+    """统一资讯流的 tags 是旧桌面端显示用的字符串（「美股 | 头部企业」「A,B」），Web 端要列表"""
+    tags = row.get("tags") or []
+    if isinstance(tags, str):
+        tags = list(dict.fromkeys(t.strip() for t in re.split(r"\s*\|\s*|,", tags) if t.strip()))
+    return {**row, "tags": tags, "important": row.get("level") in IMPORTANT_NEWS_LEVELS}
+
+
 @router.get("/news")
 def news(pipeline: PipelineService = Depends(get_pipeline)) -> list[dict[str, Any]]:
-    return _query(pipeline).get_unified_news()
+    return [_web_news(row) for row in _query(pipeline).get_unified_news()]
 
 
 @router.get("/market/overview")

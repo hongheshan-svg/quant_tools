@@ -144,6 +144,7 @@ export interface NewsItem {
   url?: string
   level?: string
   tags?: string[]
+  important?: boolean // 置顶标红：财联社红色/重要、头部企业财报、重大国际新闻
 }
 
 export interface Regime {

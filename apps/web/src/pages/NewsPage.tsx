@@ -34,7 +34,7 @@ export function NewsPage() {
                   href={n.url || undefined}
                   target="_blank"
                   rel="noreferrer"
-                  className={cn('text-sm', n.level === 'red' || n.level === 'important' ? 'font-semibold text-up' : 'text-text', n.url && 'hover:underline')}
+                  className={cn('text-sm', n.important ? 'font-semibold text-up' : 'text-text', n.url && 'hover:underline')}
                 >
                   {n.title}
                 </a>

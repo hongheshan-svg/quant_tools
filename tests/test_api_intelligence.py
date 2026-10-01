@@ -7,7 +7,7 @@ from datetime import datetime
 from src.collectors import rss as rss_mod
 from src.collectors.base import BaseCollector
 from src.database.db import get_db_session
-from src.database.models import FinanceNews
+from src.database.models import FinanceNews, GlobalNews
 from src import settings_store
 from tests.test_api import _wait, env  # noqa: F401
 
@@ -122,3 +122,19 @@ def test_unified_news_shows_rss_source(env):
     rows = client.get("/api/v1/news").json()
     hit = [r for r in rows if "RSS 头条" in r["title"]]
     assert hit and "RSS·路透中文" in (hit[0]["source"] + hit[0]["title"])
+
+
+def test_unified_news_tags_are_lists(env):
+    """资讯流的 tags 在库里是显示用的字符串，接口要转成列表，否则 Web 资讯流页渲染出错"""
+    client, _, config = env
+    now = datetime.now()
+    with get_db_session(config["database"]["sqlite_path"]) as s:
+        s.add(GlobalNews(source="wallstreetcn", title="环球快讯一则", category="环球市场情报,港股动态",
+                         importance=5, news_time=now, collected_at=now))
+        s.add(FinanceNews(source="cailianshe", category="red", title="重大消息", tags="利好 | 半导体",
+                          news_time=now, collected_at=now))
+    rows = {r["title"]: r for r in client.get("/api/v1/news").json()}
+    glob = next(r for t, r in rows.items() if "环球快讯一则" in t)
+    red = next(r for t, r in rows.items() if "重大消息" in t)
+    assert glob["tags"] == ["环球市场情报", "港股动态"] and glob["important"] is False
+    assert red["tags"] == ["利好", "半导体"] and red["important"] is True
