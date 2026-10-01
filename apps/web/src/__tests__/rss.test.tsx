@@ -25,6 +25,7 @@ function stub(calls: Call[], news: unknown[] = []) {
     calls.push({ url, method, body: typeof init?.body === 'string' ? init.body : undefined })
     let body: unknown = []
     if (url.includes('/settings/intelligence/test')) body = { ok: true, title: '测试频道', count: 3, samples: ['样例一'], error: '' }
+    else if (url.includes('/settings/intelligence/templates')) body = []
     else if (url.includes('/settings/intelligence')) body = method === 'PUT' ? { ok: true } : intelligence
     else if (url.includes('/settings/llm')) body = { llm: { primary: {}, fallback: {} }, platforms: {} }
     else if (url.includes('/news')) body = news
@@ -116,5 +117,29 @@ describe('page crash', () => {
     fireEvent.click(screen.getAllByRole('link', { name: /设置/ })[0])
     expect(await screen.findByRole('tab', { name: '资讯源' })).toBeInTheDocument()
     expect(screen.queryByText('页面出错')).not.toBeInTheDocument()
+  })
+})
+
+describe('SettingsPage intelligence templates', () => {
+  it('adds a source from a template and hides templates already added', async () => {
+    const calls: Call[] = []
+    stub(calls)
+    const tpl = [
+      { id: 'newsnow-jin10', name: '金十数据', url: 'https://newsnow.busiyi.world/api/s?id=jin10', description: 'x' },
+      { id: 'reuters', name: '路透中文', url: 'https://feeds.example.com/reuters.xml', description: 'y' },
+    ]
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    const base = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).includes('/settings/intelligence/templates')
+        ? new Response(JSON.stringify(tpl), { status: 200, headers: { 'content-type': 'application/json' } })
+        : base(input, init))
+    await openTab()
+    const select = await screen.findByRole('combobox', { name: '从模板添加' })
+    expect(screen.queryByRole('option', { name: '路透中文' })).toBeNull()        // 已添加的地址不再列出
+    fireEvent.change(select, { target: { value: 'newsnow-jin10' } })
+    expect(await screen.findByDisplayValue('金十数据')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('https://newsnow.busiyi.world/api/s?id=jin10')).toBeInTheDocument()
+    expect(screen.queryByRole('combobox', { name: '从模板添加' })).toBeNull()    // 模板都用完了
   })
 })

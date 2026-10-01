@@ -138,3 +138,10 @@ def test_unified_news_tags_are_lists(env):
     red = next(r for t, r in rows.items() if "重大消息" in t)
     assert glob["tags"] == ["环球市场情报", "港股动态"] and glob["important"] is False
     assert red["tags"] == ["利好", "半导体"] and red["important"] is True
+
+
+def test_intelligence_templates_endpoint(env):
+    client, _, _ = env
+    rows = client.get("/api/v1/settings/intelligence/templates").json()
+    assert rows and {"id", "name", "url", "description"} <= set(rows[0])
+    assert any("newsnow" in r["id"] for r in rows)

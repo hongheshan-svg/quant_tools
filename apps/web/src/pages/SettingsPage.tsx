@@ -837,6 +837,7 @@ function BackupPanel() {
 function IntelligenceForm() {
   const t = useT()
   const { data, error, loading, reload } = useApi(api.intelligenceSettings)
+  const templates = useApi(api.intelligenceTemplates)
   const [enabled, setEnabled] = useState(true)
   const [interval, setIntervalMinutes] = useState('30')
   const [maxItems, setMaxItems] = useState('30')
@@ -875,6 +876,11 @@ function IntelligenceForm() {
     if (!name || !url) return toast.error(t('请填写名称和地址'))
     setSources([...sources, { name, url, enabled: true }])
     setDraft({ name: '', url: '' })
+  }
+  const unusedTemplates = (templates.data ?? []).filter((tp) => !sources.some((s) => s.url === tp.url))
+  const addTemplate = (id: string) => {
+    const tp = unusedTemplates.find((x) => x.id === id)
+    if (tp) setSources([...sources, { name: tp.name, url: tp.url, enabled: true }])
   }
   const save = async () => {
     setSaving(true)
@@ -935,6 +941,14 @@ function IntelligenceForm() {
         <Field label={t('名称')}><Input className="w-32" value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
         <Field label={t('RSS 地址')}><Input className="w-72" placeholder="https://example.com/feed.xml" value={draft.url} onChange={(e) => setDraft({ ...draft, url: e.target.value })} /></Field>
         <Button onClick={add}>{t('添加')}</Button>
+        {unusedTemplates.length > 0 && (
+          <Field label={t('从模板添加')}>
+            <Select aria-label={t('从模板添加')} value="" onChange={(e) => addTemplate(e.target.value)}>
+              <option value="">{t('选择常用资讯源…')}</option>
+              {unusedTemplates.map((tp) => <option key={tp.id} value={tp.id} title={tp.description}>{tp.name}</option>)}
+            </Select>
+          </Field>
+        )}
       </div>
       <div className="flex gap-2">
         <Button variant="primary" loading={saving} onClick={() => void save()}>{t('保存')}</Button>

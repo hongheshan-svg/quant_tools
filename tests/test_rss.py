@@ -335,3 +335,40 @@ def test_sentiment_context_includes_recent_rss(db_path):
     text = analyzer._get_news_context()
     assert "RSS·路透中文" in text and "近期RSS要闻" in text
     assert "陈旧RSS要闻" not in text
+
+
+# ---------- NewsNow 与资讯源模板 ----------
+
+NEWSNOW = """{"status": "success", "id": "jin10", "items": [
+  {"id": "1", "title": "美国9月制造业PMI终值 55.9", "pubDate": 1790862302000, "url": "https://flash.jin10.com/detail/1"},
+  {"id": "2", "title": "华尔街见闻快讯", "extra": {"date": 1790860722000}, "url": "https://wallstreetcn.com/livenews/2"},
+  {"id": "3", "title": "", "url": "https://x/3"},
+  {"id": "4", "title": "没有时间的条目", "url": "https://x/4"}
+]}"""
+
+
+def test_parse_newsnow_items_and_times():
+    title, items = rss_mod.parse_content(NEWSNOW)
+    assert title == "NewsNow jin10"
+    assert [i["title"] for i in items] == ["美国9月制造业PMI终值 55.9", "华尔街见闻快讯", "没有时间的条目"]  # 空标题跳过
+    assert items[0]["published"] == datetime.fromtimestamp(1790862302) and items[1]["published"] == datetime.fromtimestamp(1790860722)
+    assert items[2]["published"] is None and items[0]["url"] == "https://flash.jin10.com/detail/1"
+    assert rss_mod.parse_content(RSS2)[1]                      # 非 JSON 仍按 RSS 解析
+    with pytest.raises(ValueError):
+        rss_mod.parse_content('{"status": "error"}')
+    with pytest.raises(ValueError):
+        rss_mod.parse_content("{not json")
+
+
+def test_collect_newsnow_source(monkeypatch, db_path):
+    url = rss_mod.NEWSNOW_BASE + "jin10"
+    _patch_fetch(monkeypatch, {url: NEWSNOW})
+    items = RSSCollector(_config([{"name": "金十数据", "url": url, "enabled": True}])).collect()
+    assert len(items) == 3 and all(i["category"] == "金十数据" for i in items)
+    assert save_items(items, db_path) == 3
+
+
+def test_templates_unique_https():
+    urls = [t["url"] for t in rss_mod.TEMPLATES]
+    assert len(urls) == len(set(urls)) and all(u.startswith("https://") for u in urls)
+    assert not any("xueqiu-hotstock" in u for u in urls)        # 条目是股票名，不是资讯

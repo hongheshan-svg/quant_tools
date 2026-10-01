@@ -1075,6 +1075,13 @@ export interface IntelligenceSettings {
   }
 }
 
+export interface IntelligenceTemplate {
+  id: string
+  name: string
+  url: string
+  description: string
+}
+
 export interface IntelligenceTestResult {
   ok: boolean
   title: string

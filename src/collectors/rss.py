@@ -4,6 +4,7 @@ RSS / Atom 资讯源采集器
 可用 RSSHub 等工具为财经媒体生成订阅。只用标准库 xml.etree 和 beautifulsoup4 解析。
 """
 
+import json
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
@@ -17,6 +18,21 @@ from src.collectors.base import BaseCollector
 from src.collectors.source_chain import source_health
 
 SOURCE_NAME = "rss"
+NEWSNOW_BASE = "https://newsnow.busiyi.world/api/s?id="
+# 资讯源模板（设置页「从模板添加」）：NewsNow 聚合的财经快讯（JSON 接口）和全球市场 RSS。
+# 不收 NewsNow 的雪球热门股票：条目是股票名而不是资讯，进舆情分析只会添噪声
+TEMPLATES: list[dict[str, str]] = [
+    {"id": "newsnow-cls-hot", "name": "财联社热门", "url": NEWSNOW_BASE + "cls-hot",
+     "description": "NewsNow 聚合的财联社热门资讯，适合大盘和题材热点"},
+    {"id": "newsnow-wallstreetcn-quick", "name": "华尔街见闻快讯", "url": NEWSNOW_BASE + "wallstreetcn-quick",
+     "description": "NewsNow 聚合的华尔街见闻快讯，宏观、商品和市场事件"},
+    {"id": "newsnow-jin10", "name": "金十数据", "url": NEWSNOW_BASE + "jin10",
+     "description": "NewsNow 聚合的金十实时财经消息，全球宏观和外盘事件"},
+    {"id": "newsnow-gelonghui", "name": "格隆汇事件", "url": NEWSNOW_BASE + "gelonghui",
+     "description": "NewsNow 聚合的格隆汇事件资讯，A 股异动和港股、中概股"},
+    {"id": "marketwatch-top", "name": "MarketWatch", "url": "https://feeds.content.dowjones.io/public/rss/mw_topstories",
+     "description": "MarketWatch 头条（英文 RSS），全球市场背景"},
+]
 SUMMARY_MAX_LEN = 500
 DATASET = "rss"
 
@@ -140,6 +156,43 @@ def _enabled_sources(config: dict) -> list[dict]:
     return result
 
 
+def _ms_time(value: Any) -> datetime | None:
+    """NewsNow 的毫秒时间戳"""
+    try:
+        return datetime.fromtimestamp(float(value) / 1000) if value else None
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
+
+
+def parse_newsnow(payload: Any) -> tuple[str, list[dict]]:
+    """解析 NewsNow 接口（{"id", "items": [{title, url, pubDate | extra.date}]}）。格式不对时抛 ValueError。"""
+    if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+        raise ValueError("不是 NewsNow 接口返回（缺少 items 列表）")
+    items: list[dict] = []
+    for raw in payload["items"]:
+        if not isinstance(raw, dict):
+            continue
+        title = _strip_html(str(raw.get("title") or ""))
+        if not title:
+            continue
+        extra = raw.get("extra") if isinstance(raw.get("extra"), dict) else {}
+        items.append({"title": title, "url": str(raw.get("url") or ""), "summary": "",
+                      "published": _ms_time(raw.get("pubDate") or extra.get("date"))})
+    return f"NewsNow {payload.get('id') or ''}".strip(), items
+
+
+def parse_content(content: str | bytes) -> tuple[str, list[dict]]:
+    """按内容判断：JSON 对象按 NewsNow 解析，否则按 RSS / Atom 解析"""
+    text = content.decode("utf-8", "ignore") if isinstance(content, bytes) else (content or "")
+    if text.lstrip("\ufeff").lstrip().startswith("{"):
+        try:
+            payload = json.loads(text.lstrip("\ufeff"))
+        except ValueError as e:
+            raise ValueError(f"内容不是合法的 JSON: {e}") from e
+        return parse_newsnow(payload)
+    return parse_feed(content)
+
+
 class RSSCollector(BaseCollector):
     """RSS / Atom 资讯采集器"""
 
@@ -150,7 +203,7 @@ class RSSCollector(BaseCollector):
         if resp is None:
             raise RuntimeError("请求失败")
         content = getattr(resp, "content", None)
-        return parse_feed(content if isinstance(content, bytes) and content else resp.text)
+        return parse_content(content if isinstance(content, bytes) and content else resp.text)
 
     def collect(self) -> list[dict[str, Any]]:
         cfg = (self.config or {}).get("intelligence") or {}

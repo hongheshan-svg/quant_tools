@@ -524,6 +524,14 @@ def save_intelligence_settings(body: IntelligenceSettingsBody, request: Request,
     return {"intelligence": _intelligence_with_defaults(read_settings().get("intelligence"))}
 
 
+@router.get("/settings/intelligence/templates")
+def intelligence_templates() -> list[dict[str, str]]:
+    """资讯源模板：NewsNow 聚合的财经快讯和全球市场 RSS，设置页一键添加。"""
+    from src.collectors import rss
+
+    return rss.TEMPLATES
+
+
 @router.post("/settings/intelligence/test")
 def test_intelligence_source(body: IntelligenceTestBody, config: dict = Depends(get_config)) -> dict[str, Any]:
     from src.collectors import rss

@@ -180,6 +180,7 @@ export const api = {
   saveIntelligence: (intelligence: Record<string, unknown>) =>
     http.put<T.IntelligenceSettings>('/settings/intelligence', { intelligence }),
   testIntelligenceSource: (url: string) => http.post<T.IntelligenceTestResult>('/settings/intelligence/test', { url }),
+  intelligenceTemplates: () => http.get<T.IntelligenceTemplate[]>('/settings/intelligence/templates'),
   botSettings: () => http.get<T.BotSettings>('/settings/bot'),
   saveBot: (bot: Record<string, unknown>) => http.put<T.BotSaveResult>('/settings/bot', { bot }),
   watchlistSettings: () => http.get<T.WatchlistSettings>('/settings/watchlist'),
