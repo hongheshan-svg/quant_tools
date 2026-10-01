@@ -23,6 +23,7 @@ from src.database.models import StockDaily, StockInfo
 from src.utils.stock_code import bare_code, normalize_name
 
 INDEX_TTL_HOURS = 12
+EMPTY_INDEX_TTL_SECONDS = 60   # 还没有个股（股票列表和行情都为空）时，1 分钟后重建，不缓存 12 小时
 MAX_INITIAL_VARIANTS = 8
 _NON_ALNUM = re.compile(r"[^0-9a-z]")
 
@@ -54,7 +55,9 @@ class StockSearch:
     def _ensure_index(self) -> list[tuple[str, str, tuple[str, ...], str]]:
         cls = StockSearch
         with cls._lock:
-            fresh = cls._built_at and datetime.now() - cls._built_at < timedelta(hours=INDEX_TTL_HOURS)
+            has_stocks = any(kind == "stock" for *_, kind in cls._entries)
+            ttl = timedelta(hours=INDEX_TTL_HOURS) if has_stocks else timedelta(seconds=EMPTY_INDEX_TTL_SECONDS)
+            fresh = cls._built_at and datetime.now() - cls._built_at < ttl
             if cls._entries and fresh and cls._db_path == self.db_path:
                 return cls._entries
         entries = self._build()

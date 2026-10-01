@@ -141,16 +141,30 @@ def refresh_etf_list(db_path: str, force: bool = False) -> int:
 
 
 def refresh_etf_list_background(db_path: str) -> threading.Thread:
-    """后台线程刷新 ETF 列表（7 天内不重复联网）；成功后重置股票搜索索引。由常驻服务启动时调用。"""
+    """后台线程刷新搜索用的股票列表（表为空或超过 1 天）和 ETF 列表（7 天内不重复联网）；
+    有更新时重置股票搜索索引。由常驻服务启动时调用。
+
+    股票列表来自交易所官方列表，节假日也能取到；否则新装的程序在节假日没有行情可采，
+    按名称、拼音甚至代码都搜不到个股。
+    """
 
     def run() -> None:
+        refreshed = 0
         try:
-            if refresh_etf_list(db_path):
-                from src.services.stock_search import StockSearch
+            from src.collectors.stock_info import StockInfoCollector
 
-                StockSearch.reset()
+            with StockInfoCollector() as collector:
+                refreshed += collector.refresh_if_stale(db_path)
+        except Exception as e:
+            logger.debug(f"后台刷新股票列表失败: {e}")
+        try:
+            refreshed += refresh_etf_list(db_path)
         except Exception as e:
             logger.debug(f"后台刷新 ETF 列表失败: {e}")
+        if refreshed:
+            from src.services.stock_search import StockSearch
+
+            StockSearch.reset()
 
     thread = threading.Thread(target=run, name="etf-refresh", daemon=True)
     thread.start()

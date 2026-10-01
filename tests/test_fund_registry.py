@@ -157,6 +157,53 @@ def test_refresh_etf_list_failure_keeps_old_data(db_path, monkeypatch):
         assert session.query(FundInfo).filter(FundInfo.code == "510300").count() == 1
 
 
+
+def test_background_refresh_fills_stock_list_and_resets_search(tmp_path, monkeypatch):
+    """新装（股票列表为空）时后台刷新股票列表，节假日没有行情也能按名称、拼音搜到个股"""
+    import akshare as ak
+    from src.collectors.stock_info import StockInfoCollector
+    from src.services import fund_registry
+    from src.services.stock_search import StockSearch
+
+    path = str(tmp_path / "fresh.db")
+    _reset_db_engine()
+    init_db(path)
+    StockSearch.reset()
+    try:
+        monkeypatch.setattr(fund_registry, "refresh_etf_list", lambda db_path: 0)
+        assert StockSearch(path).search("茅台") == []                          # 新装：还搜不到
+
+        sh = pd.DataFrame({"证券代码": ["600519"], "证券简称": ["贵州茅台"], "上市日期": ["2001-08-27"]})
+        monkeypatch.setattr(ak, "stock_info_sh_name_code", lambda **k: sh if k.get("symbol") == "主板A股" else pd.DataFrame())
+        monkeypatch.setattr(ak, "stock_info_sz_name_code", lambda **k: pd.DataFrame())
+        monkeypatch.setattr(ak, "stock_info_bj_name_code", lambda **k: pd.DataFrame())
+        fund_registry.refresh_etf_list_background(path).join(timeout=10)
+        assert [r["code"] for r in StockSearch(path).search("gzmt")] == ["600519"]   # 刷新后立即可搜
+
+        calls = []
+        monkeypatch.setattr(StockInfoCollector, "refresh", lambda self, db_path: calls.append(db_path) or 0)
+        fund_registry.refresh_etf_list_background(path).join(timeout=10)
+        assert calls == []                                                     # 1 天内不重复联网
+    finally:
+        StockSearch.reset()
+        _reset_db_engine()
+
+
+def test_search_index_without_stocks_is_rebuilt_soon(db_path, monkeypatch):
+    from src.services import stock_search as search_mod
+    from src.services.stock_search import StockSearch
+
+    with get_db_session(db_path) as session:
+        session.query(StockInfo).delete()
+        session.query(StockDaily).delete()
+    assert StockSearch(db_path).search("茅台") == []
+    with get_db_session(db_path) as session:
+        session.add(StockInfo(code="600519", name="贵州茅台"))
+    assert StockSearch(db_path).search("茅台") == []                           # 1 分钟内用缓存
+    monkeypatch.setattr(search_mod, "EMPTY_INDEX_TTL_SECONDS", 0)
+    assert [r["code"] for r in StockSearch(db_path).search("茅台")] == ["600519"]  # 没有个股的索引不缓存 12 小时
+
+
 # ---------- K 线采集 ----------
 
 def _kline_payload(code: str, rows: list[list], key: str = "qfqday") -> dict:

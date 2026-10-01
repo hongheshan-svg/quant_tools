@@ -200,7 +200,7 @@ def main():
     start_bots(config)
     from src.services.fund_registry import refresh_etf_list_background
 
-    refresh_etf_list_background(config.get("database", {}).get("sqlite_path", "data/quant.db"))  # ETF 列表（搜索用）
+    refresh_etf_list_background(config.get("database", {}).get("sqlite_path", "data/quant.db"))  # 股票和 ETF 列表（搜索用）
     logger.info("正在启动任务调度器...")
     start_scheduler(config)
 
