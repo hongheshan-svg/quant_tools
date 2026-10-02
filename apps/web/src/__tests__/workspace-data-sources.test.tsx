@@ -142,6 +142,9 @@ describe('报告身份与策略设置回归', () => {
     const settings = { screening: { pipeline: { enabled: true, financial_candidates: 40, financial_timeout_seconds: 60, llm_top_k: 15, llm_timeout_seconds: 40, post_analysis_top_k: 3, risk_max_penalty: 35, risk_veto_threshold: 30, max_same_bucket: 3, concentration_penalty: 5 } }, profiles: [{ name: 'balanced_alpha', label: '均衡多因子', enabled: true, weights: { momentum: .2, value: .3 } }] }
     const saves: typeof settings[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      // 设置默认先展示 AI 模型，不能用空数组代替它的有效响应，
+      // 否则是否在点击策略 tab 前崩溃会取决于异步渲染时序。
+      if (String(input).includes('/settings/llm')) return json({ llm: { primary: {}, backup: {}, vision: {} }, platforms: { custom: { name: '自定义', models: [] } } })
       if (String(input).includes('/settings/screening')) {
         if (init?.method === 'PUT') saves.push(JSON.parse(String(init.body)))
         return json(settings)
@@ -149,6 +152,7 @@ describe('报告身份与策略设置回归', () => {
       return json([])
     }))
     renderAt('/settings')
+    await screen.findByText('主力模型')
     fireEvent.click(await screen.findByRole('tab', { name: '选股策略' }))
     await screen.findByText('均衡多因子')
     fireEvent.change(screen.getByLabelText('动量'), { target: { value: '.7' } })
