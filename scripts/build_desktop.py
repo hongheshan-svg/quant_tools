@@ -12,6 +12,7 @@
 """
 
 import argparse
+from importlib.metadata import version
 import os
 import shutil
 import subprocess
@@ -94,7 +95,28 @@ def backend_executable() -> Path:
     return BACKEND_DIST / BACKEND_NAME / exe
 
 
+def prepare_mini_racer() -> None:
+    """AKShare 在 Linux 依赖旧包，与 mini-racer 共用模块名；打包前确认现代实现可运行。
+
+    若旧包覆盖了模块，用已安装版本的 wheel 恢复，避免安装顺序改变冻结产物。
+    检查放在独立解释器中，修复后也不会复用旧模块的导入缓存。
+    """
+    check = [sys.executable, "-c", (
+        "from py_mini_racer import MiniRacer; "
+        "assert MiniRacer.__module__ == 'py_mini_racer._mini_racer', 'legacy mini-racer selected'; "
+        "ctx = MiniRacer(); assert ctx.eval('1 + 1') == 2; ctx.close()"
+    )]
+    result = subprocess.run(check, capture_output=True, text=True, timeout=30)
+    if result.returncode == 0:
+        return
+    run([sys.executable, "-m", "pip", "install", "--force-reinstall", "--no-deps", f"mini-racer=={version('mini-racer')}"])
+    result = subprocess.run(check, capture_output=True, text=True, timeout=30)
+    if result.returncode:
+        raise SystemExit(f"mini-racer 自检失败，未开始打包：{result.stderr[-2000:]}")
+
+
 def build_backend() -> None:
+    prepare_mini_racer()
     shutil.rmtree(BACKEND_DIST / BACKEND_NAME, ignore_errors=True)
     run([sys.executable, "-m", "PyInstaller", *pyinstaller_args()])
     exe = backend_executable()
