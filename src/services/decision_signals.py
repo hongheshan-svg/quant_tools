@@ -190,7 +190,12 @@ class DecisionSignalService:
         today = now.strftime("%Y-%m-%d")
         summary = {"evaluated": 0, "expired": 0, "hit_target": 0, "hit_stop": 0}
         cache: dict = {}
+        from src.services.outcome_engine import OutcomeEngine
+        engine = OutcomeEngine(self.config)
         with get_db_session(self.db_path) as session:
+            for signal in session.query(DecisionSignal).filter(DecisionSignal.trade_date.isnot(None)).all():
+                engine.evaluate(session, "signal", signal.id, signal.code, signal.trade_date,
+                                DIRECTIONS.get(signal.action, 0), now=now)
             rows = session.query(DecisionSignal).filter(
                 (DecisionSignal.status == "active")
                 | (DecisionSignal.status.in_(TERMINAL_STATUSES) & DecisionSignal.ret_5d.is_(None))

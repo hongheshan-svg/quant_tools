@@ -111,6 +111,12 @@ def is_trade_day(d: date | datetime | str | None = None) -> bool:
     return day.weekday() < WEEKEND_START
 
 
+def has_calendar_coverage(start: str, end: str) -> bool:
+    """区间是否由正式交易日历覆盖；周一至周五降级规则不用于策略自动调权。"""
+    with _lock:
+        return bool(_trade_days and _first_day <= start <= end <= _last_day)
+
+
 def market_data_ready(now: datetime | None = None) -> bool:
     """今天是否已有当日行情：交易日且已过 9:25。
     节假日或开盘前，行情接口返回的是上一个交易日的数据，不能按今天的日期入库。"""

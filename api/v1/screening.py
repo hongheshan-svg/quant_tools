@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from api.deps import get_pipeline, get_tasks
-from api.tasks import TaskManager
+from api.tasks import TaskManager, business_result_error
 from src.services.pipeline_service import PipelineService
 
 router = APIRouter(prefix="/screening", tags=["screening"])
@@ -23,9 +23,9 @@ def latest(pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
 @router.get("/dates")
 def dates(limit: int = Query(60, ge=1, le=250), pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
     """有选股结果的历史交易日（倒序，含入选数与次日表现）和策略列表。"""
-    from src.strategy.screener import STRATEGIES
+    from src.strategy.screener import StrategyScreener
 
-    return {"dates": pipeline.screening_dates(limit), "strategies": [{"name": s.name, "label": s.label} for s in STRATEGIES]}
+    return {"dates": pipeline.screening_dates(limit), "strategies": [{"name": s.name, "label": s.label} for s in StrategyScreener(pipeline.config).strategies]}
 
 
 @router.get("/picks")
@@ -44,10 +44,16 @@ def picks(trade_date: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"), 
 
 @router.post("/run")
 def run(tasks: TaskManager = Depends(get_tasks), pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
-    return tasks.submit("screening", pipeline.screen_stocks, dedupe_key="screening", label="策略选股")
+    return tasks.submit("screening", pipeline.screen_stocks, dedupe_key="screening", label="策略选股", result_error=business_result_error)
 
 
 @router.post("/backtest")
 def backtest(days: int = Query(60, ge=10, le=365), tasks: TaskManager = Depends(get_tasks),
              pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
     return tasks.submit("backtest", pipeline.backtest_strategies, days, dedupe_key="backtest", label=f"历史回测 {days} 天")
+
+
+@router.get("/runs")
+def screening_runs(limit: int = Query(20, ge=1, le=100), pipeline: PipelineService = Depends(get_pipeline)) -> list[dict]:
+    from src.strategy.screener import StrategyScreener
+    return StrategyScreener(pipeline.config).runs(limit)

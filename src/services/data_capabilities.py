@@ -10,6 +10,7 @@ from typing import Any
 
 from src.collectors import daily_history, news_search
 from src.collectors.source_chain import source_health
+from src.services.data_source_settings import source_order, source_configured
 
 # 实时行情：配置名 → (展示名, 健康记录里的来源名，与 stock_data 的 available 一致)
 REALTIME_LABELS: dict[str, tuple[str, str]] = {
@@ -18,6 +19,8 @@ REALTIME_LABELS: dict[str, tuple[str, str]] = {
     "sina": ("新浪", "新浪(AKShare)"),
     "efinance": ("efinance", "efinance"),
     "pytdx": ("通达信", "通达信(pytdx)"),
+    "tickflow": ("TickFlow", "TickFlow"),
+    "tushare": ("Tushare", "Tushare"),
 }
 DEFAULT_REALTIME = ("tencent", "eastmoney", "sina", "efinance", "pytdx")
 
@@ -25,6 +28,7 @@ DEFAULT_REALTIME = ("tencent", "eastmoney", "sina", "efinance", "pytdx")
 DAILY_LABELS = {
     "tencent": "腾讯", "sina": "新浪", "eastmoney": "东方财富", "baostock": "baostock",
     "pytdx": "通达信", "efinance": "efinance", "tushare": "Tushare",
+    "tickflow": "TickFlow",
 }
 
 UNKNOWN_HEALTH: dict[str, Any] = {
@@ -72,15 +76,17 @@ def capabilities(config: dict) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
 
     # 实时行情
-    order = [n for n in _list(ds_conf.get("realtime")) if n in REALTIME_LABELS] or list(DEFAULT_REALTIME)
+    order = source_order(config, "realtime")
     result.append({"dataset": "实时行情", "label": "实时行情", "sources": [
         _source(index, "实时行情", name, REALTIME_LABELS[name][0], health_name=REALTIME_LABELS[name][1],
-                note="全市场行情，按顺序回退" if i == 0 else "") for i, name in enumerate(order)
+                configured=source_configured(config, name),
+                note="需要密钥和全市场实时权限" if name in {"tickflow", "tushare"} else
+                "全市场行情，按顺序回退" if i == 0 else "") for i, name in enumerate(order)
     ]})
 
     # 个股日线
     has_token = bool(str(ds_conf.get("tushare_token") or "").strip())
-    order = [n for n in _list(ds_conf.get("daily_history")) if n in daily_history.DAILY_SOURCES] or list(daily_history.DAILY_SOURCES)
+    order = source_order(config, "daily_history")
     daily = []
     for name in order:
         marker = daily_history.DAILY_SOURCES[name][0]
@@ -88,14 +94,24 @@ def capabilities(config: dict) -> list[dict[str, Any]]:
         configured = True
         if name == "tushare":
             configured = has_token
-            note = "" if has_token else "需要填写 data_sources.tushare_token"
-        elif name in ("pytdx", "tushare"):
+            note = "日线不复权" if has_token else "需要填写 data_sources.tushare_token；日线不复权"
+        elif name == "pytdx":
             note = "日线不复权"
         elif name == "baostock":
             note = "不支持北交所"
+        elif name == "tickflow":
+            configured = source_configured(config, name)
+            note = "需要 API Key；复权：" + str(ds_conf.get("tickflow_kline_adjust", "forward"))
         daily.append(_source(index, "个股日线", name, DAILY_LABELS.get(name, name), health_name=marker,
                              configured=configured, note=note))
     result.append({"dataset": "个股日线", "label": "个股日线", "sources": daily})
+    result.append({"dataset": "季度基本面", "label": "季度财报与分红", "sources": [
+        _source(index, "季度基本面", "sina", "新浪财报摘要", note="季度累计口径，保留报告期与采集时间"),
+        _source(index, "季度基本面", "indicator", "新浪财务指标", note="摘要不可用时回退"),
+    ]})
+    result.append({"dataset": "分红事件", "label": "分红事件", "sources": [
+        _source(index, "分红事件", "新浪", "新浪分红历史", note="税前现金分红，区分公告与已实施"),
+    ]})
 
     # 涨停池、涨停原因、资金流（固定回退顺序）
     result.append({"dataset": "涨停池", "label": "涨停池", "sources": [

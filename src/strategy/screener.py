@@ -18,6 +18,8 @@
 
 from __future__ import annotations
 
+import json
+import hashlib
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
@@ -31,6 +33,7 @@ from src.config_loader import load_config
 from src.database.db import get_db_session
 from src.database.models import LimitUpStock, StockDaily, StrategyPick
 from src.utils.stock_code import bare_code, code_candidates, daily_limit_pct
+from src.strategy.data_quality import equity_code, finite_number, iso_date, prices_comparable, row_priority
 
 STOCK_POOL_CONFIG_PATH = "config/stock_pool.yaml"
 HISTORY_BARS = 61            # 今日 + 前 60 个交易日
@@ -44,6 +47,7 @@ LIMIT_TOLERANCE = 0.3        # 涨幅距涨停价 0.3 个百分点以内视为�
 MULTI_STRATEGY_BONUS = 5
 CHUNK = 500
 WEIGHTS_MAX_AGE_DAYS = 30   # 超过 30 天的回测不再用于调整策略权重
+BACKTEST_ENGINE_VERSION = "a-share-t1-v2"
 
 
 # ---------- 特征 ----------
@@ -69,6 +73,16 @@ class Features:
     pullback_15: float | None = None   # 距近 15 日最高价 %
     limit_ups_15: int = 0              # 前 15 个交易日的涨停次数
     close_pos: float | None = None     # 收盘价在当日振幅中的位置 0~1
+    pe: float | None = None
+    pb: float | None = None
+    roe: float | None = None
+    profit_yoy: float | None = None
+    revenue_yoy: float | None = None
+    dividend_yield: float | None = None
+    circ_mv: float | None = None
+    data_quality: dict = field(default_factory=dict)
+    industry: str = ""
+    fundamentals: dict = field(default_factory=dict)
     themes: dict[str, float] = field(default_factory=dict)  # 所属的当前主线 → 热度
 
     @property
@@ -78,36 +92,54 @@ class Features:
 
 def compute_features(code: str, name: str, bars: list) -> Features | None:
     """bars：按日期升序的日线（最后一根为选股日），需有 close/high/low/volume/amount/change_pct/turnover 属性。"""
-    today = bars[-1]
-    if not today.close or today.close <= 0:
+    if not bars:
+        return None
+    # 无效价格不能从均线中删掉后压缩周期；只使用最后一段连续、可比较的价格。
+    clean = []
+    for bar in bars:
+        close = finite_number(bar.close)
+        if close is None or close <= 0:
+            clean = []
+            continue
+        if clean and not prices_comparable(clean[-1], bar):
+            clean = []
+        clean.append(bar)
+    if not clean or clean[-1] is not bars[-1]:
+        return None
+    bars, today = clean, clean[-1]
+    change, amount = finite_number(today.change_pct), finite_number(today.amount)
+    if change is None or amount is None or amount <= 0:
         return None
     limit_pct = daily_limit_pct(code, name) * 100
-    f = Features(code=code, name=name, close=today.close, change_pct=today.change_pct or 0.0, amount=today.amount or 0.0,
-                 turnover=today.turnover, limit_pct=limit_pct, bars=len(bars))
-    closes = [b.close for b in bars if b.close]
+    f = Features(code=code, name=name, close=float(today.close), change_pct=change, amount=amount,
+                 turnover=finite_number(today.turnover), limit_pct=limit_pct, bars=len(bars))
+    closes = [float(b.close) for b in bars]
     for n in (5, 10, 20, 60):
         if len(closes) >= n:
             setattr(f, f"ma{n}", sum(closes[-n:]) / n)
 
     prev = bars[:-1]
     # 各数据源的成交量单位不一致（股/手），成交额统一为元，用成交额比近似量比
-    base = [b.amount for b in prev[-5:] if b.amount]
-    if len(base) >= 3 and today.amount:
-        f.vol_ratio = today.amount / (sum(base) / len(base))
+    base = [finite_number(b.amount) for b in prev[-5:]]
+    if len(base) == 5 and all(value is not None and value > 0 for value in base):
+        f.vol_ratio = amount / (sum(base) / len(base))
 
     last20 = prev[-20:]
-    if len(last20) >= 20 and all(b.close for b in last20):
-        highs = [b.high or b.close for b in last20]
-        lows = [b.low or b.close for b in last20]
-        f.high_20 = max(highs)
-        f.range_20 = (max(highs) / min(lows) - 1) * 100
+    if len(last20) >= 20:
+        highs = [finite_number(b.high) for b in last20]
+        lows = [finite_number(b.low) for b in last20]
+        if all(h is not None and l is not None and 0 < l <= float(b.close) <= h for b, h, l in zip(last20, highs, lows)):
+            f.high_20 = max(highs)
+            f.range_20 = (max(highs) / min(lows) - 1) * 100
         f.ret_20 = (today.close / last20[0].close - 1) * 100
     if len(bars) >= 10:
-        peak = max(b.high or b.close or 0 for b in bars[-15:])
-        f.pullback_15 = (today.close / peak - 1) * 100 if peak else None
-    f.limit_ups_15 = sum(1 for b in prev[-15:] if (b.change_pct or 0) >= limit_pct - LIMIT_TOLERANCE)
-    if today.high and today.low:
-        f.close_pos = (today.close - today.low) / (today.high - today.low) if today.high > today.low else 1.0
+        highs = [finite_number(b.high) for b in bars[-15:]]
+        if all(h is not None and h > 0 for h in highs):
+            f.pullback_15 = (f.close / max(highs) - 1) * 100
+    f.limit_ups_15 = sum(1 for b in prev[-15:] if (finite_number(b.change_pct) or 0) >= limit_pct - LIMIT_TOLERANCE)
+    high, low = finite_number(today.high), finite_number(today.low)
+    if high is not None and low is not None and 0 < low <= f.close <= high:
+        f.close_pos = (f.close - low) / (high - low) if high > low else 1.0
     return f
 
 
@@ -245,6 +277,23 @@ class Pick:
     change_pct: float
     amount_yi: float
     fits_regime: bool
+    event_risks: list[str] = field(default_factory=list)
+    screen_score: float = 0
+    factor_scores: dict = field(default_factory=dict)
+    factor_coverage: float = 0
+    data_quality: dict = field(default_factory=dict)
+    financial_status: str = "missing"
+    industry: str = ""
+    themes: list[str] = field(default_factory=list)
+    risk_penalty: float = 0
+    portfolio_penalty: float = 0
+    risk_flags: list[str] = field(default_factory=list)
+    risk_level: str = "low"
+    excluded_by_risk: bool = False
+    llm_score: float | None = None
+    llm_reason: str = ""
+    context_pack: dict = field(default_factory=dict)
+    post_analysis: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -258,6 +307,9 @@ class ScreenResult:
     stats: dict[str, int] = field(default_factory=dict)
     notes: list[str] = field(default_factory=list)
     weights: dict[str, float] = field(default_factory=dict)   # 生效的策略权重（未回测时为空）
+    status: str = "success"
+    pipeline: dict = field(default_factory=dict)
+    excluded: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {**asdict(self), "picks": [p.to_dict() for p in self.picks]}
@@ -280,19 +332,66 @@ class StrategyScreener:
         self.max_per_strategy = int(cfg.get("max_per_strategy", 10))
         self.max_total = int(cfg.get("max_total", 30))
         self.adaptive_weights = bool(cfg.get("adaptive_strategy_weights", True))
+        self.minimum_universe = int(cfg.get("minimum_universe", 0))
+        self.financial_cache_max_age_days = int(cfg.get("financial_cache_max_age_days", 30))
+        self.pipeline_cfg = cfg.get("pipeline") or {}
+        from src.strategy.screening_pipeline import validate_pipeline
+        validate_pipeline(self.pipeline_cfg)
+        self.profiles = []
         self.strategies = self._load_strategies(cfg.get("strategies") or {})
+        self.rule_definitions = []
+        if cfg.get("rules_file"):
+            from src.strategy.screening_rules import load_rules, matches
+            self.rule_definitions = load_rules(cfg["rules_file"])
+            for rule in self.rule_definitions:
+                if rule["name"] in {strategy.name for strategy in STRATEGIES}:
+                    raise ValueError("YAML 策略不能覆盖内置策略标识")
+                def evaluate(features, params, definition=rule):
+                    return (definition.get("score", 60), definition.get("label", definition["name"]) + "条件满足") if matches(features, definition["conditions"]) else None
+                self.strategies.append(Strategy(rule["name"], rule.get("label", rule["name"]), rule.get("description", "YAML 规则"), tuple(rule.get("regimes") or ("进攻", "均衡", "防守", "冰点")), {}, evaluate))
         self.pool_cfg = load_config(STOCK_POOL_CONFIG_PATH) or {}
+        if cfg.get("profiles_file"):
+            from src.strategy.screening_pipeline import load_profiles, profile_rule
+            self.profiles = load_profiles(cfg["profiles_file"])
+            for definition in self.profiles:
+                if definition["name"] in {s.name for s in self.strategies}:
+                    raise ValueError("多因子策略标识不能覆盖现有策略")
+                self.strategies.append(Strategy(definition["name"], definition.get("label", definition["name"]),
+                    definition.get("description", "多因子"), tuple(definition.get("regimes", ["进攻", "均衡", "防守", "冰点"])), {},
+                    lambda f, p, definition=definition: profile_rule(f, definition)))
 
     @staticmethod
     def _load_strategies(overrides: dict) -> list[Strategy]:
+        if not isinstance(overrides, dict) or set(overrides) - {s.name for s in STRATEGIES}:
+            raise ValueError("screening.strategies 包含未知策略或格式错误")
         result = []
         for s in STRATEGIES:
             custom = overrides.get(s.name) or {}
+            if not isinstance(custom, dict) or set(custom) - {*s.params, "enabled"}:
+                raise ValueError(f"{s.name} 参数格式错误或包含未知参数")
+            if not isinstance(custom.get("enabled", True), bool):
+                raise ValueError(f"{s.name}.enabled 必须为布尔值")
+            if any(finite_number(v) is None or not isinstance(v, (int, float)) or isinstance(v, bool)
+                   for k, v in custom.items() if k in s.params):
+                raise ValueError(f"{s.name} 参数必须为有限数值")
             if custom.get("enabled", True) is False:
                 continue
             params = {**s.params, **{k: float(v) for k, v in custom.items() if k in s.params}}
+            for key, value in params.items():
+                if key.endswith("_min") and key[:-4] + "_max" in params and value > params[key[:-4] + "_max"]:
+                    raise ValueError(f"{s.name}.{key} 不能大于上限")
+                if (key.startswith(("amount_", "vol_ratio", "turnover_", "limit_ups_", "range_", "ma20_floor")) and value < 0
+                        or key.startswith("close_pos_") and not 0 <= value <= 1):
+                    raise ValueError(f"{s.name}.{key} 超出有效范围")
             result.append(Strategy(s.name, s.label, s.description, s.regimes, params, s.rule))
         return result
+
+    def strategy_signature(self) -> str:
+        definition = {"strategies": [{"name": s.name, "params": s.params, "regimes": s.regimes} for s in self.strategies],
+                      "rules": self.rule_definitions, "pool": self.pool_cfg, "max_per_strategy": self.max_per_strategy,
+                      "financial_cache_max_age_days": self.financial_cache_max_age_days,
+                      "profiles": self.profiles, "pipeline": self.pipeline_cfg}
+        return hashlib.sha256(json.dumps(definition, ensure_ascii=False, sort_keys=True, allow_nan=False).encode()).hexdigest()
 
     def run(self, trade_date: str | None = None, save: bool = True, point_in_time: bool = False) -> ScreenResult:
         """point_in_time=True 用于历史回测：只用 trade_date 当天及以前的数据，策略权重不生效。"""
@@ -300,16 +399,25 @@ class StrategyScreener:
         with get_db_session(self.db_path) as session:
             trade_date = trade_date or self._latest_trade_date(session)
             if not trade_date:
-                return ScreenResult(notes=["没有行情数据，请先采集"])
+                return ScreenResult(notes=["没有行情数据，请先采集"], status="partial")
             result = ScreenResult(trade_date=trade_date)
             snapshot = self._snapshot(session, trade_date)
             pool = [r for r in snapshot.values() if self._in_pool(r)]
             candidates = [r for r in pool if (r.amount or 0) >= PRE_FILTER_AMOUNT]
             bars = self._history(session, trade_date, [r.code for r in candidates])
             stock_themes = self._stock_themes(session, trade_date)
+            industries = {}
+            for row in session.query(LimitUpStock).filter(LimitUpStock.trade_date <= trade_date).order_by(LimitUpStock.trade_date.desc()).limit(20000):
+                code = bare_code(row.code)
+                if row.sector and code not in industries and (not point_in_time or row.created_at < datetime.strptime(trade_date, "%Y-%m-%d") + timedelta(days=1)):
+                    industries[code] = row.sector
+            fundamentals = self._financial_payloads(session, [bare_code(r.code) for r in candidates], trade_date, point_in_time)
         main_lines = self._main_lines(trade_date)
         result.regime = self._regime(trade_date, point_in_time)
         result.weights = {} if point_in_time else self.strategy_weights()
+        result.pipeline = {"version": "screening-pipeline-v1", "mode": "point_in_time" if point_in_time else "live"}
+        if not point_in_time and self.pipeline_cfg.get("financial_enrichment", False):
+            self._enrich_financials(candidates, fundamentals, result)
 
         features = []
         for row in candidates:
@@ -317,26 +425,45 @@ class StrategyScreener:
             f = compute_features(code, row.name or "", bars.get(code) or [row])
             if f is None:
                 continue
+            f.pe, f.pb = finite_number(getattr(row, "pe", None)), finite_number(getattr(row, "pb", None))
+            f.circ_mv = finite_number(getattr(row, "circ_mv", None))
+            self._financial_features(f, trade_date, fundamentals.get(code))
+            f.fundamentals = fundamentals.get(code) or {}
+            f.industry = industries.get(code, "")
             f.themes = {t: main_lines[t] for t in stock_themes.get(code, ()) if t in main_lines}
+            from src.strategy.screening_pipeline import quality
+            f.data_quality = quality(bars.get(code) or [row], f, fundamentals.get(code))
             features.append(f)
 
         with_history = sum(1 for f in features if f.bars >= 21)
-        result.stats = {"universe": len(snapshot), "pool": len(pool), "candidates": len(candidates), "with_history": with_history}
+        result.stats = {"universe": len(snapshot), "pool": len(pool), "candidates": len(candidates),
+                        "valid_features": len(features), "with_history": with_history, "financial_cache": len(fundamentals)}
+        result.stats["financial_coverage_pct"] = round(len(fundamentals) / max(1, len(candidates)) * 100)
+        result.stats["quality_qualified"] = sum(f.data_quality["score"] >= 75 for f in features)
         if len(snapshot) < MIN_UNIVERSE:
             result.notes.append(f"{trade_date} 只有 {len(snapshot)} 只股票的行情，不是全市场，选股结果不完整")
-        if features and with_history < len(features) * MIN_HISTORY_COVERAGE:
+        history_complete = not candidates or with_history >= len(candidates) * MIN_HISTORY_COVERAGE
+        if not history_complete:
             start = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=HISTORY_CALENDAR_DAYS)).strftime("%Y-%m-%d")
-            result.notes.append(f"只有 {with_history}/{len(features)} 只股票有 20 日以上日线，依赖历史的策略会漏选；"
+            result.notes.append(f"只有 {with_history}/{len(candidates)} 只股票有 20 日以上有效日线，依赖历史的策略会漏选；"
                                 f"可运行 python scripts/fetch_history.py --mode daily --start-date {start} 补齐")
         if result.regime in ("", "未知"):
             result.notes.append("大盘环境未知，所有策略按适配处理")
-        result.picks = self._rank(features, result, result.weights)
+        complete = len(snapshot) >= self.minimum_universe and history_complete
+        result.picks = self._rank(features, result, result.weights, point_in_time=point_in_time, allow_llm=complete)
+        result.status = "success" if complete else "partial"
+        if not complete:
+            result.notes.append("行情覆盖或历史质量不足，保留上次成功选股结果；本次候选不进入 AI 预测")
+        if complete and not point_in_time and self.pipeline_cfg.get("post_analysis_top_k", 0):
+            self._post_analysis(result)
         if save:
-            self._save(result)
+            if complete:
+                self._save(result)
+            self._record_run(result, result.status)
         logger.info(f"策略选股 {trade_date}：全市场 {len(snapshot)} 只 → 股票池 {len(pool)} → 入选 {len(result.picks)} 只")
         return result
 
-    def _rank(self, features: list[Features], result: ScreenResult, weights: dict[str, float] | None = None) -> list[Pick]:
+    def _rank(self, features: list[Features], result: ScreenResult, weights: dict[str, float] | None = None, *, point_in_time: bool = False, allow_llm: bool = True) -> list[Pick]:
         hits: dict[str, list[tuple[Strategy, float, str]]] = defaultdict(list)
         by_code = {f.code: f for f in features}
         for strategy in self.strategies:
@@ -344,7 +471,7 @@ class StrategyScreener:
             matched = []
             for f in features:
                 outcome = strategy.rule(f, strategy.params)
-                if outcome:
+                if outcome and finite_number(outcome[0] * weight) is not None:
                     matched.append((f.code, _clamp(outcome[0] * weight), outcome[1]))
             matched.sort(key=lambda m: -m[1])
             result.stats[strategy.name] = len(matched)
@@ -362,9 +489,202 @@ class StrategyScreener:
                 score=_merged_score([sc for _, sc, _ in items]), reasons=[r for _, _, r in items],
                 scores=[sc for _, sc, _ in items],
                 close=f.close, change_pct=round(f.change_pct, 2), amount_yi=round(f.amount / 1e8, 2), fits_regime=fits,
+                data_quality=f.data_quality, industry=f.industry, themes=list(f.themes),
+                financial_status="available" if f.roe is not None else "missing",
             ))
+        from src.database.models import FinanceNews, StockFundFlow
+        from src.collectors.stock_news import classify_notice
+        cutoff = datetime.strptime(result.trade_date, "%Y-%m-%d") + timedelta(days=1)
+        with get_db_session(self.db_path) as session:
+            query = session.query(FinanceNews).filter(FinanceNews.news_time >= cutoff - timedelta(days=7), FinanceNews.news_time < cutoff)
+            if point_in_time:
+                query = query.filter(FinanceNews.created_at < cutoff)
+            news = query.all()
+            flows = {}
+            for flow in session.query(StockFundFlow).filter(StockFundFlow.trade_date == result.trade_date):
+                if not point_in_time or flow.updated_at < cutoff:
+                    flows[bare_code(flow.code)] = {"net_inflow": flow.net_inflow, "net_ratio": flow.net_ratio, "source": flow.source, "trade_date": flow.trade_date}
+        for pick in picks:
+            related = [item for item in news if pick.code in item.title or (pick.name and pick.name in item.title)][:10]
+            pick.event_risks = [item.title for item in related if classify_notice(item.title)[0]][:5]
+            from src.services.research_artifact import build_context_pack
+            pick.context_pack = build_context_pack({"code": pick.code, "name": pick.name,
+                "phase": {"trade_date": result.trade_date, "point_in_time": point_in_time}, "data_quality": {**pick.data_quality, "bar_count": by_code[pick.code].bars},
+                "quote": {"close": pick.close, "trade_date": result.trade_date, "source": pick.data_quality.get("source")},
+                "technical": asdict(by_code[pick.code]), "fundamentals": by_code[pick.code].fundamentals,
+                "flow": flows.get(pick.code), "news_evidence": [{"id": n.id, "title": n.title, "source": n.source, "news_time": str(n.news_time or "")} for n in related]})
+            if pick.event_risks:
+                pick.reasons.append("事件风险待复核：" + "；".join(pick.event_risks))
         picks.sort(key=lambda p: (not p.fits_regime, -p.score, p.code))
+        from src.strategy.screening_pipeline import factor_scores, weighted_score, apply_risk, diversify, rerank
+        for p in picks:
+            p.factor_scores = factor_scores(by_code[p.code])
+            factor, p.factor_coverage = weighted_score(p.factor_scores, {key: 1 for key in p.factor_scores})
+            if self.pipeline_cfg.get("enabled", False):
+                p.score = _clamp(.5 * p.score + .5 * factor)
+            p.screen_score = p.score
+        if self.pipeline_cfg.get("enabled", False):
+            if self.pipeline_cfg.get("llm_rerank", False) and not point_in_time and allow_llm:
+                self._enrich_candidate_context(picks, result)
+            kept = []
+            for p in picks:
+                if apply_risk(p, by_code[p.code], self.pipeline_cfg):
+                    kept.append(p)
+                else:
+                    result.excluded.append(p.to_dict())
+            picks = sorted(kept, key=lambda p: (not p.fits_regime, -p.score, p.code))
+            if self.pipeline_cfg.get("llm_rerank", False) and not point_in_time and allow_llm:
+                from src.analyzers.llm_client import LLMClient
+                picks, result.pipeline["llm_rerank"] = rerank(picks, self.pipeline_cfg, LLMClient(self.config.get("llm") or {}), seconds=self.pipeline_cfg.get("llm_timeout_seconds", 40))
+            else:
+                result.pipeline["llm_rerank"] = {"status": "skipped", "reason": "历史回测禁止使用实时模型" if point_in_time else "未启用"}
+            picks = diversify(picks, self.pipeline_cfg)
         return picks[: self.max_total]
+
+    def _enrich_candidate_context(self, picks: list[Pick], result: ScreenResult):
+        """在固定预算内补候选公告和新闻，先做风险复核再交给模型。"""
+        import time
+        from src.collectors.request_budget import bounded_call
+        from src.collectors.stock_news import get_stock_news, classify_notice
+        from src.schemas.research import ContextBlock, ContextItem
+        from src.utils.redaction import redact_text
+        expires = time.monotonic() + self.pipeline_cfg.get("candidate_context_timeout_seconds", 30)
+        counts = {"available": 0, "failed": 0, "skipped": 0}
+        for pick in picks[:int(self.pipeline_cfg.get("llm_top_k", 15))]:
+            remaining = expires - time.monotonic()
+            if remaining <= 0:
+                counts["skipped"] += 1
+                continue
+            try:
+                data = bounded_call(lambda code=pick.code: get_stock_news(code, include_status=True), min(remaining, 15))
+                for key in ("news", "notices"):
+                    values = data.get(key) or []
+                    previous = pick.context_pack["blocks"].get(key, {}).get("items", {}).get("evidence", {}).get("value") or []
+                    values = [*previous, *values]
+                    failed = (data.get("states") or {}).get(key) == "fetch_failed"
+                    status = "partial" if failed and values else "fetch_failed" if failed else "available" if values else "missing"
+                    block = ContextBlock(status=status, source="本地资讯/东方财富", items={"evidence": ContextItem(status=status, value=values, source="本地资讯/东方财富")})
+                    pick.context_pack["blocks"][key] = block.model_dump(mode="json")
+                pick.event_risks = list(dict.fromkeys([*pick.event_risks, *[n["title"] for n in data.get("notices", []) if classify_notice(n.get("title", ""))[0]]]))[:10]
+                counts["failed" if "fetch_failed" in (data.get("states") or {}).values() else "available"] += 1
+            except Exception as error:
+                counts["failed"] += 1
+                pick.context_pack["blocks"]["notices"] = ContextBlock(status="fetch_failed", limitations=[redact_text(error, 200)]).model_dump(mode="json")
+        result.pipeline["candidate_context"] = counts
+
+    def _enrich_financials(self, candidates, payloads: dict, result: ScreenResult):
+        import time
+        from src.collectors.quarterly_fundamentals import QuarterlyFundamentals
+        from src.collectors.request_budget import POLICY, RequestPolicy
+        expires = time.monotonic() + self.pipeline_cfg.get("financial_timeout_seconds", 60)
+        ordered = sorted(candidates, key=lambda row: -(finite_number(row.amount) or 0))
+        attempted = 0
+        for row in ordered[:int(self.pipeline_cfg.get("financial_candidates", 40))]:
+            code = bare_code(row.code)
+            if code in payloads:
+                continue
+            remaining = expires - time.monotonic()
+            if remaining <= 0:
+                break
+            cfg = {**self.config, "data_sources": {**(self.config.get("data_sources") or {}), "stage_timeout_seconds": remaining}}
+            previous = POLICY.get()
+            try:
+                payload = QuarterlyFundamentals(cfg).get(code)
+                attempted += 1
+                if payload.get("status") in {"available", "partial"}:
+                    payloads[code] = payload
+            except Exception as error:
+                logger.warning("候选财务补数失败 {}: {}", code, error)
+            finally:
+                POLICY.set(previous)
+        result.pipeline["financial_enrichment"] = {"attempted": attempted, "covered": len(payloads), "budget_exhausted": time.monotonic() >= expires}
+
+    def _post_analysis(self, result: ScreenResult):
+        import time
+        from src.services.analysis_process import isolated_result
+        expires = time.monotonic() + self.pipeline_cfg.get("post_analysis_timeout_seconds", 90)
+        for pick in result.picks[:int(self.pipeline_cfg.get("post_analysis_top_k", 3))]:
+            if time.monotonic() >= expires:
+                pick.post_analysis = {"status": "skipped", "reason": "复核预算耗尽"}
+                continue
+            try:
+                cfg = {**self.config, "diagnosis": {**(self.config.get("diagnosis") or {}), "timeout_seconds": min(60, expires - time.monotonic())}}
+                report = isolated_result("diagnosis", cfg, {"code": pick.code, "force": False})
+                if report.get("error") or not report.get("diagnosis_id"):
+                    raise RuntimeError(report.get("error") or "复核未生成有效报告")
+                pick.post_analysis = {"status": "available", "report_id": report.get("diagnosis_id"), "action": report.get("action"), "score": report.get("score")}
+            except Exception as error:
+                from src.utils.redaction import redact_text
+                pick.post_analysis = {"status": "fetch_failed", "reason": redact_text(error, 200)}
+
+    def _financial_payloads(self, session, codes: list[str], trade_date: str, point_in_time: bool) -> dict[str, dict]:
+        """批量读取缓存；个别损坏缓存不能拖垮全市场筛选。"""
+        from src.database.models import ResearchCache
+        keys = ["fundamentals:" + code for code in codes]
+        cutoff = datetime.strptime(trade_date, "%Y-%m-%d") + timedelta(days=1)
+        since = (cutoff if point_in_time else datetime.now()) - timedelta(days=self.financial_cache_max_age_days)
+        result = {}
+        if point_in_time:
+            from src.database.models import FinancialSnapshot
+            for i in range(0, len(codes), CHUNK):
+                snapshots = session.query(FinancialSnapshot).filter(FinancialSnapshot.code.in_(codes[i:i + CHUNK]),
+                    FinancialSnapshot.collected_at >= since, FinancialSnapshot.collected_at < cutoff).order_by(FinancialSnapshot.collected_at.desc(), FinancialSnapshot.id.desc()).all()
+                for row in snapshots:
+                    if row.code in result:
+                        continue
+                    try:
+                        payload = json.loads(row.payload_json)
+                        if isinstance(payload, dict) and payload.get("status") in {"available", "partial"}:
+                            result[row.code] = payload
+                    except (ValueError, TypeError):
+                        continue
+        for i in range(0, len(keys), CHUNK):
+            rows = session.query(ResearchCache).filter(ResearchCache.key.in_(keys[i:i + CHUNK]), ResearchCache.updated_at >= since).all()
+            for row in rows:
+                if point_in_time and row.updated_at >= cutoff:
+                    continue
+                try:
+                    payload = json.loads(row.payload_json)
+                except (ValueError, TypeError):
+                    continue
+                if isinstance(payload, dict) and payload.get("status") not in {"stale", "missing", "fetch_failed", "not_supported"}:
+                    result.setdefault(row.key.split(":", 1)[1], payload)
+        return result
+
+    @staticmethod
+    def _financial_features(features: Features, trade_date: str, payload: dict | None):
+        if not payload:
+            return
+        reports = payload.get("reports")
+        if not isinstance(reports, list):
+            return
+        reports = [report for report in reports if isinstance(report, dict) and iso_date(report.get("report_date"))
+                   and report["report_date"] <= trade_date]
+        if not reports:
+            return
+        reports.sort(key=lambda report: report["report_date"], reverse=True)
+        for key in ("roe", "profit_yoy", "revenue_yoy"):
+            setattr(features, key, finite_number(reports[0].get(key)))
+        dividend = payload.get("dividend")
+        events = dividend.get("events", []) if isinstance(dividend, dict) else []
+        if not isinstance(events, list):
+            return
+        since = (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=365)).strftime("%Y-%m-%d")
+        dividends = [finite_number(event.get("cash_per_share")) for event in events if isinstance(event, dict)
+                     and iso_date(event.get("ex_dividend_date")) and since <= event["ex_dividend_date"] <= trade_date]
+        dividends = [value for value in dividends if value is not None and value >= 0]
+        if dividends and features.close > 0:
+            features.dividend_yield = sum(dividends) / features.close * 100
+
+    def _record_run(self, result: ScreenResult, status: str):
+        from src.database.models import ScreeningRun
+        with get_db_session(self.db_path) as session:
+            session.add(ScreeningRun(trade_date=result.trade_date, status=status, result_json=json.dumps(result.to_dict(), ensure_ascii=False)))
+
+    def runs(self, limit: int = 20) -> list[dict]:
+        from src.database.models import ScreeningRun
+        with get_db_session(self.db_path) as session:
+            return [{"id": row.id, "trade_date": row.trade_date, "status": row.status, "created_at": row.created_at.isoformat(), **json.loads(row.result_json)} for row in session.query(ScreeningRun).order_by(ScreeningRun.id.desc()).limit(limit)]
 
     # ---- 数据 ----
 
@@ -381,11 +701,20 @@ class StrategyScreener:
         rows = (
             session.query(StockDaily.code, StockDaily.name, StockDaily.trade_date, StockDaily.open, StockDaily.high,
                           StockDaily.low, StockDaily.close, StockDaily.volume, StockDaily.amount, StockDaily.change_pct,
-                          StockDaily.turnover, StockDaily.circ_mv)
+                          StockDaily.turnover, StockDaily.circ_mv, StockDaily.pe, StockDaily.pb,
+                          StockDaily.price_adjustment, StockDaily.source, StockDaily.updated_at, StockDaily.id)
             .filter(StockDaily.trade_date == trade_date, StockDaily.close > 0)
             .all()
         )
-        return {bare_code(r.code): r for r in rows}
+        result = {}
+        for row in rows:
+            code = equity_code(row.code)
+            close, change, amount = finite_number(row.close), finite_number(row.change_pct), finite_number(row.amount)
+            if code is None or close is None or close <= 0 or change is None or amount is None or amount < 0:
+                continue
+            if code not in result or row_priority(row) > row_priority(result[code]):
+                result[code] = row
+        return result
 
     def _in_pool(self, row) -> bool:
         blacklist = self.pool_cfg.get("blacklist") or {}
@@ -410,13 +739,16 @@ class StrategyScreener:
         for i in range(0, len(variants), CHUNK):
             rows = (
                 session.query(StockDaily.code, StockDaily.trade_date, StockDaily.open, StockDaily.high, StockDaily.low,
-                              StockDaily.close, StockDaily.volume, StockDaily.amount, StockDaily.change_pct, StockDaily.turnover)
+                              StockDaily.close, StockDaily.volume, StockDaily.amount, StockDaily.change_pct, StockDaily.turnover,
+                              StockDaily.price_adjustment, StockDaily.source, StockDaily.updated_at, StockDaily.id)
                 .filter(StockDaily.code.in_(variants[i:i + CHUNK]), StockDaily.trade_date >= start,
-                        StockDaily.trade_date <= trade_date, StockDaily.close > 0)
+                        StockDaily.trade_date <= trade_date)
                 .all()
             )
             for r in rows:
-                by_code[bare_code(r.code)][r.trade_date] = r  # 同一天多种代码格式只留一条
+                code = equity_code(r.code)
+                if code and (r.trade_date not in by_code[code] or row_priority(r) > row_priority(by_code[code][r.trade_date])):
+                    by_code[code][r.trade_date] = r
         result = {}
         for code, days in by_code.items():
             dates = sorted(trading_calendar.trade_days_only(days))[-HISTORY_BARS:]
@@ -467,13 +799,16 @@ class StrategyScreener:
             return ""
 
     def _save(self, result: ScreenResult) -> None:
+        regimes = {strategy.name: strategy.regimes for strategy in self.strategies}
         with get_db_session(self.db_path) as session:
             session.query(StrategyPick).filter(StrategyPick.trade_date == result.trade_date).delete()
             for p in result.picks:
                 for strategy, score, reason in zip(p.strategies, p.scores, p.reasons):
                     session.add(StrategyPick(
                         trade_date=result.trade_date, strategy=strategy, code=p.code, name=p.name, score=score,
-                        reason=reason, close=p.close, change_pct=p.change_pct, fits_regime=p.fits_regime,
+                        reason=reason, close=p.close, change_pct=p.change_pct,
+                        fits_regime=result.regime in ("", "未知") or result.regime in regimes[strategy],
+                        metadata_json=json.dumps(p.to_dict(), ensure_ascii=False),
                     ))
 
     def strategy_weights(self) -> dict[str, float]:
@@ -485,15 +820,34 @@ class StrategyScreener:
 
             since = datetime.now() - timedelta(days=WEIGHTS_MAX_AGE_DAYS)
             with get_db_session(self.db_path) as session:
-                row = (
-                    session.query(StrategyBacktest.result_json).filter(StrategyBacktest.created_at >= since)
-                    .order_by(StrategyBacktest.created_at.desc()).first()
+                rows = (
+                    session.query(StrategyBacktest.result_json).filter(StrategyBacktest.created_at >= since,
+                        StrategyBacktest.end_date >= since.strftime("%Y-%m-%d"),
+                        StrategyBacktest.end_date <= datetime.now().strftime("%Y-%m-%d"))
+                    .order_by(StrategyBacktest.created_at.desc(), StrategyBacktest.id.desc()).limit(20).all()
                 )
-            if not row:
-                return {}
-            import json
-
-            return {k: float(v) for k, v in (json.loads(row[0]).get("weights") or {}).items()}
+            signature = self.strategy_signature()
+            names = {strategy.name for strategy in self.strategies}
+            for row in rows:
+                try:
+                    report = json.loads(row[0])
+                except (ValueError, TypeError):
+                    continue
+                if (not isinstance(report, dict) or report.get("engine_version") != BACKTEST_ENGINE_VERSION
+                        or report.get("strategy_signature") != signature or report.get("status") != "success"
+                        or report.get("calendar_verified") is not True):
+                    continue
+                weights = report.get("weights")
+                if not isinstance(weights, dict):
+                    continue
+                from src.strategy.strategy_backtest import strategy_weights
+                statistics = report.get("strategies")
+                if not isinstance(statistics, list) or any(not isinstance(item, dict) for item in statistics):
+                    continue
+                computed = strategy_weights(statistics)
+                return {key: value for key, value in computed.items() if key in names
+                        and finite_number(weights.get(key)) == value}
+            return {}
         except Exception as e:
             logger.debug(f"读取策略权重失败: {e}")
             return {}
@@ -509,7 +863,7 @@ class StrategyScreener:
 
         strategy 非空时只保留入选了该策略的股票，合并后的 labels/reasons 仍含该股票当天所有策略。
         """
-        labels = {s.name: s.label for s in STRATEGIES}
+        labels = {s.name: s.label for s in self.strategies}
         with get_db_session(self.db_path) as session:
             if not trade_date:
                 trade_date = session.query(func.max(StrategyPick.trade_date)).scalar()
@@ -533,10 +887,20 @@ class StrategyScreener:
                     "next_change_pct": next_changes.get(r.code),
                 })
                 item["scores"].append(r.score or 0.0)
+                item["fits_regime"] = item["fits_regime"] or r.fits_regime
                 item["labels"].append(labels.get(r.strategy, r.strategy))
                 item["reasons"].append(r.reason)
+                if r.metadata_json:
+                    try:
+                        metadata = json.loads(r.metadata_json)
+                        if isinstance(metadata, dict):
+                            item.update(metadata)
+                    except (TypeError, ValueError):
+                        pass
         for item in merged.values():
-            item["score"] = _merged_score(item.pop("scores"))
+            if "screen_score" not in item:
+                item["score"] = _merged_score(item["scores"])
+            item.pop("scores", None)
         return sorted(merged.values(), key=lambda x: (not x["fits_regime"], -x["score"], x["code"]))
 
     def history_dates(self, limit: int = 60) -> list[dict[str, Any]]:
@@ -574,7 +938,7 @@ class StrategyScreener:
         """近 lookback_days 天各策略选股的次日表现：平均涨幅、上涨比例、涨停比例。"""
         trading_calendar.load(self.db_path, refresh=False)
         start = (datetime.now() - timedelta(days=lookback_days)).strftime("%Y-%m-%d")
-        stats: dict[str, dict[str, Any]] = {s.name: {"picks": 0, "changes": [], "limit_ups": 0} for s in STRATEGIES}
+        stats: dict[str, dict[str, Any]] = {s.name: {"picks": 0, "changes": [], "limit_ups": 0} for s in self.strategies}
         with get_db_session(self.db_path) as session:
             rows = session.query(StrategyPick).filter(StrategyPick.trade_date >= start).all()
             by_date: dict[str, list] = defaultdict(list)
@@ -591,7 +955,7 @@ class StrategyScreener:
                     s["changes"].append(change)
                     if change >= daily_limit_pct(p.code, p.name or "") * 100 - LIMIT_TOLERANCE:
                         s["limit_ups"] += 1
-        labels = {s.name: (s.label, s.regimes) for s in STRATEGIES}
+        labels = {s.name: (s.label, s.regimes) for s in (*STRATEGIES, *self.strategies)}
         result = []
         for name, s in stats.items():
             changes = s["changes"]
@@ -610,13 +974,14 @@ class StrategyScreener:
         if next_day > datetime.now().strftime("%Y-%m-%d"):
             return {}
         variants = [v for c in codes for v in code_candidates(c)]
-        result = {}
+        result, selected = {}, {}
         for i in range(0, len(variants), CHUNK):
-            for code, change in (
-                session.query(StockDaily.code, StockDaily.change_pct)
+            for row in (
+                session.query(StockDaily.code, StockDaily.change_pct, StockDaily.updated_at, StockDaily.id)
                 .filter(StockDaily.trade_date == next_day, StockDaily.code.in_(variants[i:i + CHUNK]))
                 .all()
             ):
-                if change is not None:
-                    result[bare_code(code)] = change
+                code, change = equity_code(row.code), finite_number(row.change_pct)
+                if code and change is not None and (code not in selected or row_priority(row) > row_priority(selected[code])):
+                    selected[code], result[code] = row, change
         return result

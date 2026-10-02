@@ -88,7 +88,7 @@ class _Llm:
 def test_consult_one_call_per_skill_and_normalizes():
     skills = [get_skill("limit_up_relay"), get_skill("dragon_head"), get_skill("bull_trend")]
     replies = {
-        skills[0].display_name: {"stance": "看多", "score": 150, "confidence": "高", "reason": "封板早"},
+        skills[0].display_name: {"stance": "看多", "score": 95, "confidence": "高", "reason": "封板早"},
         skills[1].display_name: {"stance": "乱写", "score": -20, "confidence": "中", "reason": "x"},
     }
 
@@ -102,9 +102,8 @@ def test_consult_one_call_per_skill_and_normalizes():
     result = consult(llm, "股票：测试", skills)
     assert len(llm.calls) == 3 and all(c[0] == "股票：测试" for c in llm.calls)
     by = {o["skill"]: o for o in result}
-    assert set(by) == {"limit_up_relay", "dragon_head"}  # 非 dict 的被跳过
-    assert by["limit_up_relay"]["score"] == 100 and by["limit_up_relay"]["stance"] == "看多"
-    assert by["dragon_head"]["score"] == 0 and by["dragon_head"]["stance"] == "中性"
+    assert set(by) == {"limit_up_relay"}  # 非 dict、非法方向和越界评分均被隔离
+    assert by["limit_up_relay"]["score"] == 95 and by["limit_up_relay"]["stance"] == "看多"
     for o in result:
         assert {"skill", "display_name", "stance", "score", "confidence", "reason", "weight"} <= set(o)
         assert o["weight"] == 1.0
@@ -133,11 +132,12 @@ def test_consensus_thresholds_and_disagreement():
     assert bull["stance"] == "看多" and bull["score"] == pytest.approx(70) and bull["agreement"] != "分歧"
     assert consensus([op("看空", 30), op("中性", 40)])["stance"] == "看空"
     assert consensus([op("中性", 50), op("中性", 55)])["stance"] == "中性"
-    assert consensus([op("看多", 60)])["stance"] == "看多" and consensus([op("看空", 40)])["stance"] == "看空"
+    assert consensus([op("看多", 60)])["status"] == "insufficient"
+    assert consensus([op("看空", 40)])["score"] is None
     split = consensus([op("看多", 80), op("看空", 20)])
     assert split["agreement"] == "分歧" and split["stance"] == "中性"
     weighted = consensus([op("看多", 90, 1.0), op("中性", 30, 3.0)])
-    assert weighted["score"] == pytest.approx(45)  # (90*1+30*3)/4
+    assert weighted["score"] == pytest.approx(57.3)  # 权重限制在 0.8–1.2
 
 
 def test_section_text_contains_names():
@@ -233,7 +233,7 @@ def test_evaluate_bearish_hit_and_ignores_non_trade_rows(svc, db):
 def test_performance_only_counts_hit_samples_and_percent(svc, db):
     with get_db_session(db) as s:
         for i in range(10):
-            s.add(SkillOpinion(code="600519", skill="limit_up_relay", stance="看多", score=70, trade_date="2026-09-21",
+            s.add(SkillOpinion(code=f"600{i:03d}", skill="limit_up_relay", stance="看多", score=70, trade_date="2026-09-21",
                                ret_5d=1.0, hit=i < 6, created_at=datetime.now()))
         for _ in range(5):  # 中性无 hit，不计入
             s.add(SkillOpinion(code="600519", skill="limit_up_relay", stance="中性", score=50, trade_date="2026-09-21", created_at=datetime.now()))
@@ -243,7 +243,7 @@ def test_performance_only_counts_hit_samples_and_percent(svc, db):
     assert set(perf) == {"limit_up_relay"}
     row = perf["limit_up_relay"]
     assert row["samples"] == 10 and row["hits"] == 6 and row["hit_rate"] == pytest.approx(60.0)
-    assert row["weight"] == 1.0  # 样本不足 20
+    assert row["weight"] == 1.0  # 独立样本不足 30
     assert {"skill", "display_name", "samples", "hits", "hit_rate", "avg_ret", "weight"} <= set(row)
     assert "dragon_head" in {p["skill"] for p in svc.performance(365)}
 
@@ -252,16 +252,16 @@ def test_weights_rules(svc, db):
     def add(skill, n, hits):
         with get_db_session(db) as s:
             for i in range(n):
-                s.add(SkillOpinion(code="600519", skill=skill, stance="看多", score=70, trade_date="2026-09-21",
+                s.add(SkillOpinion(code=f"600{i:03d}", skill=skill, stance="看多", score=70, trade_date="2026-09-21",
                                    ret_5d=1.0 if i < hits else -1.0, hit=i < hits, created_at=datetime.now()))
 
-    add("high", 25, 20)   # 80% -> 1.2
-    add("low", 25, 10)    # 40% -> 0.9
-    add("small", 19, 19)  # 样本不足 -> 1.0
-    add("capped_low", 30, 0)  # 0% -> 下限 0.8
+    add("high", 40, 32)
+    add("low", 40, 16)
+    add("small", 29, 29)  # 样本不足 -> 1.0
+    add("capped_low", 30, 0)
     w = svc.weights(90)
-    assert w["high"] == pytest.approx(1.2) and w["low"] == pytest.approx(0.9)
-    assert w["small"] == 1.0 and w["capped_low"] == pytest.approx(0.8)
+    assert w["high"] == pytest.approx(1.109, abs=0.001) and w["low"] == pytest.approx(0.964, abs=0.001)
+    assert w["small"] == 1.0 and w["capped_low"] == pytest.approx(0.824, abs=0.001)
     assert svc.weights(90).get("unknown", 1.0) == 1.0
 
 
@@ -361,7 +361,7 @@ def test_api_skill_performance(env):
     assert client.get("/api/v1/chat/skills/performance?days=90").json() == []
     with get_db_session(config["database"]["sqlite_path"]) as s:
         for i in range(4):
-            s.add(SkillOpinion(code="600519", skill="limit_up_relay", stance="看多", score=70, trade_date="2026-09-21",
+            s.add(SkillOpinion(code=f"600{i:03d}", skill="limit_up_relay", stance="看多", score=70, trade_date="2026-09-21",
                                ret_5d=2.0, hit=i < 3, created_at=datetime.now()))
     r = client.get("/api/v1/chat/skills/performance?days=90")
     assert r.status_code == 200

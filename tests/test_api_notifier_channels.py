@@ -98,3 +98,13 @@ def test_test_endpoint_failure_and_incomplete(env, monkeypatch):  # noqa: F811
     assert res == {"ok": False, "error": "配置不完整"}
     res = client.post("/api/v1/settings/notifier/test/nope", json={"notifier": {}}).json()
     assert res["ok"] is False
+
+
+def test_batch_test_returns_each_enabled_channel_result_without_network(env, monkeypatch):
+    client, _, config = env
+    config['notifier'] = {'telegram': {'enabled': True, 'bot_token': 'test-token', 'chat_id': '1'}, 'pushplus': {'enabled': True, 'token': 'test'}, 'email': {'enabled': False}}
+    calls = []
+    monkeypatch.setattr(notifier, 'test_channel', lambda cfg, name: calls.append(name) or {'ok': name == 'telegram', 'error': '' if name == 'telegram' else '模拟失败'})
+    result = client.post('/api/v1/settings/notifier/test-batch', json={'notifier': {}}).json()
+    assert set(calls) == {'telegram', 'pushplus'} and result['ok'] is False
+    assert result['channels']['pushplus']['error'] == '模拟失败'

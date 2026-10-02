@@ -7,6 +7,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from typing import Any
+from contextvars import copy_context
 
 from loguru import logger
 
@@ -16,6 +17,7 @@ from src.config_loader import load_config
 from src.database.db import get_db_session, init_db
 from src.database.models import FinanceNews, HotSearch
 from src.services.realtime_news_ai import RealtimeNewsAIProcessor
+from src.utils.redaction import redact_text
 
 
 class CollectorOrchestrator:
@@ -65,7 +67,7 @@ class CollectorOrchestrator:
             "rss": self.collect_rss,  # 可选组，不在 required_news_sources 里
         }
         with ThreadPoolExecutor(max_workers=max(self.news_workers, 8), thread_name_prefix="news") as executor:
-            future_map = {executor.submit(func): name for name, func in tasks.items()}
+            future_map = {executor.submit(copy_context().run, func): name for name, func in tasks.items()}
             for future in as_completed(future_map):
                 name = future_map[future]
                 try:
@@ -112,7 +114,8 @@ class CollectorOrchestrator:
                 from src.collectors.stock_data import StockDataCollector
 
                 # 最近一个交易日缺行情时（如新装后遇到节假日）按该交易日补齐，否则各页面都没有数据
-                result["last_session"] = StockDataCollector(self.config).fill_last_session(self.db_path)
+                with StockDataCollector(self.config) as collector:
+                    result["last_session"] = collector.fill_last_session(self.db_path)
             except Exception as e:
                 logger.warning(f"补齐最近交易日行情异常: {e}")
             return result
@@ -139,12 +142,15 @@ class CollectorOrchestrator:
             "fund_flow": lambda: collect_fund_flow(today, self.db_path),
         }
         result = {"realtime_quotes": "ok", "limit_up_pool": "ok", "dragon_tiger": "ok", "northbound_flow": "ok", "fund_flow": "ok"}
-        with ThreadPoolExecutor(max_workers=self.market_workers, thread_name_prefix="market") as executor:
-            future_map = {executor.submit(func): name for name, func in tasks.items()}
+        with collector, ThreadPoolExecutor(max_workers=self.market_workers, thread_name_prefix="market") as executor:
+            future_map = {executor.submit(copy_context().run, func): name for name, func in tasks.items()}
             for future in as_completed(future_map):
                 name = future_map[future]
                 try:
-                    future.result()
+                    value = future.result()
+                    if isinstance(value, dict):
+                        status = value.get("status", "available")
+                        result[name] = f"error: {value.get('reason', status)}" if status == "fetch_failed" else status
                 except Exception as e:
                     logger.error(f"[{name}] 采集异常: {e}")
                     result[name] = f"error: {e}"
@@ -155,8 +161,8 @@ class CollectorOrchestrator:
         """采集市场全局概况（成交额、涨跌家数、板块等）。"""
         try:
             from src.collectors.stock_data import StockDataCollector
-            collector = StockDataCollector(self.config)
-            return collector.collect_market_overview()
+            with StockDataCollector(self.config) as collector:
+                return collector.collect_market_overview()
         except Exception as e:
             logger.error(f"市场概况采集失败: {e}")
             return {}
@@ -178,10 +184,10 @@ class CollectorOrchestrator:
 
         # 首轮：全量并发采集
         with ThreadPoolExecutor(max_workers=4, thread_name_prefix="collect-all") as executor:
-            fut_news = executor.submit(self.collect_news_parallel)
-            fut_market = executor.submit(self._collect_market_and_overview)
-            fut_global = executor.submit(self._collect_global_news)
-            fut_us = executor.submit(self._collect_us_earnings)
+            fut_news = executor.submit(copy_context().run, self.collect_news_parallel)
+            fut_market = executor.submit(copy_context().run, self._collect_market_and_overview)
+            fut_global = executor.submit(copy_context().run, self._collect_global_news)
+            fut_us = executor.submit(copy_context().run, self._collect_us_earnings)
             result["news"] = fut_news.result()
             result["market"], result["overview"] = fut_market.result()
             result["global_news"] = fut_global.result()
@@ -221,6 +227,8 @@ class CollectorOrchestrator:
         result["all_sources_ok"] = len(missing) == 0
         result["missing_sources"] = missing
         result["collect_attempts"] = attempt
+        result["status"] = "partial" if missing else "available"
+        result["source_states"] = source_health.snapshot()
         if missing:
             logger.error(f"全源稳定校验失败: {missing}")
         else:
@@ -239,24 +247,39 @@ class CollectorOrchestrator:
         )
 
         market = result.get("market", {}) or {}
-        for key in ("realtime_quotes", "limit_up_pool", "dragon_tiger", "northbound_flow"):
+        for key in ("realtime_quotes", "limit_up_pool", "dragon_tiger", "northbound_flow", "fund_flow"):
             value = str(market.get(key, ""))
             if value.startswith("error"):
                 missing.append(f"market.{key}")
 
-        if int(result.get("global_news", 0) or 0) <= 0:
+        required_auxiliary = (self.config.get("data_sources") or {}).get("require_auxiliary_sources", True)
+        if required_auxiliary and int(result.get("global_news", 0) or 0) <= 0:
             missing.append("global_news")
 
-        if int(result.get("us_earnings", 0) or 0) <= 0:
+        if required_auxiliary and int(result.get("us_earnings", 0) or 0) <= 0:
             missing.append("us_earnings")
 
         return missing
+
+    @staticmethod
+    def _read_collector(collector) -> list:
+        """保留已有计数接口，同时关闭资源并区分请求失败与合法空结果。"""
+        try:
+            items = collector.collect()
+            errors = getattr(collector, "request_errors", [])
+            if errors and not items:
+                raise RuntimeError("；".join(redact_text(e, 200) for e in errors))
+            return items
+        finally:
+            close = getattr(collector, "close", None)
+            if close:
+                close()
 
     def _collect_cailianshe(self) -> int:
         from src.collectors.cailianshe import CailiansheCollector
 
         collector = CailiansheCollector(self.config)
-        items = collector.collect()
+        items = self._read_collector(collector)
 
         # 1) 先入库，确保 FinanceNews 记录存在
         records = []
@@ -306,7 +329,7 @@ class CollectorOrchestrator:
         from src.collectors.xueqiu import XueqiuCollector
 
         collector = XueqiuCollector(self.config)
-        items = collector.collect()
+        items = self._read_collector(collector)
         records = [
             FinanceNews(
                 source="xueqiu",
@@ -327,7 +350,7 @@ class CollectorOrchestrator:
         from src.collectors.jiuyan import JiuyanCollector
 
         collector = JiuyanCollector(self.config)
-        items = collector.collect()
+        items = self._read_collector(collector)
         records = []
         for item in items:
             # 把 category 和 stock_codes 合并作为标签
@@ -354,7 +377,7 @@ class CollectorOrchestrator:
         try:
             from src.collectors.hot_topics import HotTopicCollector
             collector = HotTopicCollector(self.config)
-            items = collector.collect()
+            items = self._read_collector(collector)
             records = [
                 FinanceNews(
                     source=item.get("source", "hot_topics"),
@@ -371,13 +394,13 @@ class CollectorOrchestrator:
                     session.add_all(records)
             return len(records)
         except Exception as e:
-            logger.error(f"热点采集异常: {e}")
-            return 0
+            logger.error(f"热点采集异常: {redact_text(e, 300)}")
+            raise
 
     def _collect_hot_search_source(self, collector_cls) -> int:
         """采集单个热搜源并写入 hot_search 表。"""
         collector = collector_cls(self.config)
-        items = collector.safe_collect()
+        items = self._read_collector(collector)
         records = [
             HotSearch(
                 source=collector.SOURCE_NAME,
@@ -411,7 +434,7 @@ class CollectorOrchestrator:
         try:
             from src.collectors.global_news import GlobalNewsCollector
             collector = GlobalNewsCollector(self.config)
-            items = collector.collect()
+            items = self._read_collector(collector)
             got_sources = {str(x.get("source", "")) for x in (items or []) if isinstance(x, dict)}
             required_sources = {"cailianshe_global", "wallstreetcn", "jin10", "eastmoney_global"}
             missing = sorted(required_sources - got_sources)
@@ -431,7 +454,7 @@ class CollectorOrchestrator:
         try:
             from src.collectors.us_earnings import USEarningsCollector
             collector = USEarningsCollector(self.config)
-            collector.collect()
+            self._read_collector(collector)
             metrics = getattr(collector, "last_run_metrics", {}) or {}
             for key, value in metrics.items():
                 source_health.record("美股数据", key, int(value or 0) > 0)
@@ -454,4 +477,3 @@ class CollectorOrchestrator:
         except Exception as e:
             logger.error(f"美股数据采集异常: {e}")
             return 0
-

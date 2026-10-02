@@ -17,7 +17,8 @@ export const NAV: { group: string; items: { to: string; label: string; icon: Rea
   {
     group: '交易',
     items: [
-      { to: '/', label: '交易决策', icon: <LayoutDashboard className="size-4" /> },
+      { to: '/', label: '研究工作台', icon: <LayoutDashboard className="size-4" /> },
+      { to: '/market', label: '交易决策', icon: <LineChart className="size-4" /> },
       { to: '/news', label: '资讯流', icon: <Newspaper className="size-4" /> },
       { to: '/chat', label: 'AI 问股', icon: <MessagesSquare className="size-4" /> },
       { to: '/watchlist', label: '自选股', icon: <Star className="size-4" /> },

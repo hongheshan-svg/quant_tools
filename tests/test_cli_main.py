@@ -66,6 +66,7 @@ def test_format_notify_check():
 def _patch_heavy(monkeypatch):
     monkeypatch.setattr(main_mod, "load_config", lambda *a, **k: {"database": {"sqlite_path": str(Path(__import__("tempfile").gettempdir()) / "cli_test.db")}, "notifier": {}})
     monkeypatch.setattr(main_mod, "init_db", lambda *a, **k: None)
+    monkeypatch.setattr("src.collectors.source_chain.source_health.configure", lambda *a, **k: None)
     monkeypatch.setattr(main_mod, "setup_logging", lambda *a, **k: None)
 
 

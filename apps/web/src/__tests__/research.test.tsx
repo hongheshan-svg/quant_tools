@@ -44,7 +44,7 @@ describe('深度研究页', () => {
     stub([])
     renderAt('/research')
     expect(screen.getByRole('link', { name: /深度研究/ })).toBeInTheDocument()
-    expect(screen.getByRole('textbox')).toBeInTheDocument()
+    expect(await screen.findByRole('textbox')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /开始研究/ })).toBeInTheDocument()
   })
 
@@ -52,7 +52,7 @@ describe('深度研究页', () => {
     const calls: Call[] = []
     stub(calls)
     renderAt('/research')
-    fireEvent.change(screen.getByRole('textbox'), { target: { value: '固态电池' } })
+    fireEvent.change(await screen.findByRole('textbox'), { target: { value: '固态电池' } })
     fireEvent.click(screen.getByRole('button', { name: /开始研究/ }))
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url.includes('/research'))).toBe(true))
     const post = calls.find((c) => c.method === 'POST' && c.url.includes('/research'))!

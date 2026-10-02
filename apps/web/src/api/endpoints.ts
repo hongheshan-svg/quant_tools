@@ -11,10 +11,17 @@ export const api = {
   changePassword: (current_password: string, new_password: string) =>
     http.post<{ ok: boolean }>('/settings/password', { current_password, new_password }),
   task: (id: string) => http.get<T.Task>(`/tasks/${id}`),
+  taskEventsUrl: (id: string) => `${API_BASE}/tasks/${id}/events`,
   tasks: () => http.get<T.Task[]>('/tasks'),
   sources: () => http.get<T.SourceStatus[]>('/system/sources'),
   configCheck: () => http.get<T.ConfigCheckResult>('/system/config-check'),
   capabilities: () => http.get<T.DataCapability[]>('/system/capabilities'),
+  dataSourceSettings: () => http.get<T.DataSourceSettingsResponse>('/settings/data-sources'),
+  saveDataSourceSettings: (data_sources: T.DataSourceSettings) => http.put<T.DataSourceSettingsResponse>('/settings/data-sources', { data_sources }),
+  stockWorkspace: () => http.get<T.StockWorkspace>('/watchlist/workspace'),
+  probeDataSource: (source: string, code: string) => http.post<T.Task<T.DataSourceProbe>>('/system/sources/probe', { source, code }),
+  schedulerSettings: () => http.get<T.SchedulerSettings>('/settings/scheduler'),
+  saveSchedulerSettings: (settings: T.SchedulerSettings) => http.put<T.SchedulerSettings>('/settings/scheduler', settings),
   scheduler: () => http.get<T.SchedulerStatus>('/system/scheduler'),
   runJob: (id: string) => http.post<T.Task>(`/system/scheduler/${id}/run`),
   setupStatus: () => http.get<T.SetupStatus>('/system/setup'),
@@ -23,6 +30,12 @@ export const api = {
   // 首页与大盘
   dashboard: () => http.get<T.Dashboard>('/dashboard'),
   news: () => http.get<T.NewsItem[]>('/news'),
+  intelligenceSources: () => http.get<T.ScopedIntelligenceSource[]>('/intelligence/sources'),
+  saveIntelligenceSource: (source: Omit<T.ScopedIntelligenceSource, 'id'>, id?: number) => id
+    ? http.put<T.ScopedIntelligenceSource>(`/intelligence/sources/${id}`, source)
+    : http.post<T.ScopedIntelligenceSource>('/intelligence/sources', source),
+  fetchIntelligenceSource: (id: number) => http.post<T.Task<{ added: number }>>(`/intelligence/sources/${id}/fetch`),
+  intelligenceItems: (params: { symbol?: string; sector?: string; market?: string; days?: number } = {}) => http.get<T.ScopedIntelligenceItem[]>('/intelligence/items', params),
   regime: () => http.get<T.Regime>('/market/regime'),
   review: () => http.get<T.MarketReview | null>('/market/review'),
   reviewImageUrl: (tradeDate?: string) => `${API_BASE}/market/review/image${tradeDate ? `?trade_date=${encodeURIComponent(tradeDate)}` : ''}`,
@@ -36,7 +49,9 @@ export const api = {
   pushDailyReport: () => http.post<T.Task>('/pipeline/daily-report'),
   signalPerformance: (days = 60) => http.get<T.SignalPerformance>('/performance/signals', { days }),
   diagnosisOutcomes: (days = 60) => http.get<T.DiagnosisOutcomes>('/performance/diagnosis', { days }),
-  alerts: () => http.get<T.AlertRow[]>('/alerts'),
+  alerts: (params: { limit?: number; offset?: number; severity?: string; code?: string; channel?: string } = {}) => http.get<T.AlertRow[]>('/alerts', params),
+  screeningSettings: () => http.get<T.ScreeningSettings>('/settings/screening'),
+  saveScreeningSettings: (body: T.ScreeningSettings) => http.put<T.ScreeningSettings>('/settings/screening', body),
   checkAlerts: () => http.post<T.Task>('/alerts/check'),
   alertRules: () => http.get<T.AlertRules>('/alerts/rules'),
   saveAlertRules: (rules: T.AlertRule[]) => http.put<{ rules: T.AlertRule[] }>('/alerts/rules', { rules }),
@@ -47,7 +62,8 @@ export const api = {
   // 个股
   searchStocks: (q: string, limit = 12) => http.get<T.StockRef[]>('/stocks/search', { q, limit }),
   daily: (code: string) => http.get<T.DailyBar[]>(`/stocks/${code}/daily`),
-  ensureHistory: (code: string, name = '') => http.post<{ added: number }>(`/stocks/${code}/history?name=${encodeURIComponent(name)}`),
+  stockProfile: (code: string, history_days = 90) => http.get<T.StockProfile>(`/stocks/${code}/profile`, { history_days }),
+  ensureHistory: (code: string, name = '', refresh = false) => http.post<{ added: number }>(`/stocks/${code}/history?name=${encodeURIComponent(name)}&refresh=${refresh}`),
   stockNews: (code: string, refresh = false) => http.get<T.StockNews>(`/stocks/${code}/news`, { refresh }),
   latestDiagnosis: (code: string) => http.get<T.Diagnosis | null>(`/stocks/${code}/diagnosis`),
   diagnose: (code: string) => http.post<T.Task<T.Diagnosis>>(`/stocks/${code}/diagnosis`),
@@ -56,6 +72,7 @@ export const api = {
   diagnosisTrend: (code: string, days = 180) => http.get<T.DiagnosisTrendPoint[]>(`/stocks/${code}/diagnosis-trend`, { days }),
   diagnosisRecord: (id: number) => http.get<T.DiagnosisRecord>(`/stocks/diagnoses/${id}`),
   deleteDiagnosis: (id: number) => http.del<{ ok: boolean }>(`/stocks/diagnoses/${id}`),
+  deleteDiagnoses: (filter: { ids?: number[]; code?: string }) => http.post<{ deleted: number }>('/stocks/diagnoses/delete', filter),
   diagnosisMarkdownUrl: (id: number) => `${API_BASE}/stocks/diagnoses/${id}/markdown`,
   diagnosisImageUrl: (id: number) => `${API_BASE}/stocks/diagnoses/${id}/image`,
   diagnosisMarkdownText: async (id: number) => {
@@ -101,14 +118,15 @@ export const api = {
   createChat: (perspective: string) => http.post<T.ChatSession>('/chat/sessions', { perspective }),
   chatSession: (id: string) => http.get<T.ChatSession>(`/chat/sessions/${id}`),
   deleteChat: (id: string) => http.del<{ ok: boolean }>(`/chat/sessions/${id}`),
-  ask: (id: string, question: string, perspective?: string) =>
-    http.post<T.Task<T.ChatTurn>>(`/chat/sessions/${id}/ask`, { question, perspective }),
+  ask: (id: string, question: string, perspective?: string, context?: T.ChatContext) =>
+    http.post<T.Task<T.ChatTurn>>(`/chat/sessions/${id}/ask`, { question, perspective, ...context }),
   askStream: (
     id: string,
     question: string,
     perspective: string | undefined,
     handlers: { onEvent: (event: T.ChatStreamEvent) => void; signal?: AbortSignal },
-  ) => http.stream<T.ChatStreamEvent>(`/chat/sessions/${id}/ask/stream`, { question, perspective }, handlers),
+    context?: T.ChatContext,
+  ) => http.stream<T.ChatStreamEvent>(`/chat/sessions/${id}/ask/stream`, { question, perspective, ...context }, handlers),
   cancelChat: (id: string) => http.post<{ ok: boolean }>(`/chat/sessions/${id}/cancel`),
   exportChatUrl: (id: string) => `/api/v1/chat/sessions/${id}/export`,
   pushChat: (id: string) => http.post<{ pushed: boolean; reason?: string }>(`/chat/sessions/${id}/push`),
@@ -129,6 +147,7 @@ export const api = {
   watchlistReportImageUrl: () => `${API_BASE}/watchlist/report/image`,
   importImage: (file: File) => http.upload<T.Task>('/watchlist/import-image', file),
   watchlistReport: () => http.get<T.WatchlistReport | null>('/watchlist/report'),
+  runSelectedWatchlist: (codes: string[]) => http.post<T.Task>('/watchlist/report/selected', { codes }),
   runWatchlistReport: (push = true) => http.post<T.Task>(`/watchlist/report?push=${push}`),
 
   // 模拟盘
@@ -196,4 +215,5 @@ export const api = {
   diagnoseNotifier: (notifier: Record<string, unknown>) => http.post<T.NotifierDiagnosis>('/settings/notifier/diagnose', { notifier }),
   testNotifier: (channel: string, notifier: Record<string, unknown>) =>
     http.post<{ ok: boolean; error: string }>(`/settings/notifier/test/${channel}`, { notifier }),
+  testNotifierBatch: (notifier: Record<string, unknown>) => http.post<{ ok: boolean; channels: Record<string, { ok: boolean; error?: string }> }>('/settings/notifier/test-batch', { notifier }),
 }

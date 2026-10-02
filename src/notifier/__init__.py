@@ -188,6 +188,10 @@ def broadcast(config: dict, title: str, content: str, kind: str | None = None) -
         except Exception as e:
             logger.error(f"[{name}] 推送异常: {e}")
             results[name] = False
+        finally:
+            from src.services.run_log import ACTIVE_LOG
+            if ACTIVE_LOG.get():
+                ACTIVE_LOG.get()._append(CHANNEL_LABELS.get(name, name), bool(results.get(name)), 0, "", "notify", {"channel": name, "delivered": bool(results.get(name))})
     return results
 
 

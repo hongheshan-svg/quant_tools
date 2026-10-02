@@ -7,10 +7,10 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from api.deps import bad_request, get_pipeline, get_tasks, not_found
-from api.tasks import TaskManager
+from api.tasks import TaskManager, business_result_error
 from src.services.chat_sessions import ChatSessionStore
 from src.services.pipeline_service import PipelineService
 
@@ -25,9 +25,29 @@ class NewSessionBody(BaseModel):
     perspective: str = "综合"
 
 
+class StockContext(BaseModel):
+    code: str = Field(min_length=1, max_length=20)
+
+    @field_validator("code")
+    @classmethod
+    def canonical_code(cls, code: str) -> str:
+        from src.utils.stock_code import diagnosis_code
+        return diagnosis_code(code)
+
+
 class AskBody(BaseModel):
     question: str = Field(min_length=1, max_length=500)
     perspective: str | None = None
+    stock_context: StockContext | None = None
+    skills: list[str] = Field(default_factory=list, max_length=4)
+
+    @field_validator("skills")
+    @classmethod
+    def known_skills(cls, skills: list[str]) -> list[str]:
+        from src.services.strategy_skills import get_skill
+        if any(get_skill(key) is None for key in skills):
+            raise ValueError("包含未知分析策略")
+        return list(dict.fromkeys(skills))
 
 
 @router.get("/perspectives")
@@ -87,7 +107,8 @@ def ask(session_id: str, body: AskBody, store: ChatSessionStore = Depends(get_st
     from src.services.stock_chat import normalize_perspective
 
     perspective = normalize_perspective(body.perspective) if body.perspective else None  # 支持英文名和别名
-    return tasks.submit("chat", store.ask, session_id, body.question, perspective, label="AI 问股")
+    return tasks.submit("chat", store.ask, session_id, body.question, perspective, stock_context=body.stock_context.model_dump() if body.stock_context else None,
+                        skills=body.skills, result_error=business_result_error, label="AI 问股")
 
 
 @router.post("/sessions/{session_id}/ask/stream")
@@ -99,7 +120,8 @@ def ask_stream(session_id: str, body: AskBody, store: ChatSessionStore = Depends
 
     perspective = normalize_perspective(body.perspective) if body.perspective else None
     try:
-        events = store.ask_stream(session_id, body.question, perspective)
+        events = store.ask_stream(session_id, body.question, perspective,
+                                  stock_context=body.stock_context.model_dump() if body.stock_context else None, skills=body.skills)
     except KeyError:
         raise not_found("会话不存在")
 

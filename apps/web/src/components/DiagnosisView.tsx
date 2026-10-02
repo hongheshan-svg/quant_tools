@@ -150,17 +150,27 @@ export function DiagnosisView({ d, diagnosisId }: { d: Diagnosis; diagnosisId?: 
   const recordId = diagnosisId ?? d.diagnosis_id ?? d.id
   return (
     <div className="space-y-4 text-sm">
-      <div className="flex flex-wrap items-center gap-3">
-        <span className={cn('text-xl font-semibold', verdictClass(d.action_label))}>{t(d.action_label)}</span>
-        <span className="num text-lg">{t('{n} 分', { n: d.score })}</span>
-        <Badge>{t('信心')} {t(d.confidence || '-')}</Badge>
-        {d.kind && <Badge>{t(FUND_LABELS[d.kind])}</Badge>}
-        {d.trend_prediction && <Badge tone="accent">{d.trend_prediction}</Badge>}
-        {d.decision_profile && <span title={t('决策风格')}><Badge tone="accent">{t(PROFILE_LABELS[d.decision_profile] ?? d.decision_profile)}</Badge></span>}
-        {recordId != null && d.decision_profile && <Button onClick={() => setCompare(true)}>{t('按其他风格评估')}</Button>}
-        <span className="text-xs text-muted">{t('诊断于 {a}（行情 {b}）', { a: d.created_at, b: d.trade_date })}{d.cached ? t('，30 分钟内的结果') : ''}</span>
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px]">
+        <div className="rounded-xl border border-accent/25 bg-accent/5 p-4">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <span className={cn('text-xl font-semibold', verdictClass(d.action_label))}>{t(d.action_label)}</span>
+            <Badge>{t('信心')} {t(d.confidence || '-')}</Badge>
+            {d.kind && <Badge>{t(FUND_LABELS[d.kind])}</Badge>}
+            {d.trend_prediction && <Badge tone="accent">{d.trend_prediction}</Badge>}
+            {d.decision_profile && <span title={t('决策风格')}><Badge tone="accent">{t(PROFILE_LABELS[d.decision_profile] ?? d.decision_profile)}</Badge></span>}
+            {recordId != null && d.decision_profile && <Button onClick={() => setCompare(true)}>{t('按其他风格评估')}</Button>}
+          </div>
+          {d.one_sentence && <p className="text-base leading-relaxed font-medium">{d.one_sentence}</p>}
+          <p className="mt-3 text-xs text-muted">{t('诊断于 {a}（行情 {b}）', { a: d.created_at, b: d.trade_date })}{d.cached ? t('，30 分钟内的结果') : ''}</p>
+        </div>
+        <div className="flex flex-col items-center justify-center rounded-xl border border-line bg-panel-2 p-3">
+          <span className="text-xs text-muted">{t('诊断评分')}</span>
+          <div className="relative mt-2 size-24">
+            <svg viewBox="0 0 100 100" className="size-24 -rotate-90" aria-hidden="true"><circle cx="50" cy="50" r="42" fill="none" stroke="currentColor" strokeWidth="6" className="text-line" /><circle cx="50" cy="50" r="42" fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="round" pathLength="100" strokeDasharray={`${Number.isFinite(d.score) ? Math.max(0, Math.min(100, d.score)) : 0} 100`} className="text-accent" /></svg>
+            <span className="num absolute inset-0 flex items-center justify-center text-xl font-semibold">{Number.isFinite(d.score) ? t('{n} 分', { n: d.score }) : '--'}</span>
+          </div>
+        </div>
       </div>
-      {d.one_sentence && <p className="text-base font-medium">{d.one_sentence}</p>}
       <p className="text-xs text-muted">
         {t('数据完整度')} {d.data_quality?.score ?? '--'}%{d.data_quality?.missing?.length ? t('（缺少：{list}）', { list: d.data_quality.missing.join('、') }) : ''}
       </p>
@@ -168,8 +178,8 @@ export function DiagnosisView({ d, diagnosisId }: { d: Diagnosis; diagnosisId?: 
       <div className="grid gap-3 md:grid-cols-2">
         <div className="rounded-md border border-line p-3">
           <div className="mb-1 text-xs text-muted">{t('价格计划')}</div>
-          <div className="num">
-            {t('买入')} {fmtNum(plan.buy_price)} ｜ {t('止损')} <span className="text-down">{fmtNum(plan.stop_loss)}</span> ｜ {t('目标')} <span className="text-up">{fmtNum(plan.target_price)}</span>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {[['买入', plan.buy_price, 'text-accent'], ['止损', plan.stop_loss, 'text-down'], ['目标', plan.target_price, 'text-up']].map(([label, value, tone]) => <div key={String(label)} className="rounded-lg border border-line bg-panel-2 p-2"><p className="text-xs text-muted">{t(String(label))}</p><p className={cn('num mt-1 text-lg font-semibold', String(tone))}>{fmtNum(value)}</p></div>)}
           </div>
           {plan.suggested_position && <div className="mt-1 text-xs">{plan.suggested_position}</div>}
         </div>
@@ -187,7 +197,7 @@ export function DiagnosisView({ d, diagnosisId }: { d: Diagnosis; diagnosisId?: 
       )}
       {agents.length > 0 && (
         <div>
-          <div className="mb-1 font-medium text-accent">{t('分析员观点')} {d.disagreement ? <span className="text-warn">{t('（分歧：{text}）', { text: d.disagreement })}</span> : <span className="text-xs text-muted">{t('（观点基本一致）')}</span>}</div>
+          <div className="mb-1 font-medium text-accent">{t('分析员观点')} {d.disagreement ? <span className="text-warn">{t('（分歧：{text}）', { text: d.disagreement })}</span> : <span className="text-xs text-muted">{agents.length < 2 ? t('（有效观点不足）') : t('（观点基本一致）')}</span>}</div>
           <ul className="space-y-1">
             {agents.map((a) => (
               <li key={a.role}>
@@ -203,7 +213,8 @@ export function DiagnosisView({ d, diagnosisId }: { d: Diagnosis; diagnosisId?: 
         <div>
           <div className="mb-1 font-medium text-accent">
             {t('策略会诊')}{' '}
-            {d.skill_consensus?.stance && (
+            {d.skill_consensus?.status === 'insufficient' && <p className="text-sm text-muted">{t('有效策略观点不足，不能形成共识')}</p>}
+            {d.skill_consensus?.stance && d.skill_consensus.status !== 'insufficient' && (
               <span className="text-xs font-normal">
                 {t('共识')} <span className={verdictClass(d.skill_consensus.stance)}>{t(d.skill_consensus.stance)}</span>{' '}
                 <span className="num">{t('{n}分', { n: d.skill_consensus.score ?? '--' })}</span>

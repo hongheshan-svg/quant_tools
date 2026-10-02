@@ -1,0 +1,174 @@
+{
+  "checked_at": "2026-10-02T20:43:08.699547",
+  "trade_date": "2026-09-30",
+  "results": [
+    {
+      "source": "腾讯行情",
+      "ok": true,
+      "critical": true,
+      "count": 3,
+      "seconds": 0.066,
+      "error": ""
+    },
+    {
+      "source": "新浪交易日历",
+      "ok": true,
+      "critical": true,
+      "count": 8797,
+      "seconds": 0.77,
+      "error": ""
+    },
+    {
+      "source": "东方财富涨停池",
+      "ok": true,
+      "critical": true,
+      "count": 52,
+      "seconds": 3.547,
+      "error": ""
+    },
+    {
+      "source": "东方财富指数",
+      "ok": true,
+      "critical": false,
+      "count": 100,
+      "seconds": 0.157,
+      "error": ""
+    },
+    {
+      "source": "同花顺涨停原因",
+      "ok": true,
+      "critical": false,
+      "count": 52,
+      "seconds": 0.172,
+      "error": ""
+    },
+    {
+      "source": "同花顺资金流",
+      "ok": true,
+      "critical": false,
+      "count": 5213,
+      "seconds": 6.925,
+      "error": ""
+    },
+    {
+      "source": "东方财富资金流",
+      "ok": false,
+      "critical": false,
+      "count": 0,
+      "seconds": 0.218,
+      "error": "没有返回数据"
+    },
+    {
+      "source": "历史日线",
+      "ok": true,
+      "critical": false,
+      "count": 20,
+      "seconds": 0.351,
+      "error": ""
+    },
+    {
+      "source": "baostock 日线",
+      "ok": false,
+      "critical": false,
+      "count": 0,
+      "seconds": 20.005,
+      "error": "超过 20 秒没有响应"
+    },
+    {
+      "source": "通达信日线",
+      "ok": true,
+      "critical": false,
+      "count": 20,
+      "seconds": 0.226,
+      "error": ""
+    },
+    {
+      "source": "通达信行情",
+      "ok": true,
+      "critical": false,
+      "count": 4,
+      "seconds": 0.208,
+      "error": ""
+    },
+    {
+      "source": "efinance 日线",
+      "ok": false,
+      "critical": false,
+      "count": 0,
+      "seconds": 0.918,
+      "error": "ConnectionError: HTTPSConnectionPool(host='push2his.eastmoney.com', port=443): Max retries exceeded with url: /api/qt/stock/kline/get?fields1=f1%2Cf2%2Cf3%2Cf4%2Cf5%2Cf6%2Cf7%2Cf8%2Cf9%2Cf10%2Cf11%2Cf"
+    },
+    {
+      "source": "东方财富个股新闻",
+      "ok": true,
+      "critical": false,
+      "count": 10,
+      "seconds": 0.13,
+      "error": ""
+    },
+    {
+      "source": "东方财富公告",
+      "ok": true,
+      "critical": false,
+      "count": 20,
+      "seconds": 0.111,
+      "error": ""
+    },
+    {
+      "source": "交易所股票列表",
+      "ok": true,
+      "critical": false,
+      "count": 5572,
+      "seconds": 5.585,
+      "error": ""
+    },
+    {
+      "source": "财联社",
+      "ok": true,
+      "critical": false,
+      "count": 50,
+      "seconds": 0.138,
+      "error": ""
+    },
+    {
+      "source": "雪球",
+      "ok": true,
+      "critical": false,
+      "count": 30,
+      "seconds": 3.347,
+      "error": ""
+    },
+    {
+      "source": "韭研公社",
+      "ok": true,
+      "critical": false,
+      "count": 59,
+      "seconds": 0.811,
+      "error": ""
+    },
+    {
+      "source": "微博热搜",
+      "ok": true,
+      "critical": false,
+      "count": 50,
+      "seconds": 6.642,
+      "error": ""
+    },
+    {
+      "source": "抖音热榜",
+      "ok": true,
+      "critical": false,
+      "count": 49,
+      "seconds": 0.477,
+      "error": ""
+    },
+    {
+      "source": "今日头条",
+      "ok": true,
+      "critical": false,
+      "count": 50,
+      "seconds": 0.287,
+      "error": ""
+    }
+  ]
+}

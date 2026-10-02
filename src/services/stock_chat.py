@@ -10,6 +10,7 @@ AI 问股（参考 daily_stock_analysis 的 Agent 策略问股）
 from __future__ import annotations
 
 import json
+import time
 import threading
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -22,6 +23,9 @@ from src.config_loader import load_config
 from src.services.chat_tools import TOOL_LABELS, ChatTools, tools_prompt
 from src.services.report_language import report_language
 from src.services.strategy_skills import DEFAULT_SKILL, get_skill, load_skills
+from src.services.execution_budget import BudgetExpired, ExecutionBudget
+from src.services.run_log import RunLog, run_scope
+from src.utils.redaction import redact_text
 
 MAX_TOOL_ROUNDS = 3
 MAX_CALLS_PER_ROUND = 6
@@ -188,15 +192,23 @@ SYSTEM_PROMPT = """你是 A 股短线投研助手，通过调用工具获取数�
 
 def _failure_text(error: Exception) -> str:
     """模型调用失败时给用户看的说明：没配置模型时直接说去哪里填，其余情况笼统提示"""
+    if isinstance(error, (BudgetExpired, InterruptedError)):
+        return str(error)
     return NO_MODEL_HINT if NO_MODEL_HINT in str(error) else "AI 调用失败，请检查 AI 设置或稍后重试"
 
 @dataclass
 class ChatTurn:
     question: str
+    message_id: str = field(default_factory=lambda: __import__("uuid").uuid4().hex)
+    context_usage: dict = field(default_factory=dict)
+    context_pack: dict = field(default_factory=dict)
     answer: str = ""
     perspective: str = "综合"
     tools: list[dict[str, Any]] = field(default_factory=list)   # [{"name", "label", "args", "result"}]
     error: str = ""
+    stock_context: dict[str, Any] | None = None
+    skills: list[str] = field(default_factory=list)
+    run_log: dict[str, Any] = field(default_factory=dict)
     asked_at: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M"))
 
 
@@ -226,16 +238,110 @@ class StockChatSession:
     def clear(self) -> None:
         self.turns.clear()
 
-    def ask(self, question: str, perspective: str = "综合", progress: Callable[[str], None] | None = None) -> ChatTurn:
+    def _should_isolate(self) -> bool:
+        return (self._llm is None and type(self.tools) is ChatTools and
+                not getattr(self, "_isolated_worker", False) and
+                (self.config.get("diagnosis") or {}).get("isolate_process", False))
+
+    def _call_tool(self, name: str, args: dict, turn: ChatTurn) -> str:
+        from src.utils.stock_code import resolve_identity
+        context_code = (turn.stock_context or {}).get("code")
+        if context_code and name not in ("market", "watchlist"):
+            try:
+                expected = resolve_identity(context_code).code
+                if name == "web_search":
+                    import re
+                    symbols = re.findall(r"(?<!\d)(\d{6})(?!\d)", str(args.get("query", "")))
+                    if any(resolve_identity(c).code != expected for c in symbols):
+                        return "工具被拒绝：超出当前股票范围"
+                elif name != "resolve_stock":
+                    if not any(args.get(key) for key in ("code", "query", "name")):
+                        args["code"] = expected
+                    resolver = getattr(self.tools, "_resolve_kind", None)
+                    actual = resolver(args)[0] if resolver else resolve_identity(args.get("code") or args.get("query") or args.get("name")).code
+                    if actual != expected:
+                        return "工具被拒绝：超出当前股票范围"
+                    args["code"] = actual
+            except ValueError:
+                return "工具被拒绝：股票身份不明确"
+        elif args.get("code") and name not in ("resolve_stock", "web_search"):
+            try:
+                args["code"] = resolve_identity(args["code"]).code
+            except ValueError:
+                return "工具被拒绝：股票身份不明确"
+        key = (name, json.dumps(args, ensure_ascii=False, sort_keys=True))
+        for previous in turn.tools:
+            previous_key = (previous["name"], json.dumps(previous["args"], ensure_ascii=False, sort_keys=True))
+            if previous_key == key and not str(previous["result"]).startswith("工具执行失败"):
+                return previous["result"]
+        result = redact_text(self.tools.call(name, args))
+        if name == "context_pack":
+            turn.context_pack = getattr(self.tools, "last_context_pack", {})
+        return result
+
+    def _isolated_stream(self, question: str, perspective: str, cancel, stock_context, skills):
+        from src.services.analysis_process import isolated_events
+        turn = ChatTurn(question=question.strip(), perspective=normalize_perspective(perspective),
+                        stock_context=stock_context, skills=skills or [])
+        parts = []
+        try:
+            for _, event in isolated_events("chat_stream", self.config,
+                                           {"question": question, "perspective": perspective,
+                                            "turns": [asdict(t) for t in self.turns],
+                                            "stock_context": stock_context, "skills": skills}, cancel):
+                if event["type"] == "delta":
+                    parts.append(event["text"])
+                elif event["type"] == "tool":
+                    turn.tools.append({key: event[key] for key in ("name", "label", "args")})
+                    turn.tools[-1]["result"] = ""
+                elif event["type"] == "tool_result" and turn.tools:
+                    turn.tools[-1]["result"] = event["summary"]
+                if event["type"] == "done":
+                    turn = ChatTurn(**event.pop("_internal_turn", event["turn"]))
+                yield event
+        except (BudgetExpired, InterruptedError, RuntimeError) as error:
+            turn.error, turn.answer = _failure_text(error), "".join(parts)
+            yield {"type": "error", "message": turn.error}
+            yield {"type": "done", "turn": asdict(turn)}
+        finally:
+            if not turn.answer and parts:
+                turn.answer = "".join(parts)
+                turn.error = turn.error or "已取消"
+            self.turns.append(turn)
+
+    @run_scope
+    def ask(self, question: str, perspective: str = "综合", progress: Callable[[str], None] | None = None,
+            *, stock_context: dict | None = None, skills: list[str] | None = None) -> ChatTurn:
         """回答一个问题（会带上之前的对话）；progress(提示文字) 用于界面显示正在调用的工具。"""
-        turn = ChatTurn(question=question.strip(), perspective=normalize_perspective(perspective))
+        if self._should_isolate():
+            from src.services.analysis_process import isolated_events
+            try:
+                for kind, value in isolated_events("chat", self.config,
+                                                   {"question": question, "perspective": perspective,
+                                                    "turns": [asdict(t) for t in self.turns], "stock_context": stock_context, "skills": skills}):
+                    if kind == "event" and progress:
+                        progress(value.get("text") or value.get("name", "正在分析"))
+                    elif kind == "result":
+                        turn = ChatTurn(**value)
+                        self.turns.append(turn)
+                        return turn
+            except (BudgetExpired, RuntimeError) as error:
+                turn = ChatTurn(question=question.strip(), error=_failure_text(error))
+                self.turns.append(turn)
+                return turn
+        budget = ExecutionBudget.from_config(self.config)
+        run_log = RunLog()
+        turn = ChatTurn(question=question.strip(), perspective=normalize_perspective(perspective), stock_context=stock_context, skills=skills or [])
         system = SYSTEM_PROMPT.format(tools=tools_prompt()) + self._language_note()
         for round_no in range(1, MAX_TOOL_ROUNDS + 2):
             final = round_no > MAX_TOOL_ROUNDS
             try:
-                reply = self.llm.chat_json(user_message=self._user_message(turn, final), system_message=system)
+                budget.check("问股")
+                with run_log.step(f"问股模型第 {round_no} 轮"):
+                    reply = self._model_reply(self._user_message(turn, final), system, turn.tools)
+                budget.check("问股")
             except Exception as e:
-                logger.error(f"AI 问股调用失败: {e}")
+                logger.error("AI 问股调用失败: {}", redact_text(e, 300))
                 turn.error = _failure_text(e)
                 break
             answer = str((reply or {}).get("answer") or "").strip()
@@ -247,14 +353,38 @@ class StockChatSession:
                 progress("正在查询：" + "、".join(TOOL_LABELS.get(c["name"], c["name"]) for c in calls[:MAX_CALLS_PER_ROUND]))
             for call in calls[:MAX_CALLS_PER_ROUND]:
                 args = call.get("args") if isinstance(call.get("args"), dict) else {}
+                if not budget.remaining():
+                    turn.error = "问股超时：已达到分析总时长上限"
+                    break
+                with run_log.step(f"工具 {call['name']}"):
+                    result = self._call_tool(call["name"], args, turn)
                 turn.tools.append({"name": call["name"], "label": TOOL_LABELS.get(call["name"], call["name"]),
-                                   "args": args, "result": self.tools.call(call["name"], args)})
+                                   "args": args, "result": result, "call_id": call.get("id"), "protocol": (reply or {}).get("protocol", "json")})
+        turn.run_log = run_log.to_dict()
         self.turns.append(turn)
         return turn
 
+    def _model_reply(self, user_message: str, system: str, tool_results: list[dict] | None = None) -> dict:
+        native = getattr(self.llm, "chat_with_tools", None)
+        if native and (self.config.get("diagnosis") or {}).get("chat_tool_protocol", "json") in {"auto", "native"}:
+            from src.services.chat_tools import native_tool_schemas
+            return native(user_message=user_message, system_message=system, tools=native_tool_schemas(), tool_results=tool_results)
+        return self.llm.chat_json(user_message=user_message, system_message=system)
+
     def _stream_llm(self, user_message: str, system: str, cancel: threading.Event | None,
-                    streamer: AnswerStreamer) -> Iterator[Any]:
+                    streamer: AnswerStreamer, tool_results: list[dict] | None = None) -> Iterator[Any]:
         """流式读取一轮模型输出：产出 delta 文本；最后产出 (True, 完整文本)（被取消时 (False, 已收到文本)）。"""
+        if getattr(self.llm, "chat_with_tools", None) and (self.config.get("diagnosis") or {}).get("chat_tool_protocol", "json") in {"auto", "native"}:
+            reply = self._model_reply(user_message, system, tool_results)
+            full = json.dumps(reply or {}, ensure_ascii=False)
+            if cancel is not None and cancel.is_set():
+                yield (False, "")
+                return
+            delta = streamer.feed(full)
+            if delta:
+                yield delta
+            yield (True, full)
+            return
         stream = getattr(self.llm, "chat_stream", None)
         if stream is None:
             reply = self.llm.chat_json(user_message=user_message, system_message=system)
@@ -283,9 +413,16 @@ class StockChatSession:
         yield (True, "".join(parts))
 
     def ask_stream(self, question: str, perspective: str = "综合",
-                   cancel: threading.Event | None = None) -> Iterator[dict[str, Any]]:
+                   cancel: threading.Event | None = None, *, stock_context: dict | None = None,
+                   skills: list[str] | None = None) -> Iterator[dict[str, Any]]:
         """流式回答：产出 status / tool / tool_result / delta / error 事件，最后一定是 done（含完整 turn）。"""
-        turn = ChatTurn(question=question.strip(), perspective=normalize_perspective(perspective))
+        if self._should_isolate():
+            yield from self._isolated_stream(question, perspective, cancel, stock_context, skills)
+            return
+        budget = ExecutionBudget.from_config(self.config)
+        # 流可能跨线程迭代，运行记录直接传递，避免依赖生成器调用者的 ContextVar。
+        run_log = RunLog(activate=False)
+        turn = ChatTurn(question=question.strip(), perspective=normalize_perspective(perspective), stock_context=stock_context, skills=skills or [])
         system = SYSTEM_PROMPT.format(tools=tools_prompt()) + self._language_note()
         streamed: list[str] = []          # 已经作为 delta 产出的回答文本
         appended = False
@@ -293,6 +430,7 @@ class StockChatSession:
 
         def finish() -> dict[str, Any]:
             nonlocal appended
+            turn.run_log = run_log.to_dict()
             if not appended:
                 self.turns.append(turn)
                 appended = True
@@ -303,25 +441,29 @@ class StockChatSession:
         try:
             for round_no in range(1, MAX_TOOL_ROUNDS + 2):
                 final = round_no > MAX_TOOL_ROUNDS
-                if cancelled():
-                    turn.error = "已取消"
+                if cancelled() or not budget.remaining():
+                    turn.error = "已取消" if cancelled() else "问股超时：已达到分析总时长上限"
                     break
                 yield {"type": "status", "text": "思考中"}
                 streamer = AnswerStreamer()
                 full: str | None = None
                 ok = True
+                started = time.monotonic()
                 try:
-                    for item in self._stream_llm(self._user_message(turn, final), system, cancel, streamer):
+                    for item in self._stream_llm(self._user_message(turn, final), system, cancel, streamer, turn.tools):
+                        budget.check("问股")
                         if isinstance(item, tuple):
                             ok, full = item
                         else:
                             streamed.append(item)
                             yield {"type": "delta", "text": item}
                 except Exception as e:
-                    logger.error(f"AI 问股调用失败: {e}")
+                    run_log.llm(f"问股模型第 {round_no} 轮", "", False, (time.monotonic() - started) * 1000)
+                    logger.error("AI 问股调用失败: {}", redact_text(e, 300))
                     turn.error = _failure_text(e)
                     yield {"type": "error", "message": turn.error}
                     break
+                run_log.llm(f"问股模型第 {round_no} 轮", "", ok, (time.monotonic() - started) * 1000)
                 if not ok:
                     turn.error = "已取消"
                     turn.answer = "".join(streamed).strip()
@@ -344,8 +486,9 @@ class StockChatSession:
                     args = call.get("args") if isinstance(call.get("args"), dict) else {}
                     label = TOOL_LABELS.get(call["name"], call["name"])
                     yield {"type": "tool", "name": call["name"], "label": label, "args": args}
-                    result = self.tools.call(call["name"], args)
-                    turn.tools.append({"name": call["name"], "label": label, "args": args, "result": result})
+                    with run_log.step(f"工具 {call['name']}"):
+                        result = self._call_tool(call["name"], args, turn)
+                    turn.tools.append({"name": call["name"], "label": label, "args": args, "result": result, "call_id": call.get("id"), "protocol": (reply or {}).get("protocol", "json")})
                     yield {"type": "tool_result", "name": call["name"], "label": label, "summary": str(result)[:200]}
                 if cancelled():
                     turn.error = "已取消"
@@ -354,6 +497,7 @@ class StockChatSession:
         except GeneratorExit:
             turn.error = turn.error or "已取消"
             turn.answer = turn.answer or "".join(streamed).strip()
+            turn.run_log = run_log.to_dict()
             if not appended:
                 self.turns.append(turn)
             raise
@@ -372,19 +516,43 @@ class StockChatSession:
 
     def _user_message(self, turn: ChatTurn, final: bool) -> str:
         parts = [f"当前时间：{datetime.now():%Y-%m-%d %H:%M}", self._perspective_text(turn.perspective)]
+        parts.extend(self._perspective_text(normalize_perspective(skill)) for skill in turn.skills)
+        if turn.context_pack:
+            parts.append("【统一研究证据】" + json.dumps(turn.context_pack, ensure_ascii=False))
+        if turn.stock_context:
+            parts.append("【当前股票范围】" + json.dumps(turn.stock_context, ensure_ascii=False))
+        older = [t for t in self.turns if t.answer][:-HISTORY_TURNS]
+        if older:
+            parts.append("【较早对话摘要】\n" + "\n".join(f"用户：{t.question[:120]}；答复摘要：{t.answer[:220]}" for t in older[-6:]))
         history = [t for t in self.turns if t.answer][-HISTORY_TURNS:]
         if history:
             parts.append("【之前的对话】\n" + "\n".join(
-                f"用户：{t.question[:HISTORY_CHARS]}\n助手：{t.answer[:HISTORY_CHARS]}" for t in history
+                f"[消息 {t.message_id}] 用户：{t.question[:HISTORY_CHARS]}\n助手：{t.answer[:HISTORY_CHARS]}" for t in history
             ))
-        parts.append(f"【本轮问题】{turn.question}")
         if turn.tools:
             parts.append("【已查询的数据】\n" + "\n".join(
                 f"- {t['name']}({', '.join(f'{k}={v}' for k, v in t['args'].items())})：{t['result']}" for t in turn.tools
             ))
         if final:
             parts.append("工具调用次数已用完，请直接根据已有数据回答，返回 {\"answer\": ...}。")
-        return "\n\n".join(parts)
+        # 用字符预算限制上下文体积，避免历史工具结果挤占本轮问题。
+        max_chars = int((self.config.get("diagnosis") or {}).get("chat_context_chars", 12000))
+        question = f"【本轮问题】{turn.question}"
+        scope = "【当前股票范围】" + json.dumps(turn.stock_context, ensure_ascii=False) if turn.stock_context else ""
+        essential = "\n\n".join(part for part in (scope, question) if part)
+        tokens = (self.config.get("diagnosis") or {}).get("chat_context_tokens")
+        if tokens:
+            from src.services.chat_context import compress_context
+            if final:
+                essential += '\n工具调用次数已用完，请根据已有证据返回 {"answer": ...}。'
+            text, turn.context_usage = compress_context(parts, essential, int(tokens), max_chars)
+            return text
+        # 始终保留本轮问题和范围，长策略说明、历史与工具数据只能占剩余预算。
+        text = "\n\n".join(parts)[:max(0, max_chars - len(essential) - 2)] + "\n\n" + essential
+        if final:
+            instruction = "工具调用次数已用完，请直接根据已有数据回答，返回 {\"answer\": ...}。"
+            return "\n\n".join(parts)[:max(0, max_chars - len(essential) - len(instruction) - 4)] + "\n\n" + essential + "\n\n" + instruction
+        return text[:max_chars]
 
     def to_markdown(self) -> str:
         """整段对话导出为 markdown。"""

@@ -316,6 +316,8 @@ def test_min_severity_critical_pushes_nothing_and_default_pushes_all(db_path, mo
     alert_mod.reset_state()
     with get_db_session(db_path) as session:
         session.query(AlertRecord).delete()
+        from src.database.models import AlertCooldown
+        session.query(AlertCooldown).delete()  # 第二个独立场景同时重置持久化冷却
     AlertService({"database": {"sqlite_path": db_path}, "alerts": {}, "notifier": {}}).run(datetime(2026, 9, 28, 10, 5))
     assert len(pushed) == 1 and "封涨停" in pushed[0][1] and "大跌" in pushed[0][1]
 

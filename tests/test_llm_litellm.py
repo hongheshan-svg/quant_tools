@@ -147,3 +147,24 @@ def test_build_route_uses_platform_preset_base_url():
     assert build_route({"provider": "openrouter", "api_key": "k", "model": "m", "base_url": "https://proxy/v1"}).api_base == "https://proxy/v1"
     assert build_route({"provider": "unknown-x", "api_key": "k", "model": "m"}).api_base == "https://api.deepseek.com"
     assert all(p["base_url"].startswith("https://") for k, p in AI_PLATFORMS.items() if k not in ("anthropic", "gemini", "ollama", "custom"))
+
+
+def test_native_tool_ids_results_and_plain_answer_are_preserved(tmp_path, fake):
+    client = _client(tmp_path)
+    call = SimpleNamespace(id='call-one', function=SimpleNamespace(name='quote', arguments='{"code":"600519"}'))
+    fake.replies = [SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[call]))], usage=None), _resp('已核实行情')]
+    tools = [{'type': 'function', 'function': {'name': 'quote', 'parameters': {'type': 'object', 'properties': {}}}}]
+    first = client.chat_with_tools('查询', '系统', tools)
+    assert first['protocol'] == 'native' and first['tool_calls'][0]['id'] == 'call-one'
+    second = client.chat_with_tools('继续', '系统', tools, [{'protocol': 'native', 'call_id': 'call-one', 'name': 'quote', 'args': {'code': '600519'}, 'result': '最新价格100'}])
+    assert second['answer'] == '已核实行情'
+    messages = fake.calls[-1]['messages']
+    assert messages[-2]['tool_calls'][0]['id'] == 'call-one'
+    assert messages[-1] == {'role': 'tool', 'tool_call_id': 'call-one', 'content': '最新价格100'}
+
+
+def test_native_protocol_falls_back_to_json_without_losing_question(tmp_path, monkeypatch):
+    client = _client(tmp_path)
+    monkeypatch.setattr(client, '_call', lambda *a, **kw: None)
+    monkeypatch.setattr(client, 'chat_json', lambda **kw: {'answer': kw['user_message']})
+    assert client.chat_with_tools('当前问题', '系统', [])['answer'] == '当前问题'

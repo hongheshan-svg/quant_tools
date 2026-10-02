@@ -10,6 +10,18 @@ from src.collectors import daily_history, extra_sources
 from src.collectors.daily_history import fetch_daily_df_with_fallback, records_from_daily_df
 
 
+@pytest.fixture(autouse=True)
+def clean_source_health():
+    from src.collectors import source_chain
+    source_chain._breakers.clear()
+    source_chain._last_good.clear()
+    source_chain.source_health.reset()
+    yield
+    source_chain._breakers.clear()
+    source_chain._last_good.clear()
+    source_chain.source_health.reset()
+
+
 class FakeResultSet:
     def __init__(self, rows, fields, error_code="0", error_msg=""):
         self.rows, self.fields, self.error_code, self.error_msg = list(rows), fields, error_code, error_msg
@@ -148,7 +160,7 @@ def test_fallback_order_uses_extra_sources(monkeypatch):
     monkeypatch.setitem(daily_history.DAILY_SOURCES, "tencent", ("tx", daily_history._fetch_tx))
     label, df = fetch_daily_df_with_fallback("600519", "2026-09-20", "2026-09-29", order=["tencent", "baostock", "pytdx"])
     assert label == "pytdx" and len(df) == 1
-    with pytest.raises(RuntimeError, match=r"tx: tx down \| baostock empty"):
+    with pytest.raises(RuntimeError, match=r"tx: tx down \| baostock: 无数据"):
         fetch_daily_df_with_fallback("600519", "2026-09-20", "2026-09-29", order=["tencent", "baostock"])
 
 
@@ -158,4 +170,5 @@ def test_daily_source_order_from_config(monkeypatch):
     monkeypatch.setattr(config_loader, "load_config", lambda: {"data_sources": {"daily_history": ["baostock", "nope", "tencent"]}})
     assert daily_history.daily_source_order() == ["baostock", "tencent"]
     monkeypatch.setattr(config_loader, "load_config", lambda: {})
-    assert daily_history.daily_source_order() == list(daily_history.DAILY_SOURCES)
+    from src.services.data_source_settings import DAILY_DEFAULT
+    assert daily_history.daily_source_order() == DAILY_DEFAULT

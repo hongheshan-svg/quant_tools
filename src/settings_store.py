@@ -43,7 +43,7 @@ def save_section(section: str, value: Any, path: Path | None = None, merge: bool
 
 MASK = "******"
 SECRET_KEYS = {"api_key", "api_keys", "api_token", "token", "bot_token", "secret", "app_secret", "client_secret",
-               "password", "sendkey", "device_key", "user_key", "webhook_url", "tushare_token"}
+               "password", "sendkey", "device_key", "user_key", "webhook_url", "tushare_token", "tickflow_api_key"}
 SECRET_PATHS = {("notifier", "webhook", "url")}
 
 

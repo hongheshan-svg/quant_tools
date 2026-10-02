@@ -5,6 +5,7 @@ import { request } from '@/api/client'
 import { progressText, taskResultError, useTask, waitForTask } from '@/hooks/useTask'
 import { toast } from '@/stores/toast'
 import type { Task } from '@/api/types'
+import { useTaskStore } from '@/stores/tasks'
 
 const task = (status: Task['status'], extra: Partial<Task> = {}): Task => ({
   id: 't1', kind: 'demo', label: '演示', status, progress: null, result: null, error: '',
@@ -14,6 +15,14 @@ const task = (status: Task['status'], extra: Partial<Task> = {}): Task => ({
 afterEach(() => vi.restoreAllMocks())
 
 describe('waitForTask', () => {
+  it('旧任务列表快照不能覆盖较新的流式终态', () => {
+    useTaskStore.setState({ tasks: {} })
+    useTaskStore.getState().upsert(task('done', { revision: 5, result: { n: 3 } }))
+    useTaskStore.getState().upsert(task('running', { revision: 4 }))
+    expect(useTaskStore.getState().tasks.t1.status).toBe('done')
+    expect(useTaskStore.getState().tasks.t1.result).toEqual({ n: 3 })
+    useTaskStore.setState({ tasks: {} })
+  })
   it('polls until done and reports progress', async () => {
     const poll = vi.spyOn(api, 'task')
       .mockResolvedValueOnce(task('running', { progress: { done: 1, total: 3 } }))

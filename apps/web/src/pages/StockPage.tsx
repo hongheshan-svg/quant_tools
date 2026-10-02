@@ -3,7 +3,7 @@ import { Star } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api } from '@/api/endpoints'
-import type { DailyBar, Diagnosis, SignalReview, StockNews } from '@/api/types'
+import type { DailyBar, Diagnosis, SignalReview, StockNews, StockProfile } from '@/api/types'
 import { CandlestickChart, toCandles, type Period } from '@/components/CandlestickChart'
 import { DataTable, type Column } from '@/components/DataTable'
 import { DiagnosisView } from '@/components/DiagnosisView'
@@ -16,7 +16,7 @@ import { toast } from '@/stores/toast'
 import { fmtAmount, fmtNum } from '@/utils/format'
 import { FUND_LABELS, fundKind } from '@/utils/fund'
 
-type TabKey = 'kline' | 'daily' | 'news' | 'diagnosis'
+type TabKey = 'kline' | 'daily' | 'news' | 'diagnosis' | 'research'
 const MIN_BARS = 60
 
 export function StockPage() {
@@ -89,9 +89,16 @@ export function StockPage() {
             <span className="num text-lg">{fmtNum(latest.close)}</span>
             <Pct value={latest.change_pct} />
             <span className="text-xs text-muted">{latest.trade_date}</span>
+            <span className="text-xs text-muted">{t('来源')}：{latest.source || t('来源未记录')} · {t(({ none: '不复权', forward: '前复权', backward: '后复权', forward_additive: '前复权（加法）', backward_additive: '后复权（加法）' } as Record<string, string>)[latest.price_adjustment || ''] || '复权口径未知')}</span>
           </>
         )}
         {backfilling && <Badge tone="accent">{t('本地日线不足，正在联网补齐…')}</Badge>}
+        {!fund && <Button loading={backfilling} onClick={async () => {
+          setBackfilling(true)
+          try { const r = await api.ensureHistory(code, name, true); toast.success(t('已更新 {n} 根日线', { n: r.added })); await daily.reload() }
+          catch (e) { toast.error(e instanceof Error ? e.message : String(e)) }
+          finally { setBackfilling(false) }
+        }}>{t('刷新复权历史')}</Button>}
         {watched != null && (
           <Button className="ml-auto" onClick={toggleWatch}>
             <Star className={watched ? 'size-4 fill-warn text-warn' : 'size-4'} /> {watched ? t('移出自选') : t('加入自选')}
@@ -108,6 +115,7 @@ export function StockPage() {
             { key: 'daily', label: t('日线数据') },
             ...(fund ? [] : [{ key: 'news' as TabKey, label: t('新闻公告') }]),
             { key: 'diagnosis', label: t('AI 诊断') },
+            { key: 'research', label: t('研究概览') },
           ]}
         />
         {tab === 'kline' && (
@@ -123,9 +131,39 @@ export function StockPage() {
         {tab === 'daily' && <DataTable columns={dailyColumns} rows={[...bars].reverse()} rowKey={(b) => b.trade_date} maxHeight="60vh" />}
         {tab === 'news' && <NewsTab code={code} />}
         {tab === 'diagnosis' && <DiagnosisTab code={code} isFund={!!fund} />}
+        {tab === 'research' && <ResearchOverview code={code} />}
       </Card>
     </div>
   )
+}
+
+export function ResearchOverview({ code, reportArtifact, reportId }: { code: string; reportArtifact?: import('@/api/types').ResearchArtifact | null; reportId?: number }) {
+  const t = useT()
+  const { data, loading, error, reload } = useApi<StockProfile>(() => api.stockProfile(code), [code])
+  if (error) return <ErrorBox message={error} onRetry={reload} />
+  if (loading || !data) return <Spinner />
+  const artifact = reportArtifact !== undefined ? reportArtifact : data.research.data?.structured_report
+  return <div className="space-y-4">
+    <div className="flex items-center gap-2"><h3 className="font-medium">{t('研究概览')}</h3><Button onClick={reload}>{t('刷新')}</Button></div>
+    {artifact ? <>
+      <p className="text-xs text-muted">{artifact.created_at} {reportId != null && `· #${reportId}`}</p>
+      <p className="font-medium">{artifact.thesis.summary}</p>
+      <div className="grid gap-3 md:grid-cols-2">
+        <Card title={t('失效条件')}><ul className="space-y-1">{artifact.invalidation_conditions.map((c) => <li key={c.id}>{c.description}</li>)}</ul></Card>
+        <Card title={t('下一步')}><ul className="space-y-1">{artifact.next_actions.map((a) => <li key={a.action}>{a.label}：{a.reason} {a.due_at}</li>)}</ul></Card>
+      </div>
+      <details><summary className="cursor-pointer text-accent">{t('证据与来源')}（{artifact.evidence.length}）</summary>
+        <ul className="mt-2 space-y-3">{artifact.evidence.map((e) => <li key={e.id} className="rounded-lg border border-border p-3"><p className="mb-1 font-medium">{e.title}</p><Badge>{e.source || e.source_type}</Badge> <span className="text-xs text-muted">{e.as_of || t('时间未知')} · {t(e.freshness === 'stale' ? '已陈旧' : e.freshness === 'fresh' ? '可用' : '时间未确认')}</span><p className="mt-1 whitespace-pre-wrap text-sm">{e.summary}</p></li>)}</ul>
+      </details>
+    </> : <p className="text-muted">{t('暂无诊断，先生成 AI 诊断')}</p>}
+    <Card title={t('持仓与盯盘')}>
+      {data.portfolio.status === 'unavailable' ? <p className="text-muted">{t('持仓数据不可用')}</p> : <p>{data.portfolio.data?.held ? data.portfolio.data.holdings.map((h) => `${h.label} ${h.quantity} 股，成本 ${h.avg_cost}`).join('；') : t('未持仓')}</p>}
+      {data.monitors.data?.alert_rules.map((r, i) => <p key={i}>{r.text} {r.note}</p>)}
+      {data.signals.data?.active.map((s) => <p key={s.id}><Link className="text-accent" to="/signals">{s.action_label}</Link> · {t('止损')} {s.stop_loss ?? '--'} · {t('目标')} {s.target_price ?? '--'}</p>)}
+    </Card>
+    <Card title={t('近期报告')}><ul className="space-y-1">{data.history.data?.recent_reports.map((r) => <li key={r.id}><Link className="text-accent" to={`/history?code=${encodeURIComponent(code)}&id=${r.id}`}>{r.created_at} · {r.summary}</Link></li>)}</ul></Card>
+    <Card title={t('相关资讯')}><ul className="space-y-1">{data.intelligence.data?.items.map((i) => <li key={i.id}><a href={i.url || undefined} target="_blank" rel="noreferrer">{i.title}</a><span className="ml-2 text-xs text-muted">{i.source}</span></li>)}</ul></Card>
+  </div>
 }
 
 function NewsTab({ code }: { code: string }) {

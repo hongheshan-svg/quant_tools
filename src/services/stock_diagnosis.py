@@ -59,7 +59,9 @@ from src.services.decision_profile import (
 )
 from src.collectors.shareholders import describe_shareholders
 from src.services.report_language import display, language_directive, report_language, tr
-from src.services.run_log import RunLog
+from src.services.run_log import RunLog, run_scope
+from src.utils.stock_code import diagnosis_code
+from src.services.execution_budget import ExecutionBudget
 from src.trading.price_plan import sanitize_price_plan
 from src.utils.stock_code import bare_code, board_of, code_candidates, name_variants, normalize_name
 
@@ -197,10 +199,15 @@ class StockDiagnosisService:
             self._llm = LLMClient(self.config.get("llm", {}))
         return self._llm
 
+    @run_scope
     def diagnose(self, code: str, force: bool = False, skills: list[str] | None = None,
                  profile: str | None = None) -> dict[str, Any]:
         """诊断一只股票；30 分钟内同语言、同决策风格的诊断结果直接复用（force=True 时重新诊断）。"""
-        code = bare_code(code)
+        from src.utils.stock_code import resolve_identity, StockCodeError
+        identity = resolve_identity(code)
+        if identity.kind != "stock":
+            raise StockCodeError("ETF/指数必须使用基金诊断入口")
+        code = identity.code
         lang = report_language(self.config)
         profile = self._profile(profile)
         if not force:
@@ -208,17 +215,26 @@ class StockDiagnosisService:
             if cached and (cached.get("language") or "zh") == lang and normalize_profile(cached.get("decision_profile")) == profile:
                 return {**cached, "cached": True}
 
+        cfg = self.config.get("diagnosis") or {}
+        if self._llm is None and not getattr(self, "_isolated_worker", False) and cfg.get("isolate_process", False):
+            from src.services.analysis_process import isolated_result
+            return isolated_result("diagnosis", self.config, {"code": code, "force": force, "skills": skills, "profile": profile})
+        budget = ExecutionBudget.from_config(self.config)
+
         from src.services.diagnosis_agents import DECISION_ADDENDUM, disagreement, opinions_text, run_analysts
 
         run_log = RunLog()
         context = self.build_context(code, run_log)
+        from src.services.research_artifact import build_context_pack
+        context["context_pack"] = build_context_pack(context, run_log)
+        budget.check("取数")
         if not context["quote"]:
             return {"code": code, "error": "行情库中没有该股票的数据"}
         cfg = self.config.get("diagnosis") or {}
         calibration = self._calibration() if cfg.get("calibration", True) else {}
         model = str((getattr(self.llm, "primary_cfg", None) or {}).get("model") or "")
         analyst_start = time.perf_counter()
-        opinions = run_analysts(self.llm, context["text"], str(cfg.get("mode", "single")), *(["en"] if lang == "en" else []))
+        opinions = run_analysts(self.llm, context["text"], str(cfg.get("mode", "single")), lang, budget=budget)
         if opinions:
             run_log.llm("分析员", model, True, (time.perf_counter() - analyst_start) * 1000)
         conflict = disagreement(opinions)
@@ -229,28 +245,46 @@ class StockDiagnosisService:
         if opinions:
             message += "\n" + opinions_text(opinions, conflict)
         consult_start = time.perf_counter()
-        skill_opinions, skill_consensus, consult_text = self._consult_skills(context, skills, lang)
+        skill_opinions, skill_consensus, consult_text = self._consult_skills(context, skills, lang, budget=budget)
         if skill_opinions:
             names = "、".join(o["display_name"] for o in skill_opinions)
             run_log.llm(f"策略会诊（{names}）", model, True, (time.perf_counter() - consult_start) * 1000)
+        from src.services.strategy_synthesis import synthesize
+        synthesis = synthesize(skill_opinions, llm=self.llm, context_pack=context.get("context_pack"), config=cfg.get("deliberation"), budget=budget)
         if consult_text:
             message += "\n" + consult_text
+        if synthesis.get("conflicts"):
+            message += "\n【策略审议】相反方向或显著评分分歧尚未解决，必须保留反方理由并降低决策信心。"
         decision_start = time.perf_counter()
+        budget.check("决策")
         raw = self.llm.chat_json(user_message=message, system_message=SYSTEM_PROMPT + (DECISION_ADDENDUM if opinions else "")
                                   + language_directive(lang, DIAGNOSIS_ENUMS))
         run_log.llm("决策", model, bool(raw), (time.perf_counter() - decision_start) * 1000)
+        budget.check("决策")
         if not raw:
             return {"code": code, "name": context["name"], "error": "AI 未返回有效结果，请检查 AI 设置或稍后重试"}
         previous = self.latest(code, max_age_minutes=STABILITY_DAYS * 24 * 60)
         context = {**context, "opinions": opinions, "disagreement": conflict, "calibration": calibration, "profile": profile}
         result = self._apply_guardrails(raw, context, previous)
         result["skill_opinions"], result["skill_consensus"] = skill_opinions, skill_consensus
+        result["strategy_synthesis"] = synthesis
+        if synthesis.get("confidence_cap") and result.get("confidence") != "低":
+            result["confidence"] = "低"
+            result.setdefault("guardrails", []).append("策略分歧尚未解决，信心降为低")
         note_guardrail_change(run_log, raw, result)
         result["run_log"] = run_log.to_dict()
+        from src.services.research_artifact import build_research_artifact
+        result["structured_report"] = build_research_artifact(result)
         diagnosis_id = self._save(result)
+        run_log._append("报告保存", True, 0, f"报告 #{diagnosis_id}", "save")
         self._record_opinions(result, diagnosis_id)
         self._record_signal(result, diagnosis_id)
         result["diagnosis_id"] = diagnosis_id
+        result["run_log"] = run_log.to_dict()
+        with get_db_session(self.db_path) as session:
+            saved = session.get(StockDiagnosis, diagnosis_id)
+            if saved is not None:
+                saved.result_json = json.dumps(result, ensure_ascii=False)
         return result
 
     def _profile(self, profile: str | None = None) -> str:
@@ -310,7 +344,8 @@ class StockDiagnosisService:
             return ""
         return f"【历史信号复盘】{review['text']}（历史判断偏乐观/偏悲观时，请相应调整信心）"
 
-    def _consult_skills(self, context: dict[str, Any], requested: list[str] | None = None, lang: str = "zh") -> tuple[list[dict], dict, str]:
+    def _consult_skills(self, context: dict[str, Any], requested: list[str] | None = None, lang: str = "zh",
+                        budget: ExecutionBudget | None = None) -> tuple[list[dict], dict, str]:
         """多策略会诊：返回（各策略观点，共识，交给决策员的文本）；未启用、非个股或出错时全部为空。"""
         cfg = (self.config.get("diagnosis") or {}).get("skill_consult") or {}
         if not cfg.get("enabled", False):
@@ -328,7 +363,7 @@ class StockDiagnosisService:
             except Exception as e:
                 logger.debug(f"读取策略权重失败: {e}")
                 weights = {}
-            opinions = consult(self.llm, context["text"], picked, weights, *(["en"] if lang == "en" else []))
+            opinions = consult(self.llm, context["text"], picked, weights, lang, budget=budget)
             if not opinions:
                 return [], {}, ""
             cons = consensus(opinions)
@@ -351,11 +386,12 @@ class StockDiagnosisService:
 
     def latest(self, code: str, max_age_minutes: int | None = None) -> dict[str, Any] | None:
         with get_db_session(self.db_path) as session:
-            query = session.query(StockDiagnosis).filter(StockDiagnosis.code == bare_code(code))
+            query = session.query(StockDiagnosis).filter(StockDiagnosis.code == diagnosis_code(code))
             if max_age_minutes is not None:
                 query = query.filter(StockDiagnosis.created_at >= datetime.now() - timedelta(minutes=max_age_minutes))
             row = query.order_by(StockDiagnosis.created_at.desc(), StockDiagnosis.id.desc()).first()
-            return {**json.loads(row.result_json), "diagnosis_id": row.id} if row else None
+            from src.utils.redaction import redact
+            return redact({**json.loads(row.result_json), "diagnosis_id": row.id}) if row else None
 
     def _calibration(self) -> dict[str, Any]:
         try:
@@ -378,10 +414,11 @@ class StockDiagnosisService:
         """最近几次诊断结果（新的在前）。"""
         with get_db_session(self.db_path) as session:
             rows = (
-                session.query(StockDiagnosis.result_json).filter(StockDiagnosis.code == bare_code(code))
+                session.query(StockDiagnosis.result_json).filter(StockDiagnosis.code == diagnosis_code(code))
                 .order_by(StockDiagnosis.created_at.desc(), StockDiagnosis.id.desc()).limit(limit).all()
             )
-        return [json.loads(r) for (r,) in rows]
+        from src.utils.redaction import redact
+        return [redact(json.loads(r)) for (r,) in rows]
 
     # ---------- 上下文 ----------
 
@@ -463,6 +500,8 @@ class StockDiagnosisService:
                     "trade_date": b.trade_date, "close": b.close, "change_pct": b.change_pct, "turnover": b.turnover,
                     "amount_yi": round((b.amount or 0) / 1e8, 2), "circ_mv_yi": round((b.circ_mv or 0) / 1e8, 1),
                     "pe": next((x.pe for x in bars if x.pe), None), "pb": next((x.pb for x in bars if x.pb), None),
+                    "source": b.source, "price_adjustment": b.price_adjustment,
+                    "updated_at": b.updated_at.isoformat(timespec="seconds") if b.updated_at else None,
                 }
             name = normalize_name(next((b.name for b in bars if b.name), ""))
             recent = [f"{b.trade_date} 收{b.close} {b.change_pct:+.2f}%" for b in reversed(bars) if b.close and b.change_pct is not None]
@@ -524,6 +563,13 @@ class StockDiagnosisService:
         except Exception as e:
             logger.debug(f"业绩数据获取失败: {e}")
             earnings = None
+        fundamentals = None
+        if (self.config.get("diagnosis") or {}).get("fundamentals", False):
+            from src.collectors.quarterly_fundamentals import QuarterlyFundamentals
+            with step("季度财务") as s:
+                fundamentals = QuarterlyFundamentals(self.config).get(code)
+                s.ok = fundamentals["status"] in ("available", "partial")
+                s.detail = fundamentals["status"]
         holders = None
         if shareholders_on:
             try:
@@ -630,6 +676,7 @@ class StockDiagnosisService:
             f"【资金流】{flow_text or '暂无'}",
             f"【筹码】{describe_chips(chip) or '暂无'}",
             f"【业绩】{describe_earnings(earnings) or '近期无业绩预告/快报'}",
+            *(["【季度财务与分红】" + json.dumps(fundamentals, ensure_ascii=False)] if fundamentals else []),
             *([f"【股东】{describe_shareholders(holders) or '暂无'}"] if shareholders_on else []),
             "【近期涨停】" + ("；".join(limit_up_lines) if limit_up_lines else "近期无涨停"),
             "【主线地位】" + (f"{role['role']}，所属{role['dimension']}{theme.brief()}" if role and theme else "不在近期涨停主线中"),
@@ -653,9 +700,10 @@ class StockDiagnosisService:
             "flow_text": flow_text, "flow_ratio": flow_ratio, "chip": chip,
             "earnings_text": describe_earnings(earnings), "earnings_risk": earnings_risk(earnings),
             "risk_notices": risk_notices,
-            "shareholders": holders, "holder_signals": holder_signals(holders),
+            "shareholders": holders, "holder_signals": holder_signals(holders), "fundamentals": fundamentals,
             "valuation_text": valuation_text(quote.get("pe"), quote.get("pb")) if quote else "",
             "phase": phase_ctx, "news_relevance": news_relevance,
+            "news_evidence": news_lines, "notices_evidence": notices, "web_status": web_status,
         }
 
     @staticmethod
@@ -697,9 +745,10 @@ class StockDiagnosisService:
     # ---------- 护栏 ----------
 
     def _apply_guardrails(self, raw: dict, context: dict, previous: dict | None = None) -> dict[str, Any]:
-        try:
-            score = max(0.0, min(100.0, float(raw.get("score", 50))))
-        except (TypeError, ValueError):
+        from src.services.opinion_validity import valid_score
+        score = valid_score(raw.get("score", 50))
+        invalid_score = score is None
+        if invalid_score:
             score = 50.0
         lang = context.get("lang") or report_language(self.config)
         profile = normalize_profile(context.get("profile") or (self.config.get("diagnosis") or {}).get("decision_profile"))
@@ -711,8 +760,8 @@ class StockDiagnosisService:
         bullish_history = (context.get("calibration") or {}).get("看多") or {}
         inputs = {
             "score": score,
-            "action": normalize_action(str(raw.get("action", ""))) or score_to_action(score),
-            "confidence": str(raw.get("confidence", "")),
+            "action": "watch" if invalid_score else normalize_action(str(raw.get("action", ""))) or score_to_action(score),
+            "confidence": "低" if invalid_score else str(raw.get("confidence", "")),
             "regime": {"regime": regime.regime, "position_factor": regime.position_factor},
             "data_quality": {"score": quality["score"], "missing": list(quality["missing"]),
                              "core_ok": bool(quality["core_ok"]), "bar_count": quality["bar_count"]},
@@ -729,6 +778,8 @@ class StockDiagnosisService:
             "stop_loss": plan_raw.get("stop_loss"),
         }
         action, confidence, guardrails, phase_decision = decide_with_phase(inputs, profile, lang)
+        if invalid_score:
+            guardrails.append(tr(lang, "模型评分无效，按低信心观望处理", "Invalid model score; watch with low confidence"))
 
         plan = sanitize_price_plan(
             context["code"], context["name"], (context["quote"] or {}).get("close"),
@@ -766,7 +817,7 @@ class StockDiagnosisService:
             "data_quality": {k: quality[k] for k in ("score", "missing")},
             "fund_flow": context.get("flow_text", ""),
             "chips": context.get("chip") or {},
-            "earnings": context.get("earnings_text", ""),
+            "earnings": context.get("earnings_text", ""), "fundamentals": context.get("fundamentals"),
             "shareholders": describe_shareholders(context.get("shareholders")),
             "valuation": context.get("valuation_text", ""),
             "agents": context.get("opinions") or [],
@@ -780,6 +831,7 @@ class StockDiagnosisService:
             "language": lang,
             "decision_profile": profile,
             "decision_inputs": inputs,
+            "context_pack": context.get("context_pack"),
         }
 
     def _save(self, result: dict[str, Any]) -> int | None:

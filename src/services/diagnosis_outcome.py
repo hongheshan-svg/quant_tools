@@ -5,7 +5,7 @@ AI 诊断事后验证（参考 daily_stock_analysis 的 decision signal outcome�
 - 参考价：诊断行情日的收盘价；1/3/5 日收益按之后第 1/3/5 个交易日收盘计算
 - 方向：买入/加仓 看多，减仓/卖出/回避 看空，持有/观望/提醒 不判方向；看多上涨、看空下跌算判断正确
 - 价格计划：看多且给了止损价和目标价的，看之后 5 个交易日先碰到目标价还是止损价（同一天都碰到按止损）
-同一只股票同一行情日诊断多次时只算最后一次。按操作建议和评分区间分组统计，只读不落库。
+同一只股票同一行情日诊断多次时展示最后一次。收益后验由公共引擎版本化落库，保留旧 API 的 1/3/5 日展示字段。
 """
 
 from __future__ import annotations
@@ -19,9 +19,9 @@ from src import trading_calendar
 from src.analyzers.decision import ACTION_LABELS, BULLISH_ACTIONS
 from src.config_loader import load_config
 from src.database.db import get_db_session
-from src.database.models import StockDaily, StockDiagnosis
+from src.database.models import FundDaily, StockDaily, StockDiagnosis
 from src.services.stock_diagnosis import BEARISH_ACTIONS
-from src.utils.stock_code import bare_code, code_candidates
+from src.utils.stock_code import diagnosis_code, code_candidates
 
 HORIZONS = (1, 3, 5)
 SCORE_BANDS = ((70, "70 分以上"), (50, "50~69 分"), (0, "50 分以下"))
@@ -59,47 +59,56 @@ class DiagnosisOutcomeService:
         since = datetime.now() - timedelta(days=lookback_days)
         with get_db_session(self.db_path) as session:
             rows = (
-                session.query(StockDiagnosis.result_json).filter(StockDiagnosis.created_at >= since)
+                session.query(StockDiagnosis.id, StockDiagnosis.result_json).filter(StockDiagnosis.created_at >= since)
                 .order_by(StockDiagnosis.created_at).all()
             )
             latest: dict[tuple[str, str], dict[str, Any]] = {}
-            for (raw,) in rows:
+            for report_id, raw in rows:
                 try:
                     r = json.loads(raw)
                 except (TypeError, ValueError):
                     continue
                 if r.get("error") or not r.get("trade_date"):
                     continue
-                latest[(bare_code(r["code"]), r["trade_date"])] = r  # 同一行情日只算最后一次
+                r["diagnosis_id"] = report_id
+                latest[(diagnosis_code(r["code"]), r["trade_date"])] = r  # 同一行情日只算最后一次
             details = [self._evaluate_one(session, r) for r in latest.values()]
         details.sort(key=lambda d: (d["trade_date"], d["code"]), reverse=True)
         return {"summary": self._summary(details), "details": details}
 
     def _evaluate_one(self, session, r: dict[str, Any]) -> dict[str, Any]:
-        code, trade_date = bare_code(r["code"]), r["trade_date"]
+        code, trade_date = diagnosis_code(r["code"]), r["trade_date"]
         cands = code_candidates(code)
+        model = FundDaily if code.startswith(("sh", "sz", "bj")) else StockDaily
         base = (
-            session.query(StockDaily.close).filter(StockDaily.code.in_(cands), StockDaily.trade_date == trade_date)
+            session.query(model.close).filter(model.code.in_(cands), model.trade_date == trade_date)
             .limit(1).scalar()
         )
+        if base is None and model is StockDaily:
+            model = FundDaily
+            base = session.query(model.close).filter(model.code == code, model.trade_date == trade_date).limit(1).scalar()
         end = (datetime.strptime(trade_date, "%Y-%m-%d") + timedelta(days=FORWARD_CALENDAR_DAYS)).strftime("%Y-%m-%d")
         by_date = {
-            b.trade_date: b for b in session.query(StockDaily.trade_date, StockDaily.high, StockDaily.low, StockDaily.close)
-            .filter(StockDaily.code.in_(cands), StockDaily.trade_date > trade_date, StockDaily.trade_date <= end,
-                    StockDaily.close > 0).all()
+            b.trade_date: b for b in session.query(model.trade_date, model.high, model.low, model.close)
+            .filter(model.code.in_(cands), model.trade_date > trade_date, model.trade_date <= end,
+                    model.close > 0).all()
         }
         bars = [by_date[d] for d in sorted(trading_calendar.trade_days_only(by_date))[:max(HORIZONS)]]
         action = r.get("action", "")
         direction = direction_of(action)
+        from src.services.outcome_engine import OutcomeEngine
+        engine = OutcomeEngine(self.config)
+        outcomes = {o.horizon: o for o in engine.evaluate(session, "diagnosis", r["diagnosis_id"], code, trade_date, direction)}
         detail: dict[str, Any] = {
             "trade_date": trade_date, "created_at": r.get("created_at", ""), "code": code, "name": r.get("name", ""),
             "action": action, "action_label": r.get("action_label") or ACTION_LABELS.get(action, action),
             "score": r.get("score"), "direction": direction, "base_close": base,
         }
         for n in HORIZONS:
-            ret = (bars[n - 1].close / base - 1) * 100 if base and len(bars) >= n else None
+            outcome = outcomes[n]
+            ret = outcome.return_pct if outcome.status == "evaluated" else None
             detail[f"r{n}"] = round(ret, 2) if ret is not None else None
-            detail[f"hit{n}"] = (ret * direction > 0) if ret is not None and direction else None
+            detail[f"hit{n}"] = outcome.hit if ret is not None and direction else None
         plan = r.get("battle_plan") or {}
         detail["plan"] = plan_result(bars, plan.get("stop_loss"), plan.get("target_price")) if direction > 0 else ""
         return detail
@@ -162,7 +171,7 @@ def calibration_text(stats: dict[str, Any], code: str) -> str:
     """交给 LLM 的「历史表现」一段；没有任何已验证的诊断时为空。"""
     parts = [f"{label}诊断 {stats[label]['n']} 次，3 日方向准确率 {stats[label]['accuracy']}%"
              for label in ("看多", "看空") if stats.get(label, {}).get("n")]
-    own = [d for d in stats.get("details", []) if d["code"] == bare_code(code) and d["r3"] is not None][:STOCK_HISTORY_LINES]
+    own = [d for d in stats.get("details", []) if d["code"] == diagnosis_code(code) and d["r3"] is not None][:STOCK_HISTORY_LINES]
     if own:
         parts.append("本股最近：" + "；".join(f"{d['trade_date'][5:]} {d['action_label']}→3日{d['r3']:+.1f}%" for d in own))
     return ("【历史表现】近 90 天 AI 诊断：" + "；".join(parts)) if parts else ""

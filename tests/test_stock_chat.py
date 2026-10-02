@@ -64,7 +64,7 @@ def test_ask_runs_tools_then_answers():
     # 追问会带上之前的对话
     llm.replies = [{"answer": "止损放在 1450。"}]
     chat.ask("止损放哪")
-    assert "【之前的对话】\n用户：茅台现在能买吗\n助手：**观望**" in llm.prompts[-1]
+    assert "【之前的对话】" in llm.prompts[-1] and f"[消息 {turn.message_id}] 用户：茅台现在能买吗\n助手：**观望**" in llm.prompts[-1]
     assert "止损放在 1450" in chat.to_markdown() and "查询：查找股票、最新行情、技术面" in chat.to_markdown()
 
 

@@ -68,6 +68,5 @@ class CircuitBreaker:
                     )
 
     def available_sources(self, sources: list[str]) -> list[str]:
-        """按原顺序返回当前可请求的数据源；全部熔断时返回第一个，避免整条链路完全停摆。"""
-        available = [s for s in sources if self.is_available(s)]
-        return available or sources[:1]
+        """按原顺序返回可请求的源；全部冷却时返回空列表，不能绕过熔断。"""
+        return [s for s in dict.fromkeys(sources) if self.is_available(s)]

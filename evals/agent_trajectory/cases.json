@@ -1,0 +1,6 @@
+[
+  {"id": "single_stock", "required_tools": ["quote", "daily_bars"], "max_calls": 4, "question": "检查贵州茅台的趋势", "stock_context": {"code": "600519"}},
+  {"id": "fund_scope", "required_tools": ["quote", "daily_bars"], "max_calls": 4, "question": "分析沪深300指数趋势", "stock_context": {"code": "sh000300"}},
+  {"id": "market_context", "required_tools": ["market"], "max_calls": 3, "question": "评估当前市场环境"},
+  {"id": "evidence_check", "required_tools": ["news", "web_search"], "max_calls": 4, "question": "核查贵州茅台公告与资讯", "stock_context": {"code": "600519"}}
+]

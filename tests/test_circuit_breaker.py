@@ -56,7 +56,7 @@ def test_half_open_probe_after_cooldown(monkeypatch):
     assert breaker.is_available("em") is True
 
 
-def test_available_sources_keeps_order_and_never_empty(monkeypatch):
+def test_available_sources_keeps_order_and_honors_cooldown(monkeypatch):
     breaker, _ = _breaker(monkeypatch)
     for _ in range(3):
         breaker.record_failure("tencent")
@@ -66,4 +66,4 @@ def test_available_sources_keeps_order_and_never_empty(monkeypatch):
     for source in ("em", "sina"):
         for _ in range(3):
             breaker.record_failure(source)
-    assert breaker.available_sources(["tencent", "em", "sina"]) == ["tencent"]
+    assert breaker.available_sources(["tencent", "em", "sina"]) == []

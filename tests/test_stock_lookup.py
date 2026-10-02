@@ -86,6 +86,7 @@ def test_ensure_daily_history_backs_off_after_failure(db_path, monkeypatch):
 
     def boom(code, start, end):
         calls.append(code)
+        source_health.record("个股日线", "tx", False, "timeout")
         raise RuntimeError("tx empty | daily empty | em: timeout")
 
     monkeypatch.setattr(dh, "fetch_daily_df_with_fallback", boom)
@@ -94,6 +95,7 @@ def test_ensure_daily_history_backs_off_after_failure(db_path, monkeypatch):
     assert dh.ensure_daily_history("000001", db_path, now=NOW + timedelta(minutes=31)) == 0
     assert calls == ["000001", "000001"]
     assert source_health.snapshot()[0]["dataset"] == "个股日线"
+    assert source_health.snapshot()[0]["source"] == "tx"
 
 
 def test_history_end_date_waits_for_close():

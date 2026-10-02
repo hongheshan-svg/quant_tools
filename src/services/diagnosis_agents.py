@@ -16,6 +16,9 @@ from typing import Any
 from loguru import logger
 
 from src.services.report_language import language_directive
+from src.services.opinion_validity import valid_opinion, valid_score
+from src.utils.redaction import redact_text
+from src.services.execution_budget import ExecutionBudget
 
 ANALYSTS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "technical": ("技术面分析员", "走势、技术指标、筹码、资金流和涨停质量",
@@ -64,21 +67,18 @@ def _as_list(value: Any, limit: int = 3) -> list[str]:
 
 def _normalize(role_key: str, raw: dict | None) -> dict[str, Any]:
     label = ANALYSTS[role_key][0]
-    if not raw:
-        return {"role": role_key, "label": label, "error": "未返回结果"}
-    view = str(raw.get("view", "")).strip()
-    view = next((v for v in VIEWS if v in view), "中性")
-    try:
-        score = max(0, min(100, int(float(raw.get("score", 50)))))
-    except (TypeError, ValueError):
-        score = 50
+    if not valid_opinion(raw, "view") or raw.get("confidence") not in ("高", "中", "低"):
+        return {"role": role_key, "label": label, "error": "未返回合法观点", "status": "invalid"}
+    view = raw["view"]
+    score = round(valid_score(raw["score"]))
     confidence = str(raw.get("confidence", "")).strip()
     return {"role": role_key, "label": label, "view": view, "score": score,
             "confidence": confidence if confidence in ("高", "中", "低") else "中",
             "key_points": _as_list(raw.get("key_points")), "risks": _as_list(raw.get("risks"))}
 
 
-def run_analysts(llm, context_text: str, mode: str, lang: str = "zh") -> list[dict[str, Any]]:
+def run_analysts(llm, context_text: str, mode: str, lang: str = "zh", *,
+                 budget: ExecutionBudget | None = None) -> list[dict[str, Any]]:
     """按模式并发调用各分析员；单个分析员失败不影响其他人（结果里带 error）。"""
     roles = MODES.get(mode, ())
     if not roles:
@@ -93,14 +93,18 @@ def run_analysts(llm, context_text: str, mode: str, lang: str = "zh") -> list[di
             return _normalize(role_key, llm.chat_json(user_message=data, system_message=ANALYST_PROMPT.format(role=label, focus=focus) + directive))
         except Exception as e:
             logger.warning(f"{label}调用失败: {e}")
-            return {"role": role_key, "label": label, "error": str(e)[:100]}
+            return {"role": role_key, "label": label, "error": redact_text(e, 100)}
 
+    if budget is not None:
+        completed = budget.parallel(ask, roles, reserve=min(20, budget.remaining() / 3))
+        finished = {o["role"]: o for o in completed}
+        return [finished.get(role, {"role": role, "label": ANALYSTS[role][0], "error": "超时或预算不足", "status": "timeout"}) for role in roles]
     with ThreadPoolExecutor(max_workers=len(roles), thread_name_prefix="analyst") as pool:
         return list(pool.map(ask, roles))
 
 
 def disagreement(opinions: list[dict[str, Any]]) -> str:
-    valid = [o for o in opinions if not o.get("error")]
+    valid = [o for o in opinions if valid_opinion(o, "view")]
     if len(valid) < 2:
         return ""
     views = {o["view"] for o in valid}
@@ -121,5 +125,7 @@ def opinions_text(opinions: list[dict[str, Any]], conflict: str) -> str:
             continue
         lines.append(f"- {o['label']}：{o['view']} {o['score']}分（信心{o['confidence']}）；要点：{'；'.join(o['key_points']) or '无'}；"
                      f"风险：{'；'.join(o['risks']) or '无'}")
-    lines.append(f"【分歧】{conflict}" if conflict else "【分歧】观点基本一致")
+    valid = sum(valid_opinion(o, "view") for o in opinions)
+    lines.append("【分歧】有效观点不足，不能判断共识" if valid < 2 else
+                 f"【分歧】{conflict}" if conflict else "【分歧】观点基本一致")
     return "\n".join(lines)

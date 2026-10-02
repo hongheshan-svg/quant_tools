@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from '@/api/endpoints'
 import type { AlertRow, AlertRule, AlertSettings } from '@/api/types'
 import { AlertRuleEditor, describeRule } from '@/components/AlertRuleEditor'
@@ -16,7 +16,12 @@ type TabKey = 'records' | 'rules' | 'settings'
 export function AlertsPage() {
   const t = useT()
   const [tab, setTab] = useState<TabKey>('records')
-  const { data, error, loading, reload } = useApi(api.alerts)
+  const [offset, setOffset] = useState(0)
+  const [severity, setSeverity] = useState('')
+  const [code, setCode] = useState('')
+  const [channel, setChannel] = useState('')
+  const fetchRecords = useCallback(() => api.alerts({ limit: 50, offset, severity, code: /^\d{6}$/.test(code) ? code : '', channel }), [offset, severity, code, channel])
+  const { data, error, loading, reload } = useApi(fetchRecords)
   const check = useTask<{ alerts: number; skipped?: string }>()
   const columns: Column<AlertRow>[] = [
     { key: 'time', title: t('时间'), render: (r) => <span className="num text-xs">{r.time}</span> },
@@ -25,6 +30,7 @@ export function AlertsPage() {
     { key: 'level', title: t('级别'), render: (r) => <Badge tone={(LEVEL[r.severity] ?? ['', 'accent'])[1]}>{t((LEVEL[r.severity] ?? [r.severity])[0])}</Badge> },
     { key: 'message', title: t('内容'), className: 'max-w-lg', render: (r) => r.message },
     { key: 'pushed', title: t('推送'), render: (r) => (r.notified ? <span className="text-down">{t('已推送')}</span> : <span className="text-xs text-muted">{r.reason || t('未推送')}</span>) },
+    { key: 'channels', title: t('渠道审计'), render: (r) => <div className="text-xs">{Object.entries(r.channels ?? {}).map(([name, ok]) => <div key={name} className={ok ? 'text-down' : 'text-warn'}>{name} · {t(ok ? '成功' : '失败')}</div>)}</div> },
   ]
   return (
     <div>
@@ -44,9 +50,15 @@ export function AlertsPage() {
       />
       {tab === 'records' && (
         <>
+          <div className="mb-3 flex flex-wrap gap-2">
+            <Select aria-label={t('级别筛选')} value={severity} onChange={(e) => { setSeverity(e.target.value); setOffset(0) }}><option value="">{t('全部级别')}</option>{Object.entries(LEVEL).map(([key, [label]]) => <option key={key} value={key}>{t(label)}</option>)}</Select>
+            <Input aria-label={t('股票代码筛选')} placeholder={t('股票代码')} value={code} onChange={(e) => { setCode(e.target.value); setOffset(0) }} />
+            <Select aria-label={t('渠道筛选')} value={channel} onChange={(e) => { setChannel(e.target.value); setOffset(0) }}><option value="">{t('全部渠道')}</option>{['dingtalk', 'feishu', 'wecom', 'email', 'telegram', 'discord', 'slack', 'bark', 'ntfy', 'gotify', 'pushplus', 'serverchan', 'pushover', 'webhook'].map((name) => <option key={name}>{name}</option>)}</Select>
+            <Button disabled={!offset} onClick={() => setOffset(Math.max(0, offset - 50))}>{t('上一页')}</Button><span className="self-center text-xs">{Math.floor(offset / 50) + 1}</span><Button disabled={(data?.length ?? 0) < 50} onClick={() => setOffset(offset + 50)}>{t('下一页')}</Button>
+          </div>
           {error && <ErrorBox message={error} onRetry={reload} />}
           <Card bodyClassName="p-0">
-            <DataTable columns={columns} rows={data ?? []} rowKey={(r, i) => `${r.time}-${r.code}-${i}`} empty={loading ? t('加载中…') : t('还没有提醒记录')} maxHeight="75vh" />
+            <DataTable columns={columns} rows={data ?? []} rowKey={(r, i) => r.id === undefined ? `${r.time}-${r.code}-${i}` : String(r.id)} empty={loading ? t('加载中…') : t('还没有提醒记录')} maxHeight="75vh" />
           </Card>
         </>
       )}

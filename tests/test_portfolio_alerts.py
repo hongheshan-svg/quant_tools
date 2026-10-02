@@ -84,8 +84,9 @@ def test_indicator_rules(db_path):
         {"code": "600001", "type": "macd_cross", "direction": "dead"},        # 不触发
         {"code": "600001", "type": "rsi", "period": 6, "direction": "below", "value": 20},  # 最后一天大涨，不会下穿
     ]
+    from src.services.alert_service import validate_rule
     events = [e for e in _service(db_path, rules).evaluate() if e.rule_id]
-    assert [(e.alert_type, e.rule_id) for e in events] == [("ma_cross", "0"), ("macd_cross", "1"), ("kdj_cross", "2")]
+    assert [(e.alert_type, e.rule_id) for e in events] == [(rule["type"], validate_rule(rule)["id"]) for rule in rules[:3]]
     assert "价格上穿 MA5" in events[0].message and "MACD 金叉" in events[1].message and "KDJ 金叉" in events[2].message
 
 

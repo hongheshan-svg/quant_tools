@@ -142,12 +142,12 @@ def test_stream_tolerates_code_fence_and_prefix_fields():
 
 
 def test_stream_max_rounds_and_calls_limits():
-    many = [{"name": "quote", "args": {"code": str(i)}} for i in range(MAX_CALLS_PER_ROUND + 4)]
+    many = [{"name": "quote", "args": {"code": str(600000 + i)}} for i in range(MAX_CALLS_PER_ROUND + 4)]
     llm = StreamLLM([{"tool_calls": many}] * MAX_TOOL_ROUNDS + [{"answer": "根据已有数据：观望"}])
     tools = FakeTools()
     events, done = _run(StockChatSession({}, llm=llm, tools=tools))
     assert len(llm.prompts) == MAX_TOOL_ROUNDS + 1 and "工具调用次数已用完" in llm.prompts[-1]
-    assert len(tools.calls) == MAX_TOOL_ROUNDS * MAX_CALLS_PER_ROUND
+    assert len(tools.calls) == MAX_CALLS_PER_ROUND  # 后续轮次的重复只读请求复用本轮结果
     assert sum(e["type"] == "tool" for e in events) == MAX_TOOL_ROUNDS * MAX_CALLS_PER_ROUND
     assert done["turn"]["answer"] == "根据已有数据：观望"
 

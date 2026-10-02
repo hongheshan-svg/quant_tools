@@ -149,6 +149,13 @@ def test_diagnose_errors(db_path):
     assert render_markdown(failed).startswith("**诊断失败**")
 
 
+@pytest.mark.parametrize("score", [float("nan"), float("inf"), True, "invalid", -10, 101])
+def test_invalid_model_score_never_produces_high_confidence_buy(db_path, score):
+    result = _service(db_path, {**GOOD_REPLY, "score": score})[0].diagnose("002594", force=True)
+    assert result["score"] == 50 and result["action"] == "watch" and result["confidence"] == "低"
+    assert any("模型评分无效" in reason for reason in result["guardrails"])
+
+
 def _with(db_path: str, reply: dict) -> dict:
     return _service(db_path, reply)[0].diagnose("002594", force=True)
 

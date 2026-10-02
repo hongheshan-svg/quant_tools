@@ -45,6 +45,20 @@ def overview(pipeline: PipelineService = Depends(get_pipeline)) -> list[dict[str
     return pipeline.watchlist_overview()
 
 
+@router.get("/workspace")
+def workspace(pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
+    """首页所需自选、今日/近期报告与行情日期；只读本地，不触发采集和模型。"""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    today = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+    history = pipeline.list_diagnoses(None, None, 30, 100, 0)
+    rows = pipeline.watchlist_overview()
+    today_items = [r for r in history["items"] if r["created_at"].startswith(today)]
+    return {"today": today, "watchlist": rows, "today_reports": today_items,
+            "recent_reports": history["items"][:30], "analyzed_today": sum(
+                1 for row in rows if str((row.get("diagnosis") or {}).get("created_at") or "").startswith(today))}
+
+
 @router.post("")
 def add(body: AddBody, pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
     return pipeline.watchlist_add(body.text)
@@ -109,6 +123,21 @@ def report_image(pipeline: PipelineService = Depends(get_pipeline), config: dict
         raise HTTPException(status_code=503, detail=str(e)) from e
     return Response(png, media_type="image/png",
                     headers={"Content-Disposition": f'attachment; filename="watchlist-report-{report.get("trade_date", "")}.png"'})
+
+
+class ReportSelection(BaseModel):
+    codes: list[str] = Field(min_length=1, max_length=500)
+
+
+@router.post("/report/selected")
+def run_selected_report(body: ReportSelection, tasks: TaskManager = Depends(get_tasks), pipeline: PipelineService = Depends(get_pipeline)) -> dict:
+    from src.utils.stock_code import diagnosis_code
+    codes = sorted({diagnosis_code(code) for code in body.codes})
+    allowed = {row["code"] for row in pipeline.watchlist_overview()}
+    if any(code not in allowed for code in codes):
+        raise bad_request("所选股票必须在自选股中")
+    return tasks.submit("watchlist_report", pipeline.watchlist_report, False, codes=codes,
+                        dedupe_key="watchlist_selected:" + ",".join(codes), label="分析所选自选股")
 
 
 @router.post("/report")

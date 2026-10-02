@@ -1,12 +1,12 @@
 // AI 问股：会话列表 + 多轮对话；提问作为后台任务执行，显示正在查询的数据
 import { Download, Plus, Send, Share2, Square, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ApiError } from '@/api/client'
 import { api } from '@/api/endpoints'
 import type { ChatSession, ChatSkill, ChatTurn } from '@/api/types'
 import { Markdown } from '@/components/Markdown'
-import { Button, Card, PageHeader, Select, Spinner, Textarea } from '@/components/ui'
+import { Button, Card, PageHeader, Select, Spinner, Textarea, Input } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
 import { progressText, useTask } from '@/hooks/useTask'
 import { toast } from '@/stores/toast'
@@ -54,12 +54,15 @@ function groupSkills(list: ChatSkill[]): [string, ChatSkill[]][] {
 export function ChatPage() {
   const t = useT()
   const { sessionId } = useParams()
+  const [params] = useSearchParams()
   const navigate = useNavigate()
   const sessions = useApi(api.chatSessions)
   const skills = useApi(api.skills)
   const [session, setSession] = useState<ChatSession | null>(null)
   const [perspective, setPerspective] = useState('综合')
   const [question, setQuestion] = useState('')
+  const [stockCode, setStockCode] = useState(params.get('code') ?? '')
+  const [extraSkills, setExtraSkills] = useState<string[]>([])
   const [pending, setPending] = useState('')
   const [live, setLive] = useState<Live | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -81,6 +84,9 @@ export function ChatPage() {
     api.chatSession(sessionId).then((s) => {
       setSession(s)
       setPerspective(s.perspective || '综合')
+      const last = s.turns.at(-1)
+      setStockCode(last?.stock_context?.code ?? '')
+      setExtraSkills(last?.skills ?? [])
     }).catch(() => navigate('/chat'))
   }, [sessionId, navigate])
 
@@ -92,6 +98,7 @@ export function ChatPage() {
   const send = async (text = question) => {
     const q = text.trim()
     if (!q || ask.running || pending) return
+    const context = { stock_context: stockCode.trim() ? { code: stockCode.trim() } : undefined, skills: extraSkills }
     let current = session
     if (!current) {
       current = await api.createChat(perspective)
@@ -121,7 +128,7 @@ export function ChatPage() {
           else if (ev.type === 'done') doneTurn = { ...ev.turn, tools: ev.turn.tools.map((x) => ({ ...x, result: '' })) }
           setLive({ ...state })
         },
-      })
+      }, context)
       if (doneTurn) {
         const turn: ChatTurn = doneTurn
         setSession((s) => (s ? { ...s, turns: [...s.turns, turn] } : s))
@@ -149,7 +156,7 @@ export function ChatPage() {
       } else if (!received || (e instanceof ApiError && e.status === 404)) {
         // 流式不可用：回退到后台任务轮询
         try {
-          const turn = await ask.run(() => api.ask(sid, q, perspective))
+          const turn = await ask.run(() => api.ask(sid, q, perspective, context))
           setSession((s) => (s ? { ...s, turns: [...s.turns, turn] } : s))
           void sessions.reload()
         } catch {
@@ -240,6 +247,18 @@ export function ChatPage() {
             )}
             <div ref={bottom} />
           </div>
+          <details className="mt-3 rounded-md border border-line p-2 text-sm">
+            <summary className="cursor-pointer">{t('限定股票与补充策略')}</summary>
+            <div className="mt-2 space-y-2">
+              <Input value={stockCode} onChange={(event) => setStockCode(event.target.value)} placeholder={t('股票代码（可选，例如 600519）')} aria-label={t('限定股票代码')} />
+              <p className="text-xs text-muted">{t('填写后，个股工具仅查询该标的。可额外选择最多四个分析策略。')}</p>
+              <div className="flex flex-wrap gap-2">
+                {(skills.data ?? []).filter((skill) => skill.display_name !== perspective).map((skill) => <label key={skill.name} className="inline-flex items-center gap-1">
+                  <input type="checkbox" checked={extraSkills.includes(skill.name)} disabled={!!pending || (!extraSkills.includes(skill.name) && extraSkills.length >= 4)} onChange={(event) => setExtraSkills((items) => event.target.checked ? [...items, skill.name] : items.filter((item) => item !== skill.name))} />{skill.display_name}
+                </label>)}
+              </div>
+            </div>
+          </details>
           <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
             <div className="flex flex-col gap-1">
               <Select value={perspective} onChange={(e) => setPerspective(e.target.value)} aria-label={t('分析视角')} title={current?.description}>

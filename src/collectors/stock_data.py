@@ -9,6 +9,7 @@ from typing import Any
 
 import akshare as ak
 import pandas as pd
+from src.utils.redaction import redact_text
 from loguru import logger
 
 from src.collectors.base import BaseCollector
@@ -81,6 +82,12 @@ class StockDataCollector(BaseCollector):
         raw = (raw_code or "").strip().lower()
         if not raw:
             return ""
+        if "." in raw:
+            from src.utils.stock_code import prefixed_code
+            try:
+                raw = prefixed_code(raw)
+            except ValueError:
+                return ""
 
         if len(raw) == PREFIXED_STOCK_CODE_LENGTH and raw[:2] in {"sh", "sz", "bj"} and raw[2:].isdigit():
             bare = raw[2:]
@@ -89,7 +96,7 @@ class StockDataCollector(BaseCollector):
                 return bare
             if prefix == "sz" and bare.startswith(("0", "1", "2", "3")):
                 return bare
-            if prefix == "bj" and bare.startswith(("4", "8")):
+            if prefix == "bj" and bare.startswith(("4", "8", "92")):
                 return bare
             return ""
 
@@ -114,10 +121,10 @@ class StockDataCollector(BaseCollector):
         bare = StockDataCollector._extract_bare_equity_code(raw)
         if not bare:
             return ""
+        if bare.startswith(("4", "8", "92")):
+            return f"bj{bare}"
         if bare.startswith(("6", "9")):
             return f"sh{bare}"
-        if bare.startswith(("4", "8")):
-            return f"bj{bare}"
         return f"sz{bare}"
 
     @staticmethod
@@ -559,13 +566,9 @@ class StockDataCollector(BaseCollector):
             if data:
                 for item in (data.get("result") or {}).get("data") or []:
                     sc = item.get("SECURITY_CODE", "")
-                    mkt = str(item.get("TRADE_MARKET_CODE", ""))
                     if not sc:
                         continue
-                    if mkt.startswith("069"):
-                        codes.append(f"sh{sc}")
-                    else:
-                        codes.append(f"sz{sc}")
+                    codes.append(self._to_tencent_code(str(sc)))
         except Exception as e:
             logger.debug(f"东方财富代码列表获取失败: {e}")
 
@@ -582,6 +585,7 @@ class StockDataCollector(BaseCollector):
             ("sh", 600000, 605000), ("sh", 688000, 689100),
             ("sz", 0, 4500), ("sz", 300000, 302000),
             ("bj", 430000, 431000), ("bj", 830000, 840000),
+            ("bj", 920000, 921000),
         ]:
             for n in range(start, end):
                 codes.append(f"{prefix}{n:06d}")
@@ -738,15 +742,40 @@ class StockDataCollector(BaseCollector):
             "efinance": ("efinance", _try_efinance),
             "pytdx": ("通达信(pytdx)", _try_pytdx),
         }
-        order = (self.config.get("data_sources") or {}).get("realtime") or list(REALTIME_SOURCES)
-        sources = [available[name] for name in order if name in available] or [available["tencent"]]
+        from src.collectors.paid_market import fetch_spot_tickflow, fetch_spot_tushare
+        from src.services.data_source_settings import source_configured, source_order
+        ds_config = self.config.get("data_sources") or {}
+        available.update({"tickflow": ("TickFlow", lambda: fetch_spot_tickflow(ds_config)),
+                          "tushare": ("Tushare", lambda: fetch_spot_tushare(ds_config))})
+
+        def validated(fetch):
+            frame = fetch()
+            if frame is None or frame.empty:
+                return None
+            if not {"代码", "最新价"} <= set(frame.columns):
+                raise ValueError("行情缺少代码或价格")
+            frame = frame.copy()
+            frame["代码"] = frame["代码"].astype(str).map(self._extract_bare_equity_code)
+            prices = pd.to_numeric(frame["最新价"], errors="coerce")
+            frame = frame.loc[frame["代码"].ne("") & (prices > 0) & (prices < float("inf"))]
+            if "行情日期" in frame:
+                frame = frame.loc[frame["行情日期"] == trade_date]
+            frame = frame.drop_duplicates("代码", keep="last")
+            minimum = int(ds_config.get("minimum_realtime_rows", 0))
+            if len(frame) < minimum:
+                raise ValueError(f"有效行情仅 {len(frame)} 只，低于全市场门槛 {minimum}")
+            return frame
+
+        sources = [(available[n][0], lambda n=n: validated(available[n][1]))
+                   for n in source_order(self.config, "realtime") if source_configured(self.config, n)]
 
         # 行情按交易日写库，不能用之前缓存的数据冒充当前行情，所以不允许 stale
         fetched = fetch_with_fallback("实时行情", sources, attempts=2, retry_wait=1.5)
         if not fetched.ok:
-            return
+            raise RuntimeError(f"实时行情采集失败：{fetched.errors}")
         df = fetched.data
         logger.info(f"实时行情数据源 [{fetched.source}] 成功, {len(df)} 条")
+        df.attrs["source"] = fetched.source
         self._save_quotes(df, trade_date, db_path)
 
     def _save_quotes(self, df: pd.DataFrame, trade_date: str, db_path: str) -> None:
@@ -776,6 +805,7 @@ class StockDataCollector(BaseCollector):
                     circ_mv=_safe_float(tup[col_map["流通市值"]] if "流通市值" in col_map else None),
                     pe=_valuation(tup[col_map["市盈率"]] if "市盈率" in col_map else None),
                     pb=_valuation(tup[col_map["市净率"]] if "市净率" in col_map else None),
+                    source=df.attrs.get("source"), price_adjustment="none",
                 ))
             # 同一批次可能出现重复 code，先去重，避免唯一键冲突
             dedup_map = {}
@@ -807,8 +837,10 @@ class StockDataCollector(BaseCollector):
                 for rec in records:
                     existing = existing_map.get(rec.code)
                     if existing:
+                        if rec.name:
+                            existing.name = rec.name  # ST/退市标记变化必须同步到当天筛选，缺名字时保留已有值
                         for col in ["open", "close", "high", "low", "volume",
-                                    "amount", "change_pct", "turnover", "total_mv", "circ_mv", "pe", "pb"]:
+                                    "amount", "change_pct", "turnover", "total_mv", "circ_mv", "pe", "pb", "source", "price_adjustment"]:
                             setattr(existing, col, getattr(rec, col))
                         existing.updated_at = _dt.now()
                         upd_count += 1
@@ -822,7 +854,10 @@ class StockDataCollector(BaseCollector):
             logger.info(f"实时行情采集完成: {len(records)} 只(新增{new_count}, 更新{upd_count})")
 
         except Exception as e:
-            logger.error(f"实时行情入库失败: {e}")
+            from src.utils.redaction import redact_text
+            error = redact_text(e, 300)
+            logger.error(f"实时行情入库失败: {error}")
+            raise RuntimeError(f"实时行情入库失败：{error}") from None
 
     def fill_last_session(self, db_path: str, now: datetime | None = None) -> str:
         """节假日、开盘前：最近一个交易日缺全市场行情时，用腾讯行情补齐并补该日涨停池，返回处理结果。
@@ -850,6 +885,7 @@ class StockDataCollector(BaseCollector):
         if len(df) < FALLBACK_OVERVIEW_SAMPLE_SIZE:
             logger.warning(f"腾讯行情里属于 {last} 的只有 {len(df)} 条，不补齐")
             return f"mismatch {last}"
+        df.attrs["source"] = "腾讯财经(HTTP)"
         self._save_quotes(df, last, db_path)
         self._collect_limit_up_pool(last, db_path)
         logger.info(f"已补齐最近交易日 {last} 的行情（{len(df)} 只）和涨停池")
@@ -878,13 +914,18 @@ class StockDataCollector(BaseCollector):
             ],
             attempts=2,
             retry_wait=1,
+            is_valid=lambda value: isinstance(value, pd.DataFrame),
+            count_empty_failures=False,
         )
         df = fetched.data
 
         try:
-            if df is None or df.empty:
-                logger.info("今日暂无涨停池数据（所有源均无数据）")
-                return
+            if df is None:
+                raise RuntimeError("涨停池所有来源失败：" + redact_text(fetched.errors, 300))
+            if df.empty:
+                with get_db_session(db_path) as session:
+                    session.query(LimitUpStock).filter_by(trade_date=trade_date).delete()
+                return {"status": "empty", "count": 0, "source": fetched.source}
 
             # 获取强势股池中的「入选理由」作为涨停原因补充
             strong_reasons = {}
@@ -949,20 +990,24 @@ class StockDataCollector(BaseCollector):
                 session.add_all(records)
 
             logger.info(f"涨停池采集完成: {len(records)} 只涨停股")
+            return {"status": "available", "count": len(records), "source": fetched.source}
 
         except Exception as e:
-            logger.error(f"涨停池采集失败: {e}")
+            raise RuntimeError("涨停池采集失败：" + redact_text(e, 300)) from e
 
     def _collect_dragon_tiger(self, trade_date: str, db_path: str):
         """采集龙虎榜数据"""
         try:
-            df = get_em_client().stock_lhb_detail_em(
-                start_date=trade_date.replace("-", ""),
-                end_date=trade_date.replace("-", ""),
-            )
-            if df is None or df.empty:
-                logger.info("今日暂无龙虎榜数据")
-                return
+            fetched = fetch_with_fallback("龙虎榜", [("东方财富", lambda: get_em_client().stock_lhb_detail_em(
+                start_date=trade_date.replace("-", ""), end_date=trade_date.replace("-", "")))],
+                is_valid=lambda value: isinstance(value, pd.DataFrame), count_empty_failures=False)
+            df = fetched.data
+            if df is None:
+                raise RuntimeError("龙虎榜来源失败：" + redact_text(fetched.errors, 300))
+            if df.empty:
+                with get_db_session(db_path) as session:
+                    session.query(DragonTigerBoard).filter_by(trade_date=trade_date).delete()
+                return {"status": "empty", "count": 0, "source": fetched.source}
 
             cm = {c: i for i, c in enumerate(df.columns)}
             records = [
@@ -983,93 +1028,59 @@ class StockDataCollector(BaseCollector):
             ]
 
             with get_db_session(db_path) as session:
+                session.query(DragonTigerBoard).filter_by(trade_date=trade_date).delete()
                 session.add_all(records)
 
             logger.info(f"龙虎榜采集完成: {len(records)} 条记录")
+            return {"status": "available", "count": len(records), "source": fetched.source}
 
         except Exception as e:
-            logger.error(f"龙虎榜采集失败: {e}")
+            raise RuntimeError("龙虎榜采集失败：" + redact_text(e, 300)) from e
 
     def _collect_northbound_flow(self, trade_date: str, db_path: str):
-        """采集北向资金数据（沪股通+深股通） —— 多源兜底"""
-        total_net: float | None = None
+        """只有可确认的完整当日数据才入库；合法零流入不等于缺数据。"""
+        from src.strategy.data_quality import finite_number
 
-        # 源1：资金流向汇总
+        def amount(value):
+            value = finite_number(value)
+            return value / 1e8 if value is not None and abs(value) > NORTHBOUND_UNIT_SPLIT_THRESHOLD else value
+
+        def summary():
+            frame = get_em_client().stock_hsgt_fund_flow_summary_em()
+            if frame is None or frame.empty:
+                return None
+            rows = frame[(frame["交易日"].astype(str) == trade_date) & (frame["资金方向"] == "北向")]
+            values = [amount(row.get("成交净买额")) for _, row in rows.iterrows()]
+            return sum(values) if values and all(v is not None for v in values) else None
+
+        def history(symbol):
+            frame = get_em_client().stock_hsgt_hist_em(symbol=symbol)
+            if frame is None or frame.empty:
+                return None
+            rows = frame[frame["日期"].astype(str) == trade_date]
+            if rows.empty:
+                return None
+            return amount(rows.iloc[0].get("当日净流入", rows.iloc[0].get("净流入")))
+
+        def channels():
+            values = [history(symbol) for symbol in ("沪股通", "深股通")]
+            return sum(values) if all(v is not None for v in values) else None
+
+        fetched = fetch_with_fallback("北向资金", [("东方财富汇总", summary),
+            ("东方财富历史", lambda: history("北向资金")), ("东方财富分通道", channels)],
+            is_valid=lambda value: finite_number(value) is not None, count_empty_failures=False)
+        if fetched.data is None:
+            raise RuntimeError("北向资金没有有效当日数据：" + redact_text(fetched.errors, 300))
         try:
-            df = get_em_client().stock_hsgt_fund_flow_summary_em()
-            if df is not None and not df.empty:
-                today_north = df[
-                    (df["交易日"].astype(str) == trade_date) &
-                    (df["资金方向"] == "北向")
-                ]
-                if not today_north.empty:
-                    total_net = 0
-                    for _, row in today_north.iterrows():
-                        val = _safe_float(row.get("成交净买额"))
-                        if val is not None:
-                            total_net += val
-                    if abs(total_net) > NORTHBOUND_UNIT_SPLIT_THRESHOLD:
-                        total_net = total_net / 1e8
-                    logger.info(f"北向资金源1(summary)成功: {total_net:.2f} 亿")
-        except Exception as e:
-            logger.warning(f"北向资金源1失败: {e}")
-
-        # 源2：沪深港通日频数据
-        if total_net is None:
-            try:
-                df2 = get_em_client().stock_hsgt_hist_em(symbol="北向资金")
-                if df2 is not None and not df2.empty:
-                    today_row = df2[df2["日期"].astype(str) == trade_date]
-                    if not today_row.empty:
-                        val = _safe_float(today_row.iloc[0].get("当日净流入", today_row.iloc[0].get("净流入")))
-                        if val is not None:
-                            total_net = val if abs(val) < NORTHBOUND_UNIT_SPLIT_THRESHOLD else val / 1e8
-                            logger.info(f"北向资金源2(hist)成功: {total_net:.2f} 亿")
-            except Exception as e2:
-                logger.warning(f"北向资金源2失败: {e2}")
-
-        # 源3：沪股通+深股通分别取
-        if total_net is None:
-            try:
-                net = 0
-                for channel in ["沪股通", "深股通"]:
-                    try:
-                        df3 = get_em_client().stock_hsgt_hist_em(symbol=channel)
-                        if df3 is not None and not df3.empty:
-                            today_row = df3[df3["日期"].astype(str) == trade_date]
-                            if not today_row.empty:
-                                val = _safe_float(today_row.iloc[0].get("当日净流入", today_row.iloc[0].get("净流入")))
-                                if val is not None:
-                                    net += val if abs(val) < NORTHBOUND_UNIT_SPLIT_THRESHOLD else val / 1e8
-                    except Exception:
-                        pass
-                if net != 0:
-                    total_net = net
-                    logger.info(f"北向资金源3(分通道)成功: {total_net:.2f} 亿")
-            except Exception as e3:
-                logger.warning(f"北向资金源3失败: {e3}")
-
-        if total_net is None:
-            logger.warning(f"北向资金：所有源均无 {trade_date} 的数据")
-            return
-
-        try:
-            record = NorthboundFlow(
-                trade_date=trade_date,
-                total_net_inflow=round(total_net, 2),
-            )
             with get_db_session(db_path) as session:
-                existing = session.query(NorthboundFlow).filter_by(
-                    trade_date=trade_date
-                ).first()
-                if not existing:
-                    session.add(record)
-                else:
-                    existing.total_net_inflow = record.total_net_inflow
-
-            logger.info(f"北向资金采集完成: {trade_date}, 净流入 {total_net:.2f} 亿")
-        except Exception as e:
-            logger.error(f"北向资金入库失败: {e}")
+                row = session.query(NorthboundFlow).filter_by(trade_date=trade_date).first()
+                if row is None:
+                    row = NorthboundFlow(trade_date=trade_date)
+                    session.add(row)
+                row.total_net_inflow = round(float(fetched.data), 2)
+        except Exception as error:
+            raise RuntimeError("北向资金入库失败：" + redact_text(error, 300)) from error
+        return {"status": "available", "count": 1, "source": fetched.source}
 
 
 def _tencent_quote_date(raw: str) -> str:

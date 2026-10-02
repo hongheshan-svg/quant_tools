@@ -6,8 +6,45 @@ RunLog 由 diagnose() 创建并逐层传递，不保存在服务实例上（诊�
 from __future__ import annotations
 
 import time
+import threading
+import uuid
+from contextvars import ContextVar
+from functools import wraps
 from contextlib import contextmanager
 from typing import Any, Iterator
+from src.utils.redaction import redact_text
+
+TRACE_ID = ContextVar("research_trace_id", default="")
+EVENT_SINK = ContextVar("research_event_sink", default=None)
+ACTIVE_LOG = ContextVar("research_run_log", default=None)
+
+
+@contextmanager
+def execution_trace(trace_id: str, sink=None):
+    trace_token, sink_token = TRACE_ID.set(trace_id), EVENT_SINK.set(sink)
+    try:
+        yield
+    finally:
+        TRACE_ID.reset(trace_token)
+        EVENT_SINK.reset(sink_token)
+
+
+def run_scope(fn):
+    @wraps(fn)
+    def wrapped(*args, **kwargs):
+        token = ACTIVE_LOG.set(None)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            ACTIVE_LOG.reset(token)
+    return wrapped
+
+
+def provider_attempt(provider: str, model: str, attempt: int, ok: bool, ms: float, detail: str = ""):
+    log = ACTIVE_LOG.get()
+    if log is not None:
+        log._append(f"模型请求 {provider} / {model}（尝试 {attempt}）", ok, ms, detail, "llm")
+
 
 MAX_STEPS = 60
 MAX_DETAIL = 200
@@ -22,17 +59,28 @@ class _Step:
 
 
 class RunLog:
-    """按顺序记录步骤；线程内使用，不做并发保护。"""
+    """记录步骤并发送实时事件；并发分析员共享同一轨迹。"""
 
-    def __init__(self) -> None:
+    def __init__(self, activate: bool = True) -> None:
         self._steps: list[dict[str, Any]] = []
         self._started = time.perf_counter()
         self.model = ""
+        self.trace_id = TRACE_ID.get() or uuid.uuid4().hex
+        self._lock = threading.RLock()
+        self._sink = EVENT_SINK.get()
+        if activate:
+            ACTIVE_LOG.set(self)
 
-    def _append(self, name: str, ok: bool, ms: int, detail: str, kind: str) -> None:
-        if len(self._steps) >= MAX_STEPS:
-            return
-        self._steps.append({"name": name, "kind": kind, "ok": bool(ok), "ms": int(ms), "detail": str(detail or "")[:MAX_DETAIL]})
+    def _append(self, name: str, ok: bool, ms: int, detail: str, kind: str, metadata: dict | None = None) -> None:
+        event = {"name": redact_text(name, MAX_DETAIL), "kind": kind, "ok": bool(ok), "ms": int(ms), "detail": redact_text(detail, MAX_DETAIL)}
+        if metadata is not None:
+            event["metadata"] = metadata
+        with self._lock:
+            if len(self._steps) >= MAX_STEPS:
+                return
+            self._steps.append(event)
+        if self._sink:
+            self._sink({"type": "step", "trace_id": self.trace_id, **event})
 
     @contextmanager
     def step(self, name: str) -> Iterator[_Step]:
@@ -52,15 +100,22 @@ class RunLog:
     def llm(self, name: str, model: str, ok: bool, ms: int) -> None:
         """记录一次模型调用。"""
         if model and not self.model:
-            self.model = str(model)
+            self.model = redact_text(model)
         self._append(name, ok, ms, model or "", "llm")
 
     def note(self, text: str) -> None:
         """记录护栏调整等说明。"""
         self._append(text, True, 0, text, "note")  # name 与 detail 都放说明文字，界面只显示一次
 
+    def data_attempt(self, dataset: str, attempt: dict) -> None:
+        from src.utils.redaction import redact
+        metadata = redact({"dataset": dataset, **attempt})
+        self._append(f"{dataset} · {attempt['source']}", attempt["ok"], attempt.get("ms", 0),
+                     str(attempt.get("error") or ""), "provider", metadata)
+
     def to_dict(self) -> dict[str, Any]:
         return {
+            "trace_id": self.trace_id,
             "steps": list(self._steps),
             "total_ms": int((time.perf_counter() - self._started) * 1000),
             "model": self.model,

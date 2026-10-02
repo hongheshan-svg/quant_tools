@@ -38,7 +38,7 @@ const notifierSettings = {
 
 async function openNotifierTab() {
   render(<MemoryRouter initialEntries={['/settings']}><AppRoutes authEnabled={false} /></MemoryRouter>)
-  fireEvent.click(screen.getByRole('tab', { name: '推送' }))
+  fireEvent.click(await screen.findByRole('tab', { name: '推送' }))
 }
 
 describe('SettingsPage notifier tab (new channels)', () => {

@@ -45,6 +45,7 @@ def _tx_line(prefix: str, code: str, name: str, vol_lots: str, amt_wan: str) -> 
     parts[2] = code
     parts[3] = "100.00"
     parts[5] = "99.00"
+    parts[30] = "20260929150000"
     parts[32] = "1.00"
     parts[33] = "101.00"
     parts[34] = "98.00"

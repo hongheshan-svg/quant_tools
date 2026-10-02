@@ -130,8 +130,13 @@ def _request(code: str) -> dict | None:
 
 def fetch_shareholders(code: str) -> dict[str, Any] | None:
     """获取股东数据；没有数据或出错返回 None（不抛异常），结果带进程级缓存。"""
-    bare = bare_code(code)
-    if diagnosis_code(code) != bare or bare.startswith(ETF_PREFIXES):  # 指数（带交易所前缀）和 ETF 没有股东数据，不联网
+    from src.utils.stock_code import StockCodeError
+    try:
+        bare = bare_code(code)
+        canonical = diagnosis_code(code)
+    except StockCodeError:
+        return None
+    if canonical != bare or bare.startswith(ETF_PREFIXES):  # 指数（带交易所前缀）和 ETF 没有股东数据，不联网
         return None
     now = datetime.now()
     with _cache_lock:

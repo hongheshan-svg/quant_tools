@@ -1813,7 +1813,11 @@ class LimitUpPredictor:
         try:
             from src.strategy.screener import StrategyScreener
 
-            return StrategyScreener(self.config).run()
+            result = StrategyScreener(self.config).run()
+            if getattr(result, "status", "success") != "success":
+                logger.warning("策略行情或历史数据不完整，本次候选不进入 AI 预测")
+                return None
+            return result
         except Exception as e:
             logger.warning(f"策略选股失败: {e}")
             return None

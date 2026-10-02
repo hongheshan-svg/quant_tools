@@ -5,6 +5,8 @@ set -eu
 mkdir -p /app/config /app/data /app/logs
 # 示例配置每次覆盖（新版本新增的配置项靠它提供默认值）；股票池规则只在缺失时复制，不覆盖用户改过的版本
 cp /app/defaults/config/settings.yaml.example /app/config/settings.yaml.example
+cp /app/defaults/config/screening_rules.yaml.example /app/config/screening_rules.yaml.example
+cp /app/defaults/config/scoring_profiles.yaml.example /app/config/scoring_profiles.yaml.example
 [ -f /app/config/stock_pool.yaml ] || cp /app/defaults/config/stock_pool.yaml /app/config/stock_pool.yaml
 
 if [ "$(id -u)" = "0" ]; then

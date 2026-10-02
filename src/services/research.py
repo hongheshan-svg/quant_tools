@@ -200,6 +200,13 @@ class ResearchService:
                 continue
             code, name = found[0]["code"], found[0].get("name") or text
             resolved.append({"code": code, "name": name})
+            try:
+                from src.services.research_artifact import local_context_pack
+                pack = local_context_pack(code, self.db_path)
+                resolved[-1]["context_pack"] = pack
+                book.add("统一研究证据", f"{name}({code}) 证据包", json.dumps(pack, ensure_ascii=False), "")
+            except Exception as error:
+                logger.warning("[深度研究] 本地证据包不可用 {}: {}", code, error)
             for tool, source in (("quote", "行情"), ("technical", "技术面"), ("theme", "主线")):
                 try:
                     result = self.tools.call(tool, {"code": code})

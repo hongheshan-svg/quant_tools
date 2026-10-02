@@ -81,7 +81,7 @@ def setup_status(config: dict) -> dict[str, Any]:
     config = config or {}
     specs: list[tuple[str, str, bool, Any, str, str]] = [
         ("llm", "AI 模型", True, _check_llm, "填写主模型的平台、模型名和 API Key（Ollama 无需 Key）。", "/settings?tab=llm"),
-        ("data", "行情数据", True, _check_data, "首次运行需要先执行一次数据采集。", "/"),
+        ("data", "行情数据", True, _check_data, "首次运行需要先执行一次数据采集。", "/market"),
         ("calendar", "交易日历", False, _check_calendar, "交易日历会在采集或定时任务运行时自动联网更新；未更新前按周一至周五判断。", "/settings?tab=scheduler"),
         ("notifier", "消息推送", False, _check_notifier, "配置企业微信、钉钉、飞书或邮件渠道后，可推送日报和提醒。", "/settings?tab=notifier"),
         ("watchlist", "自选股", False, _check_watchlist, "添加自选股后可逐只 AI 诊断并生成决策仪表盘。", "/watchlist"),

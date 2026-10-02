@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { api } from '@/api/endpoints'
 import type { DataCapability, SourceStatus } from '@/api/types'
 import { DataTable, type Column } from '@/components/DataTable'
+import { DataSourceSettingsPanel } from '@/components/DataSourceSettingsPanel'
 import { Badge, Button, Card, ErrorBox, PageHeader, Tabs } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
 import { useT } from '@/i18n'
@@ -11,7 +12,7 @@ const STATUS: Record<string, [string, 'down' | 'warn' | 'up']> = { ok: ['正常'
 const HEALTH: Record<string, [string, 'down' | 'warn' | 'up' | 'default']> = {
   ok: ['正常', 'down'], failing: ['失败', 'warn'], open: ['熔断中', 'up'], unknown: ['未知', 'default'],
 }
-const time = (v: string | null) => (v ? v.slice(11, 19) : '--')
+const time = (v: string | null) => (v ? v.replace('T', ' ') : '--')
 
 function Capabilities() {
   const t = useT()
@@ -19,7 +20,7 @@ function Capabilities() {
   return (
     <div>
       <div className="mb-3 flex items-center justify-between gap-3">
-        <p className="text-sm text-muted">{t('各数据集按回退顺序列出数据源；健康状态来自本进程内的运行记录，未运行过为「未知」。')}</p>
+        <p className="text-sm text-muted">{t('各数据集按回退顺序列出数据源；健康记录可跨服务重启恢复，未运行过为「未知」。')}</p>
         <Button onClick={reload} loading={loading}>{t('刷新')}</Button>
       </div>
       {error && <ErrorBox message={error} onRetry={reload} />}
@@ -54,12 +55,12 @@ function Capabilities() {
 
 export function SourcesPage() {
   const t = useT()
-  const [tab, setTab] = useState<'status' | 'capabilities'>('status')
+  const [tab, setTab] = useState<'status' | 'capabilities' | 'settings'>('status')
   return (
     <div>
-      <PageHeader title={t('数据源状态')} description={t('本进程内各数据源的成功/失败与熔断状态（连续失败 3 次的数据源熔断 5 分钟后再试）')} />
-      <Tabs<'status' | 'capabilities'> tabs={[{ key: 'status', label: t('运行状态') }, { key: 'capabilities', label: t('能力总览') }]} value={tab} onChange={setTab} />
-      {tab === 'status' ? <StatusTable /> : <Capabilities />}
+      <PageHeader title={t('数据源状态')} description={t('各数据源的成功、失败与熔断记录可跨重启恢复；连续失败 3 次后暂停 5 分钟再试。')} />
+      <Tabs<'status' | 'capabilities' | 'settings'> tabs={[{ key: 'status', label: t('运行状态') }, { key: 'capabilities', label: t('能力总览') }, { key: 'settings', label: t('来源与优先级') }]} value={tab} onChange={setTab} />
+      {tab === 'status' ? <StatusTable /> : tab === 'settings' ? <DataSourceSettingsPanel /> : <Capabilities />}
     </div>
   )
 }
@@ -81,6 +82,9 @@ function StatusTable() {
   return (
     <div>
       <div className="mb-3 flex justify-end"><Button onClick={reload} loading={loading}>{t('刷新')}</Button></div>
+      {data && <div className="mb-4 grid gap-3 sm:grid-cols-3">{[
+        [t('已运行来源'), data.length], [t('正常来源'), data.filter((r) => r.status === 'ok').length], [t('需要关注'), data.filter((r) => r.status !== 'ok').length],
+      ].map(([label, value]) => <Card key={label} bodyClassName="p-3"><p className="text-xs text-muted">{label}</p><p className="num mt-1 text-xl">{value}</p></Card>)}</div>}
       {error && <ErrorBox message={error} onRetry={reload} />}
       <Card bodyClassName="p-0">
         <DataTable columns={columns} rows={data ?? []} rowKey={(r) => `${r.dataset}-${r.source}`} empty={t('采集运行后显示')} />

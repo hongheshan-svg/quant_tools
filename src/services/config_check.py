@@ -34,7 +34,14 @@ ENUMS = {
     ("llm", "backend"): ("litellm", "openai"),
     ("report", "language"): ("zh", "en"),
 }
-INT_RANGES = {("watchlist", "workers"): (1, 10), ("watchlist", "max_stocks"): (1, 500), ("web", "port"): (1, 65535)}
+INT_RANGES = {("watchlist", "workers"): (1, 10), ("watchlist", "max_stocks"): (1, 500), ("web", "port"): (1, 65535),
+              ("diagnosis", "timeout_seconds"): (1, 3600), ("diagnosis", "chat_context_chars"): (2000, 100000),
+              ("diagnosis", "chat_context_tokens"): (500, 100000),
+              ("diagnosis", "deliberation", "max_rounds"): (1, 3),
+              ("diagnosis", "deliberation", "timeout_seconds"): (1, 180),
+              ("evaluation", "neutral_band_pct"): (0, 100), ("screening", "minimum_universe"): (0, 10000),
+              ("screening", "financial_cache_max_age_days"): (1, 3650),
+              ("intelligence", "max_items_per_source"): (1, 1000)}
 
 
 def _dot(path: tuple) -> str:
@@ -184,6 +191,14 @@ def _check_notifier(config: dict, raw: dict | None, example: dict, issues: list[
                 _err(issues, ("notifier", ch["channel"]), f"{ch.get('label', ch['channel'])}：{problem}")
 
 
+def _check_data_sources(config: dict, raw: dict | None, example: dict, issues: list[dict]) -> None:
+    from src.services.data_source_settings import validate_settings
+    try:
+        validate_settings(config.get("data_sources") or {})
+    except (ValueError, TypeError) as error:
+        _err(issues, "data_sources", str(error))
+
+
 def _check_search(config: dict, raw: dict | None, example: dict, issues: list[dict]) -> None:
     from src.collectors.news_search import configured_providers
 
@@ -237,10 +252,29 @@ def load_raw(path: str | Path = "config/settings.yaml") -> dict | None:
         return yaml.safe_load(f) or {}
 
 
+def _check_screening(config: dict, raw: dict | None, example: dict, issues: list[dict]) -> None:
+    from src.strategy.screener import STRATEGIES, StrategyScreener
+    from src.strategy.screening_rules import load_rules
+    cfg = config.get("screening") or {}
+    try:
+        StrategyScreener._load_strategies(cfg.get("strategies") or {})
+        if cfg.get("rules_file"):
+            rules = load_rules(cfg["rules_file"])
+            if {rule["name"] for rule in rules} & {strategy.name for strategy in STRATEGIES}:
+                raise ValueError("YAML 策略不能覆盖内置策略标识")
+        if cfg.get("profiles_file"):
+            from src.strategy.screening_pipeline import load_profiles
+            load_profiles(cfg["profiles_file"])
+        from src.strategy.screening_pipeline import validate_pipeline
+        validate_pipeline(cfg.get("pipeline") or {})
+    except (ValueError, TypeError, OSError, yaml.YAMLError) as exc:
+        _err(issues, "screening", str(exc))
+
+
 CHECKS: list[tuple[str, Callable]] = [
     ("类型与未知键", _check_types), ("格式与范围", _check_formats), ("主备模型", _check_llm),
     ("推送渠道", _check_notifier), ("联网搜索", _check_search), ("聊天机器人", _check_bot),
-    ("Web 服务", _check_web), ("交易", _check_trading),
+    ("Web 服务", _check_web), ("交易", _check_trading), ("行情数据源", _check_data_sources), ("选股策略", _check_screening),
 ]
 
 

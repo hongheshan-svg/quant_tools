@@ -19,8 +19,12 @@ export function ScreeningPage() {
   const datesApi = useApi(api.screeningDates)
   const [selDate, setSelDate] = useState('')
   const [strategy, setStrategy] = useState('')
+  const [risk, setRisk] = useState('')
+  const [minQuality, setMinQuality] = useState('')
   const [histPicks, setHistPicks] = useState<ScreeningPick[] | null>(null)
   const [histError, setHistError] = useState('')
+  const bt = data?.backtest
+  const t1 = bt?.engine_version === 'a-share-t1-v2'
   const screen = useTask<ScreenResult>()
   const backtest = useTask<BacktestReport>()
 
@@ -57,12 +61,16 @@ export function ScreeningPage() {
     { key: 'avg', title: t('次日均涨幅'), align: 'right', render: (d) => <Pct value={d.avg_next_pct} /> },
     { key: 'win', title: t('次日上涨比例'), align: 'right', render: (d) => rate(d.win_rate) },
   ]
-  const shownPicks = histPicks ?? data?.picks ?? []
+  const shownPicks = (histPicks ?? data?.picks ?? []).filter((p) => (!risk || p.risk_level === risk) && (!minQuality || (p.data_quality?.score ?? 0) >= Number(minQuality)))
 
   const pickColumns: Column<ScreeningPick>[] = [
     { key: 'stock', title: t('股票'), render: (p) => <><div>{p.name}</div><div className="num text-xs text-muted">{p.code}</div></> },
     { key: 'labels', title: t('策略'), render: (p) => <div className="flex flex-wrap gap-1">{p.labels.map((l) => <Badge key={l} tone="accent">{t(l)}</Badge>)}</div> },
-    { key: 'score', title: t('得分'), align: 'right', render: (p) => <span className="num">{fmtNum(p.score, 0)}</span> },
+    { key: 'score', title: t('得分'), align: 'right', render: (p) => <div><span className="num">{fmtNum(p.score, 0)}</span>{p.factor_scores && <details className="mt-1 text-left text-xs" onClick={(e) => e.stopPropagation()}><summary className="cursor-pointer text-accent">{t('评分明细')}</summary><div className="min-w-36 space-y-1 py-2"><p>{t('初始评分')}：{p.screen_score ?? '—'}</p><p>{t('模型评分')}：{p.llm_score ?? '—'}</p><p>{t('风险扣分')}：{p.risk_penalty ?? 0}</p><p>{t('集中度扣分')}：{p.portfolio_penalty ?? 0}</p>{Object.entries(p.factor_scores).map(([key, value]) => <p key={key}>{t(({ value: '估值', quality: '盈利质量', liquidity: '流动性', momentum: '动量', activity: '活跃度', stability: '稳定性', reversal: '反转', size: '规模', theme_heat: '题材热度' } as Record<string, string>)[key] ?? key)}：{value == null ? t('缺失') : fmtNum(value, 1)}</p>)}</div></details>}</div> },
+    { key: 'quality', title: t('数据质量'), render: (p) => <div title={(p.data_quality?.flags ?? []).join('；')}><span className="num">{p.data_quality?.score ?? '—'}</span><div className="text-xs text-muted">{p.data_quality?.source ?? t('来源未知')} · {p.factor_coverage === undefined ? '—' : `${Math.round(p.factor_coverage * 100)}%`}</div></div> },
+    { key: 'risk', title: t('风险'), render: (p) => <div title={p.risk_flags?.join('；')}><Badge tone={p.risk_level === 'high' ? 'warn' : 'default'}>{p.risk_level ? t(({ high: '高', medium: '中', low: '低' } as Record<string, string>)[p.risk_level]) : '—'}</Badge><div className="text-xs text-muted">-{p.risk_penalty ?? 0} / -{p.portfolio_penalty ?? 0}</div></div> },
+    { key: 'theme', title: t('行业与题材'), render: (p) => p.industry || p.themes?.join('、') || '—' },
+    { key: 'llm', title: t('模型复核'), render: (p) => <span title={p.llm_reason}>{p.llm_score ?? '—'}{p.post_analysis?.report_id && <Button onClick={(e) => { e.stopPropagation(); navigate(`/history?id=${p.post_analysis?.report_id}`) }}>{t('研究报告')}</Button>}</span> },
     { key: 'fit', title: t('大盘适配'), render: (p) => (p.fits_regime ? <span className="text-down">{t('适配')}</span> : <span className="text-muted">{t('不适配')}</span>) },
     { key: 'pct', title: t('当日涨幅'), align: 'right', render: (p) => <Pct value={p.change_pct} /> },
     { key: 'next', title: t('次日涨幅'), align: 'right', render: (p) => <Pct value={p.next_change_pct} /> },
@@ -80,23 +88,23 @@ export function ScreeningPage() {
   const btColumns: Column<BacktestStrategy>[] = [
     { key: 'label', title: t('策略'), render: (r) => t(r.label) },
     { key: 'days', title: t('天数/入选'), align: 'right', render: (r) => <span className="num">{r.days}/{r.picks}</span> },
-    { key: 'a1', title: t('次日均收益'), align: 'right', render: (r) => <Pct value={r.avg_1d} /> },
-    { key: 'w1', title: t('次日胜率'), align: 'right', render: (r) => rate(r.win_1d) },
+    { key: 'eval', title: t('有效/缺失/未买入'), align: 'right', render: (r) => <span className="num">{r.evaluated}/{r.unavailable ?? 0}/{r.entry_blocked ?? 0}</span> },
+    { key: 'a1', title: t(t1 ? '持有1日均收益' : '次日均收益'), align: 'right', render: (r) => <Pct value={r.avg_1d} /> },
+    { key: 'w1', title: t(t1 ? '持有1日上涨比例' : '次日胜率'), align: 'right', render: (r) => rate(r.win_1d) },
     { key: 'a3', title: t('3日均收益'), align: 'right', render: (r) => <Pct value={r.avg_3d} /> },
     { key: 'a5', title: t('5日均收益'), align: 'right', render: (r) => <Pct value={r.avg_5d} /> },
     { key: 'lu', title: t('次日涨停率'), align: 'right', render: (r) => rate(r.limit_up_rate) },
-    { key: 'fit', title: t('适配时次日均收益'), align: 'right', render: (r) => <Pct value={r.avg_1d_fit} /> },
-    { key: 'total', title: t('累计收益'), align: 'right', render: (r) => <Pct value={r.total_return} /> },
-    { key: 'mdd', title: t('最大回撤'), align: 'right', render: (r) => <Pct value={r.max_drawdown} /> },
+    { key: 'fit', title: t(t1 ? '适配时持有1日均收益' : '适配时次日均收益'), align: 'right', render: (r) => <Pct value={r.avg_1d_fit} /> },
+    { key: 'total', title: t('样本复利'), align: 'right', render: (r) => <Pct value={r.total_return} /> },
+    { key: 'mdd', title: t('样本回撤'), align: 'right', render: (r) => <Pct value={r.max_drawdown} /> },
     { key: 'weight', title: t('排序权重'), align: 'right', render: (r) => <span className="num">{fmtNum(r.weight)}</span> },
   ]
-  const bt = data?.backtest
 
   return (
     <div>
       <PageHeader
         title={t('策略选股')}
-        description={t('放量突破、强势未板、龙回头、主线补涨、缩量回踩、超跌反弹 6 个策略扫描全市场；与大盘环境适配的排在前面')}
+        description={t('短线策略与自定义规则扫描全市场；数据不完整时保留上次成功结果')}
         actions={
           <>
             <Button loading={backtest.running} onClick={() => backtest.run(() => api.backtest(60), { success: (r) => (r.note ? r.note : t('回测完成：{n} 个交易日', { n: r.dates })) }).then(reload).catch(() => {})}>
@@ -111,6 +119,7 @@ export function ScreeningPage() {
       {error && <ErrorBox message={error} onRetry={reload} />}
       {loading && !data ? <Spinner /> : (
         <div className="space-y-4">
+          {data?.last_run && <Card title={t('最近运行')}><p className="text-sm">{data.last_run.created_at.slice(0, 19).replace('T', ' ')} · {t(data.last_run.status === 'success' ? '已完成' : '数据不完整')} · {t('行情样本 {n} 只', { n: data.last_run.stats.universe ?? 0 })}</p>{data.last_run.notes.map((note) => <p key={note} className="mt-1 text-xs text-muted">{note}</p>)}</Card>}
           <Card
             title={t('选股结果')}
             actions={
@@ -123,6 +132,8 @@ export function ScreeningPage() {
                   <option value="">{t('全部策略')}</option>
                   {strategyOptions.map((s) => <option key={s.name} value={s.name}>{t(s.label)}</option>)}
                 </Select>
+                <Select aria-label={t('风险筛选')} value={risk} onChange={(e) => setRisk(e.target.value)}><option value="">{t('全部风险')}</option>{['low', 'medium', 'high'].map((r) => <option key={r}>{r}</option>)}</Select>
+                <Select aria-label={t('数据质量筛选')} value={minQuality} onChange={(e) => setMinQuality(e.target.value)}><option value="">{t('全部质量')}</option><option value="75">≥75</option><option value="90">≥90</option></Select>
               </div>
             }
             bodyClassName="p-0"
@@ -141,6 +152,12 @@ export function ScreeningPage() {
             actions={bt && <span className="text-xs text-muted">{t('{time} 生成', { time: bt.created_at })} · {t('次日开盘入场')}</span>}
             bodyClassName="p-0"
           >
+            {bt && <div className="space-y-1 border-b border-line p-4 text-xs text-muted">
+              {bt.note && <p role="status">{bt.note}</p>}
+              <p>{bt.methodology ?? t('旧版回测包含当日买卖口径，请重新回测；旧权重不再用于排序。')}</p>
+              {bt.benchmark && <p>{t('同期基准')} {bt.benchmark.name} · {bt.benchmark.samples} / {bt.benchmark.samples + bt.benchmark.missing} · <Pct value={bt.benchmark.avg_1d} /> · {bt.benchmark.status}</p>}
+              {t1 && <p>{t('有效为已观察到持有1日退出价的样本；缺失表示成熟样本缺行情，未买入包括一字涨停或零成交。未到退出日的样本不计收益。')}</p>}
+            </div>}
             <DataTable columns={btColumns} rows={bt?.strategies ?? []} rowKey={(r) => r.strategy} empty={bt?.note ?? t('尚未回测')} />
           </Card>
         </div>

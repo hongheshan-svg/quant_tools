@@ -21,7 +21,10 @@ from src.database.db import get_db_session
 from src.database.models import FinanceNews, FundDaily, StockDiagnosis
 from src.services import market_phase
 from src.services.report_language import language_directive, report_language
-from src.services.run_log import RunLog
+from src.services.run_log import RunLog, run_scope
+from src.utils.stock_code import diagnosis_code
+from src.utils.redaction import redact
+from src.services.execution_budget import ExecutionBudget
 from src.services.decision_profile import normalize_profile
 from src.services.stock_diagnosis import (
     CACHE_MINUTES,
@@ -85,6 +88,7 @@ FUND_SYSTEM_PROMPT = """你是一位 A 股 ETF / 指数分析师，负责对单�
 class FundDiagnosisService(StockDiagnosisService):
     """ETF / 指数的 AI 诊断；护栏、落库和 Markdown 渲染复用个股诊断。"""
 
+    @run_scope
     def diagnose(self, code: str, force: bool = False, profile: str | None = None) -> dict[str, Any]:
         """诊断一个 ETF/指数（传规范代码或任意可识别的写法）；30 分钟内的结果直接复用。"""
         from src.services.diagnosis_agents import DECISION_ADDENDUM, disagreement, opinions_text, run_analysts
@@ -101,14 +105,23 @@ class FundDiagnosisService(StockDiagnosisService):
             if cached and (cached.get("language") or "zh") == lang and normalize_profile(cached.get("decision_profile")) == profile:
                 return {**cached, "cached": True}
 
+        cfg = self.config.get("diagnosis") or {}
+        if self._llm is None and not getattr(self, "_isolated_worker", False) and cfg.get("isolate_process", False):
+            from src.services.analysis_process import isolated_result
+            return isolated_result("fund_diagnosis", self.config, {"code": code, "force": force, "profile": profile})
+        budget = ExecutionBudget.from_config(self.config)
+
         run_log = RunLog()
         context = self.build_context(code, info, run_log)
+        from src.services.research_artifact import build_context_pack
+        context["context_pack"] = build_context_pack(context, run_log)
+        budget.check("取数")
         if not context["quote"]:
             return {"code": code, "name": context["name"], "kind": info["kind"], "error": "行情库中没有该基金/指数的数据"}
         cfg = self.config.get("diagnosis") or {}
         model = str((getattr(self.llm, "primary_cfg", None) or {}).get("model") or "")
         analyst_start = time.perf_counter()
-        opinions = run_analysts(self.llm, context["text"], str(cfg.get("mode", "single")), *(["en"] if lang == "en" else []))
+        opinions = run_analysts(self.llm, context["text"], str(cfg.get("mode", "single")), lang, budget=budget)
         if opinions:
             run_log.llm("分析员", model, True, (time.perf_counter() - analyst_start) * 1000)
         conflict = disagreement(opinions)
@@ -116,9 +129,11 @@ class FundDiagnosisService(StockDiagnosisService):
         if opinions:
             message += "\n" + opinions_text(opinions, conflict)
         decision_start = time.perf_counter()
+        budget.check("决策")
         raw = self.llm.chat_json(user_message=message, system_message=FUND_SYSTEM_PROMPT + (DECISION_ADDENDUM if opinions else "")
                                   + language_directive(lang, DIAGNOSIS_ENUMS))
         run_log.llm("决策", model, bool(raw), (time.perf_counter() - decision_start) * 1000)
+        budget.check("决策")
         if not raw:
             return {"code": code, "name": context["name"], "kind": info["kind"], "error": "AI 未返回有效结果，请检查 AI 设置或稍后重试"}
         previous = self.latest(code, max_age_minutes=STABILITY_DAYS * 24 * 60)
@@ -127,6 +142,8 @@ class FundDiagnosisService(StockDiagnosisService):
         result["kind"] = info["kind"]
         note_guardrail_change(run_log, raw, result)
         result["run_log"] = run_log.to_dict()
+        from src.services.research_artifact import build_research_artifact
+        result["structured_report"] = build_research_artifact(result)
         diagnosis_id = self._save(result)
         self._record_signal(result, diagnosis_id)
         result["diagnosis_id"] = diagnosis_id
@@ -134,19 +151,19 @@ class FundDiagnosisService(StockDiagnosisService):
 
     def latest(self, code: str, max_age_minutes: int | None = None) -> dict[str, Any] | None:
         with get_db_session(self.db_path) as session:
-            query = session.query(StockDiagnosis).filter(StockDiagnosis.code == (code or "").strip().lower())
+            query = session.query(StockDiagnosis).filter(StockDiagnosis.code == diagnosis_code(code))
             if max_age_minutes is not None:
                 query = query.filter(StockDiagnosis.created_at >= datetime.now() - timedelta(minutes=max_age_minutes))
             row = query.order_by(StockDiagnosis.created_at.desc(), StockDiagnosis.id.desc()).first()
-            return {**json.loads(row.result_json), "diagnosis_id": row.id} if row else None
+            return redact({**json.loads(row.result_json), "diagnosis_id": row.id}) if row else None
 
     def history(self, code: str, limit: int = 5) -> list[dict[str, Any]]:
         with get_db_session(self.db_path) as session:
             rows = (
-                session.query(StockDiagnosis.result_json).filter(StockDiagnosis.code == (code or "").strip().lower())
+                session.query(StockDiagnosis.result_json).filter(StockDiagnosis.code == diagnosis_code(code))
                 .order_by(StockDiagnosis.created_at.desc(), StockDiagnosis.id.desc()).limit(limit).all()
             )
-        return [json.loads(r) for (r,) in rows]
+        return [redact(json.loads(r)) for (r,) in rows]
 
     # ---------- 上下文 ----------
 
@@ -262,6 +279,7 @@ class FundDiagnosisService(StockDiagnosisService):
             "position": None, "real_position": None, "text": "\n".join(sections), "data_quality": data_quality,
             "flow_text": "", "flow_ratio": None, "chip": None, "earnings_text": "", "earnings_risk": "",
             "risk_notices": [], "valuation_text": "",
+            "news_evidence": news_lines, "web_status": web_status,
             "phase": phase_ctx,
         }
 

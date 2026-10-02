@@ -14,10 +14,11 @@ import { ConfigCheckSection } from '@/pages/settings/ConfigCheckSection'
 import { TemplatesPanel } from '@/pages/settings/TemplatesPanel'
 import { DiagnosisSettingsSection } from '@/pages/settings/DiagnosisSettingsSection'
 import { ReportLanguageSection } from '@/pages/settings/ReportLanguageSection'
+import { ScreeningSettingsPanel } from '@/pages/settings/ScreeningSettingsPanel'
 import { toast } from '@/stores/toast'
 import { getDesktop, type DesktopInfo, type QuantDesktop } from '@/utils/desktop'
 
-type TabKey = 'llm' | 'notifier' | 'bot' | 'search' | 'intelligence' | 'scheduler' | 'templates' | 'backup' | 'security' | 'desktop'
+type TabKey = 'llm' | 'screening' | 'notifier' | 'bot' | 'search' | 'intelligence' | 'scheduler' | 'templates' | 'backup' | 'security' | 'desktop'
 
 export function SettingsPage() {
   const t = useT()
@@ -25,9 +26,10 @@ export function SettingsPage() {
   const initialTab = params.get('tab')
   const desktop = getDesktop()
   const [tab, setTab] = useState<TabKey>(() =>
-    (['llm', 'notifier', 'bot', 'search', 'intelligence', 'scheduler', 'templates', 'backup', 'security'] as string[]).includes(initialTab ?? '') || (initialTab === 'desktop' && desktop) ? (initialTab as TabKey) : 'llm')
+    (['llm', 'screening', 'notifier', 'bot', 'search', 'intelligence', 'scheduler', 'templates', 'backup', 'security'] as string[]).includes(initialTab ?? '') || (initialTab === 'desktop' && desktop) ? (initialTab as TabKey) : 'llm')
   const tabs: { key: TabKey; label: string }[] = [
     { key: 'llm', label: t('AI 模型') },
+    { key: 'screening', label: t('选股策略') },
     { key: 'notifier', label: t('推送') },
     { key: 'bot', label: t('聊天机器人') },
     { key: 'search', label: t('联网搜索') },
@@ -45,6 +47,7 @@ export function SettingsPage() {
         <Tabs value={tab} onChange={setTab} tabs={tabs} />
         <div className="mb-2 flex justify-end"><HelpButton helpKey={tab} /></div>
         {tab === 'llm' && <><LLMSettingsForm /><ReportLanguageSection /><DiagnosisSettingsSection /></>}
+        {tab === 'screening' && <ScreeningSettingsPanel />}
         {tab === 'notifier' && <NotifierForm />}
         {tab === 'bot' && <BotForm />}
         {tab === 'search' && <SearchForm />}
@@ -432,6 +435,7 @@ export function NotifierForm() {
 
   return (
     <div className="space-y-4">
+      <Button loading={busy === 'batch'} onClick={async () => { setBusy('batch'); try { const result = await api.testNotifierBatch(payload()); const summary = Object.entries(result.channels).map(([name, row]) => `${data.channels[name] ?? name}: ${row.ok ? t('成功') : row.error || t('失败')}`).join('；'); if (result.ok) toast.success(summary); else toast.error(summary || t('没有启用推送渠道')) } catch (e) { toast.error(e instanceof Error ? e.message : String(e)) } finally { setBusy('') } }}>{t('测试全部已启用渠道')}</Button>
       <div className="grid gap-3 lg:grid-cols-3">
         {WEBHOOK_CHANNELS.map((ch) => (
           <fieldset key={ch} className="space-y-2 rounded-md border border-line p-3">
@@ -725,6 +729,32 @@ function useTriggerText() {
   }
 }
 
+function SchedulerEditor() {
+  const t = useT()
+  const settings = useApi(api.schedulerSettings)
+  const [draft, setDraft] = useState<NonNullable<typeof settings.data> | null>(null)
+  const [busy, setBusy] = useState(false)
+  const value = draft ?? settings.data
+  if (!value) return settings.error ? <ErrorBox message={settings.error} /> : <Spinner />
+  const labels: Record<string, string> = { hot_search_interval: '热搜采集间隔（分钟）', cailianshe_interval: '财联社采集间隔（分钟）', stock_data_interval: '行情采集间隔（分钟）', daily_analysis_time: '每日综合分析', daily_signal_time: '信号生成', daily_report_time: '日报推送', watchlist_report_time: '自选股仪表盘', self_learning_time: '自学习', signal_lifecycle_time: '信号评估' }
+  const save = async () => {
+    setBusy(true)
+    try {
+      setDraft(await api.saveSchedulerSettings(value))
+      toast.success(t('调度设置已保存并生效'))
+    }
+    catch (error) { toast.error(error instanceof Error ? error.message : String(error)) }
+    finally { setBusy(false) }
+  }
+  return <details className="rounded-md border border-line p-3">
+    <summary className="cursor-pointer text-sm">{t('编辑定时任务')}</summary>
+    <div className="my-3 grid gap-3 sm:grid-cols-3">{Object.entries(value).map(([key, item]) => <label key={key} className="space-y-1 text-sm">
+      <span>{t(labels[key] ?? key)}</span><Input aria-label={t(labels[key] ?? key)} type={typeof item === 'number' ? 'number' : 'time'} min={1} max={1440} value={item} onChange={(event) => setDraft({ ...value, [key]: typeof item === 'number' ? Number(event.target.value) : event.target.value })} />
+    </label>)}</div>
+    <Button loading={busy} onClick={() => void save()}>{t('保存调度设置')}</Button>
+  </details>
+}
+
 function SchedulerPanel() {
   const t = useT()
   const triggerText = useTriggerText()
@@ -750,6 +780,7 @@ function SchedulerPanel() {
       <p className="text-sm text-muted">
         {running ? t('本进程正在运行定时任务。') : t(message)}{t('非交易日会跳过行情和分析类任务。')}
       </p>
+      <SchedulerEditor />
       <DataTable
         rows={jobs}
         rowKey={(j) => j.id}
@@ -978,8 +1009,8 @@ function SecurityForm() {
           {t('Web 登录：')}<b className={s.auth_enabled ? 'text-down' : 'text-warn'}>{s.auth_enabled ? t('已开启') : t('未开启（只允许本机访问）')}</b>
         </p>
         <p className="mb-3 text-xs text-muted">{t('开启登录后，可以把 web.host 改成 0.0.0.0，让手机等局域网设备访问。')}</p>
-        {!s.auth_enabled && !s.password_set && (
-          <Field label={t('设置访问密码（至少 6 位）')}><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+        {(s.password_set || !s.auth_enabled) && (
+          <Field label={s.password_set ? t('当前密码') : t('设置访问密码（至少 6 位）')}><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
         )}
         <Button
           className="mt-2"

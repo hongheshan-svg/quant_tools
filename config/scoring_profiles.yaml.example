@@ -1,0 +1,228 @@
+# 多因子策略；缺失因子保持未知并显示覆盖率，财务条件缺失时不入选。
+profiles:
+- name: balanced_alpha
+  label: 均衡多因子
+  description: 参考 daily_stock_analysis 的同类策略语义，使用本地可核实因子计算
+  weights:
+    value: 0.2
+    quality: 0.15
+    liquidity: 0.15
+    momentum: 0.2
+    activity: 0.1
+    stability: 0.15
+    theme_heat: 0.05
+  min_score: 50
+  conditions:
+  - field: amount
+    op: gte
+    value: 80000000
+  - field: bars
+    op: gte
+    value: 21
+- name: quality_value
+  label: 稳健价值
+  description: 参考 daily_stock_analysis 的同类策略语义，使用本地可核实因子计算
+  weights:
+    value: 0.35
+    quality: 0.3
+    stability: 0.2
+    liquidity: 0.15
+  min_score: 50
+  conditions:
+  - field: amount
+    op: gte
+    value: 80000000
+  - field: bars
+    op: gte
+    value: 21
+  - field: pe
+    op: gt
+    value: 0
+  - field: pe
+    op: lte
+    value: 25
+  - field: pb
+    op: gt
+    value: 0
+  - field: pb
+    op: lte
+    value: 4
+  - field: roe
+    op: gte
+    value: 8
+- name: blue_chip_income
+  label: 蓝筹红利
+  description: 参考 daily_stock_analysis 的同类策略语义，使用本地可核实因子计算
+  weights:
+    value: 0.3
+    quality: 0.2
+    stability: 0.3
+    size: 0.2
+  min_score: 50
+  conditions:
+  - field: amount
+    op: gte
+    value: 80000000
+  - field: bars
+    op: gte
+    value: 21
+  - field: dividend_yield
+    op: gte
+    value: 2
+  - field: roe
+    op: gte
+    value: 8
+- name: dual_low
+  label: 双低估值
+  description: 参考 daily_stock_analysis 的同类策略语义，使用本地可核实因子计算
+  weights:
+    value: 0.6
+    stability: 0.25
+    liquidity: 0.15
+  min_score: 50
+  conditions:
+  - field: amount
+    op: gte
+    value: 80000000
+  - field: bars
+    op: gte
+    value: 21
+  - field: pe
+    op: gt
+    value: 0
+  - field: pe
+    op: lte
+    value: 20
+  - field: pb
+    op: gt
+    value: 0
+  - field: pb
+    op: lte
+    value: 2
+- name: momentum_quality
+  label: 动量质量
+  description: 参考 daily_stock_analysis 的同类策略语义，使用本地可核实因子计算
+  weights:
+    momentum: 0.4
+    quality: 0.3
+    activity: 0.2
+    liquidity: 0.1
+  min_score: 50
+  conditions:
+  - field: amount
+    op: gte
+    value: 80000000
+  - field: bars
+    op: gte
+    value: 21
+  - field: ret_20
+    op: gte
+    value: 5
+  - field: profit_yoy
+    op: gte
+    value: 0
+- name: low_volatility_quality
+  label: 低波质量
+  description: 参考 daily_stock_analysis 的同类策略语义，使用本地可核实因子计算
+  weights:
+    stability: 0.5
+    quality: 0.3
+    value: 0.2
+  min_score: 50
+  conditions:
+  - field: amount
+    op: gte
+    value: 80000000
+  - field: bars
+    op: gte
+    value: 21
+  - field: range_20
+    op: lte
+    value: 25
+  - field: roe
+    op: gte
+    value: 8
+- name: capital_heat
+  label: 资金热度
+  description: 参考 daily_stock_analysis 的同类策略语义，使用本地可核实因子计算
+  weights:
+    activity: 0.4
+    liquidity: 0.35
+    theme_heat: 0.15
+    momentum: 0.1
+  min_score: 50
+  conditions:
+  - field: amount
+    op: gte
+    value: 80000000
+  - field: bars
+    op: gte
+    value: 21
+  - field: vol_ratio
+    op: gte
+    value: 1.5
+- name: factor_volume_breakout
+  label: 突破多因子
+  description: 参考 daily_stock_analysis 的同类策略语义，使用本地可核实因子计算
+  weights:
+    momentum: 0.4
+    activity: 0.3
+    liquidity: 0.2
+    stability: 0.1
+  min_score: 50
+  conditions:
+  - field: amount
+    op: gte
+    value: 80000000
+  - field: bars
+    op: gte
+    value: 21
+  - field: vol_ratio
+    op: gte
+    value: 1.8
+  - field: change_pct
+    op: gte
+    value: 2
+- name: shrink_pullback
+  label: 缩量回踩多因子
+  description: 参考 daily_stock_analysis 的同类策略语义，使用本地可核实因子计算
+  weights:
+    reversal: 0.4
+    quality: 0.2
+    stability: 0.3
+    liquidity: 0.1
+  min_score: 50
+  conditions:
+  - field: amount
+    op: gte
+    value: 80000000
+  - field: bars
+    op: gte
+    value: 21
+  - field: vol_ratio
+    op: lte
+    value: 0.9
+  - field: pullback_15
+    op: lte
+    value: -3
+- name: oversold_reversal
+  label: 超跌反转多因子
+  description: 参考 daily_stock_analysis 的同类策略语义，使用本地可核实因子计算
+  weights:
+    reversal: 0.5
+    liquidity: 0.25
+    stability: 0.25
+  min_score: 50
+  conditions:
+  - field: amount
+    op: gte
+    value: 80000000
+  - field: bars
+    op: gte
+    value: 21
+  - field: ret_20
+    op: lte
+    value: -12
+  - field: change_pct
+    op: gte
+    value: 0

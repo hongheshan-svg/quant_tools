@@ -64,14 +64,16 @@ class ChatSessionStore:
         return chat
 
     def ask(self, session_id: str, question: str, perspective: str | None = None,
-            progress: Callable[[str], None] | None = None) -> dict[str, Any]:
+            progress: Callable[[str], None] | None = None, *, stock_context: dict | None = None,
+            skills: list[str] | None = None) -> dict[str, Any]:
         """在会话里提问（同一会话串行），返回这一轮问答。"""
         with self._lock(session_id):
             record = self.get(session_id)
             if record is None:
                 raise KeyError(session_id)
             chat = self._restore(record)
-            turn = chat.ask(question, perspective or record["perspective"] or "综合", progress=progress)
+            extra = {"stock_context": stock_context, "skills": skills} if stock_context or skills else {}
+            turn = chat.ask(question, perspective or record["perspective"] or "综合", progress=progress, **extra)
             with get_db_session(self.db_path) as session:
                 r = session.get(ChatSessionRecord, session_id)
                 r.turns_json = json.dumps([asdict(t) for t in chat.turns], ensure_ascii=False)
@@ -82,15 +84,16 @@ class ChatSessionStore:
             return asdict(turn)
 
     def ask_stream(self, session_id: str, question: str, perspective: str | None = None,
-                   cancel: threading.Event | None = None) -> Iterator[dict[str, Any]]:
+                   cancel: threading.Event | None = None, *, stock_context: dict | None = None,
+                   skills: list[str] | None = None) -> Iterator[dict[str, Any]]:
         """流式提问：整个流期间持有会话锁，结束（含中途关闭）后持久化；未知会话抛 KeyError。"""
         record = self.get(session_id)
         if record is None:
             raise KeyError(session_id)
-        return self._ask_stream(session_id, question, perspective, cancel or threading.Event())
+        return self._ask_stream(session_id, question, perspective, cancel or threading.Event(), stock_context, skills)
 
     def _ask_stream(self, session_id: str, question: str, perspective: str | None,
-                    cancel: threading.Event) -> Iterator[dict[str, Any]]:
+                    cancel: threading.Event, stock_context: dict | None, skills: list[str] | None) -> Iterator[dict[str, Any]]:
         with self._lock(session_id):
             record = self.get(session_id)
             if record is None:
@@ -100,7 +103,8 @@ class ChatSessionStore:
             with self._locks_guard:
                 self._cancels[session_id] = cancel
             try:
-                yield from chat.ask_stream(question, perspective or record["perspective"] or "综合", cancel=cancel)
+                extra = {"stock_context": stock_context, "skills": skills} if stock_context or skills else {}
+                yield from chat.ask_stream(question, perspective or record["perspective"] or "综合", cancel=cancel, **extra)
             finally:
                 with self._locks_guard:
                     if self._cancels.get(session_id) is cancel:

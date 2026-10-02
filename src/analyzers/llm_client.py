@@ -25,6 +25,8 @@ from json_repair import repair_json
 from loguru import logger
 
 from src.analyzers.llm_usage import caller_feature, estimate_cost, import_litellm, record_usage
+from src.services.run_log import provider_attempt
+from src.utils.redaction import redact_text
 
 NATIVE_PROVIDERS = ("anthropic", "gemini", "ollama")   # 走 LiteLLM 原生通道的平台
 KEYLESS_PROVIDERS = ("ollama",)                        # 不需要 API Key
@@ -184,7 +186,7 @@ def classify_llm_error(exc: BaseException) -> LLMErrorInfo:
         return LLMErrorInfo("network", "无法连接到模型服务，请检查 Base URL 和网络", True)
     if (code is not None and 500 <= code < 600) or has("overloaded", "service unavailable"):
         return LLMErrorInfo("server", "模型服务暂时不可用（服务端错误）", True)
-    return LLMErrorInfo("unknown", f"调用失败：{str(exc)[:100]}", True)
+    return LLMErrorInfo("unknown", f"调用失败：{redact_text(exc, 100)}", True)
 
 
 # 进程级参数调整：路由 -> 需要调整的参数集合（max_tokens=改用 max_completion_tokens；max_completion_tokens=两者都去掉）
@@ -554,6 +556,8 @@ class LLMClient:
         temperature: float,
         max_tokens: int,
         response_format: str,
+        tools: list[dict] | None = None,
+        tool_results: list[dict] | None = None,
     ) -> str | None:
         """调用单个模型"""
         if client is None:
@@ -567,6 +571,11 @@ class LLMClient:
         if system_message:
             messages.append({"role": "system", "content": system_message})
         messages.append({"role": "user", "content": user_message})
+        for item in tool_results or []:
+            if item.get("protocol") != "native" or not item.get("call_id"):
+                continue
+            messages.append({"role": "assistant", "content": None, "tool_calls": [{"id": item["call_id"], "type": "function", "function": {"name": item["name"], "arguments": json.dumps(item.get("args") or {}, ensure_ascii=False)}}]})
+            messages.append({"role": "tool", "tool_call_id": item["call_id"], "content": str(item.get("result") or "没有数据")})
 
         kwargs = {
             "messages": messages,
@@ -576,6 +585,9 @@ class LLMClient:
         }
         if response_format == "json" and client.provider not in NO_JSON_MODE:
             kwargs["response_format"] = {"type": "json_object"}
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
 
         provider = client.provider
         feature = caller_feature()
@@ -586,6 +598,7 @@ class LLMClient:
             started = time.monotonic()
             try:
                 content, usage = self._complete_rotating(client, kwargs)
+                provider_attempt(provider, model, attempt, True, (time.monotonic() - started) * 1000)
                 prompt_tokens, completion_tokens = int(usage.get("prompt_tokens") or 0), int(usage.get("completion_tokens") or 0)
                 record_usage(self.usage_path, provider=provider, model=model, feature=feature,
                              prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
@@ -594,6 +607,7 @@ class LLMClient:
                 logger.info(f"LLM [{provider}] 调用成功, model={model}, tokens={prompt_tokens + completion_tokens}")
                 return content
             except AllKeysUnavailable as e:
+                provider_attempt(provider, model, attempt, False, (time.monotonic() - started) * 1000, "模型密钥暂时不可用")
                 logger.error(f"LLM [{provider}] {e}")
                 cause = e.__cause__
                 self.last_error = classify_llm_error(cause) if cause else LLMErrorInfo("rate_limit", str(e), True)
@@ -601,8 +615,9 @@ class LLMClient:
                              latency_ms=int((time.monotonic() - started) * 1000))
                 return None
             except Exception as e:
-                err_str = str(e)[:120]
+                err_str = redact_text(e, 120)
                 info = classify_llm_error(e)
+                provider_attempt(provider, model, attempt, False, (time.monotonic() - started) * 1000, info.message)
                 self.last_error = info
                 # 模型不支持某个参数：记下调整，立即用新参数重试（不计入重试次数、不等待）
                 if info.kind == "unsupported_param" and recoveries < MAX_PARAM_RECOVERIES:
@@ -694,7 +709,7 @@ class LLMClient:
                         raise
                     except Exception as e:
                         info = classify_llm_error(e)
-                        last_error = info.message if info.kind != "unknown" else str(e)[:120]
+                        last_error = info.message if info.kind != "unknown" else redact_text(e, 120)
                         # 模型不支持某个参数：每个路由恢复一次，用调整后的参数重发
                         if (info.kind == "unsupported_param" and not produced and not recovered
                                 and _record_param_fix(route, info.param)):
@@ -708,9 +723,9 @@ class LLMClient:
                             raise
                         if is_key_error(e):
                             _cool_key(route, key)
-                            logger.warning(f"LLM [{route.provider}] Key {_mask_key(key)} 被拒绝或限流，冷却 {KEY_COOLDOWN_SECONDS}s 并换下一个: {str(e)[:120]}")
+                            logger.warning(f"LLM [{route.provider}] Key {_mask_key(key)} 被拒绝或限流，冷却 {KEY_COOLDOWN_SECONDS}s 并换下一个: {redact_text(e, 120)}")
                         else:
-                            logger.warning(f"LLM [{route.provider}] 流式调用失败，切换下一个模型: {str(e)[:120]}")
+                            logger.warning(f"LLM [{route.provider}] 流式调用失败，切换下一个模型: {redact_text(e, 120)}")
                             next_route = True
                         break
                 if next_route:
@@ -758,7 +773,18 @@ class LLMClient:
                 raise RuntimeError(f"{route.provider} 需要 LiteLLM（pip install litellm），当前 llm.backend=openai 或未安装")
             resp = self._openai_client(route).chat.completions.create(model=route.model, **kwargs)
         usage = getattr(resp, "usage", None)
-        return resp.choices[0].message.content, {
+        message = resp.choices[0].message
+        text = message.content
+        if kwargs.get("tools"):
+            calls = getattr(message, "tool_calls", None) or []
+            if calls:
+                text = json.dumps({"tool_calls": [{"id": call.id, "name": call.function.name, "args": json.loads(call.function.arguments)} for call in calls], "protocol": "native"}, ensure_ascii=False)
+            else:
+                try:
+                    json.loads(text or "")
+                except (ValueError, TypeError):
+                    text = json.dumps({"answer": text or "", "protocol": "native"}, ensure_ascii=False)
+        return text, {
             "prompt_tokens": getattr(usage, "prompt_tokens", 0) if usage else 0,
             "completion_tokens": getattr(usage, "completion_tokens", 0) if usage else 0,
         }
@@ -778,6 +804,24 @@ class LLMClient:
 
             self._openai_clients[key] = OpenAI(api_key=route.api_key, base_url=route.api_base)
         return self._openai_clients[key]
+
+    def chat_with_tools(self, user_message: str, system_message: str, tools: list[dict], tool_results: list[dict] | None = None) -> dict:
+        """原生函数协议；沿用主备路由、密钥轮换、用量记录与失败恢复。"""
+        for route, cfg in ((self.primary_client, self.primary_cfg), (self.backup_client, self.backup_cfg)):
+            if route is None:
+                continue
+            text = self._call(route, cfg, user_message, system_message, None, None, None, tools=tools, tool_results=tool_results)
+            if text:
+                try:
+                    result = json.loads(text)
+                    if isinstance(result, dict):
+                        return result
+                except (TypeError, ValueError):
+                    pass
+        from src.services.run_log import ACTIVE_LOG
+        if ACTIVE_LOG.get():
+            ACTIVE_LOG.get().note("原生工具协议不可用，回退 JSON 工具协议")
+        return self.chat_json(user_message=user_message, system_message=system_message)
 
     def chat_json(
         self,

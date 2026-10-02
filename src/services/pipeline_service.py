@@ -27,6 +27,8 @@ class PipelineService:
         self.config = config or load_config()
         self.db_path = self.config.get("database", {}).get("sqlite_path", "data/quant.db")
         init_db(self.db_path)
+        from src.collectors.request_budget import configure_policy
+        configure_policy(self.config)
         self.collector = CollectorOrchestrator(self.config)
         self.learning = SelfLearningService(self.config)
         self.execution = ExecutionService(self.config)
@@ -35,6 +37,11 @@ class PipelineService:
 
     def collect(self) -> dict[str, Any]:
         """采集所有数据（行情、新闻、涨停池、龙虎榜、北向资金、国际数据等）。"""
+        if (self.config.get("data_sources") or {}).get("isolate_collection", False):
+            from src.services.analysis_process import isolated_result
+            timeout = (self.config.get("data_sources") or {}).get("collect_timeout_seconds", 240)
+            cfg = {**self.config, "diagnosis": {**(self.config.get("diagnosis") or {}), "timeout_seconds": timeout}}
+            return isolated_result("collect", cfg, {})
         return self.collector.collect_all()
 
     def refresh_market_overview(self) -> dict[str, Any]:
@@ -105,11 +112,11 @@ class PipelineService:
         service = WatchlistService(self.config)
         return service.import_file(path) if path else service.import_text(text)
 
-    def watchlist_report(self, push: bool = True, progress=None) -> dict[str, Any]:
+    def watchlist_report(self, push: bool = True, progress=None, codes: list[str] | None = None) -> dict[str, Any]:
         """逐只 AI 诊断自选股，生成并推送决策仪表盘。"""
         from src.services.watchlist_report import WatchlistReportService
 
-        return WatchlistReportService(self.config).run(push=push, progress=progress)
+        return WatchlistReportService(self.config).run(push=push, progress=progress, codes=codes)
 
     def latest_watchlist_report(self) -> dict[str, Any] | None:
         from src.services.watchlist_report import WatchlistReportService
@@ -124,14 +131,16 @@ class PipelineService:
 
         return StockSearch(self.db_path).search(text, limit)
 
-    def ensure_history(self, code: str, name: str = "") -> int:
+    def ensure_history(self, code: str, name: str = "", refresh: bool = False) -> int:
         """本地日线不足时联网补齐，返回新写入的根数。"""
         from src.collectors.daily_history import ensure_daily_history
 
         try:
-            return ensure_daily_history(code, self.db_path, name)
+            return ensure_daily_history(code, self.db_path, name, refresh=refresh)
         except Exception as e:
             logger.warning(f"补齐日线异常 [{code}]: {e}")
+            if refresh:
+                raise
             return 0
 
     def stock_news(self, code: str, refresh: bool = False) -> dict[str, Any]:
@@ -163,7 +172,7 @@ class PipelineService:
             return StrategyScreener(self.config).run().to_dict()
         except Exception as e:
             logger.error(f"策略选股异常: {e}")
-            return {"picks": [], "notes": [f"选股失败: {e}"], "stats": {}, "trade_date": "", "regime": ""}
+            return {"status": "failed", "error": str(e), "picks": [], "notes": [f"选股失败: {e}"], "stats": {}, "trade_date": "", "regime": ""}
 
     def backtest_strategies(self, days: int = 60, progress=None) -> dict[str, Any]:
         """用本地历史数据回测各选股策略（每天按当时可见的数据选股，统计之后 1/3/5 日表现）。"""
@@ -187,7 +196,9 @@ class PipelineService:
         from src.strategy.screener import StrategyScreener
 
         screener = StrategyScreener(self.config)
-        return {"picks": screener.latest(), "performance": screener.performance(), "backtest": self.latest_backtest()}
+        runs = screener.runs(1)
+        return {"picks": screener.latest(), "performance": screener.performance(), "backtest": self.latest_backtest(),
+                "last_run": runs[0] if runs else None}
 
     def screening_dates(self, limit: int = 60) -> list[dict[str, Any]]:
         """有选股结果的历史交易日概览（倒序）。"""
@@ -221,7 +232,8 @@ class PipelineService:
             return StockDiagnosisService(self.config).diagnose(code, force=force)
         except Exception as e:
             logger.error(f"个股诊断异常 [{code}]: {e}")
-            return {"code": code, "error": str(e)}
+            from src.utils.redaction import redact_text
+            return {"code": code, "error": redact_text(e, 500)}
 
     def latest_diagnosis(self, code: str) -> dict[str, Any] | None:
         from src.services.fund_registry import resolve_fund

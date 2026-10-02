@@ -14,6 +14,9 @@ import hmac
 import json
 import secrets
 import time
+import threading
+from time import monotonic
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -24,9 +27,40 @@ LOCAL_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 PUBLIC_PATHS = ("/api/v1/health", "/api/v1/auth/")
 
 
+class AuthRateLimited(Exception):
+    def __init__(self, retry_after: int):
+        self.retry_after = retry_after
+
+
+MAX_LOGIN_FAILURES = 5
+LOGIN_WINDOW_SECONDS = 900
+
+
 class AuthStore:
     def __init__(self, path: Path = AUTH_FILE):
         self.path = path
+        self._attempt_lock = threading.RLock()
+        self._failures: dict[str, list[float]] = {}
+
+    @contextmanager
+    def attempt(self, host: str):
+        """串行保护校验与失败计数，忽略可伪造的 forwarded headers。"""
+        with self._attempt_lock:
+            now = monotonic()
+            self._failures = {key: [t for t in times if now - t < LOGIN_WINDOW_SECONDS]
+                              for key, times in self._failures.items() if times and now - times[-1] < LOGIN_WINDOW_SECONDS}
+            failures = self._failures.get(host, [])
+            if len(failures) >= MAX_LOGIN_FAILURES:
+                raise AuthRateLimited(max(1, int(LOGIN_WINDOW_SECONDS - (now - failures[0])) + 1))
+            yield
+
+    def failed_attempt(self, host: str) -> None:
+        with self._attempt_lock:
+            self._failures.setdefault(host, []).append(monotonic())
+
+    def clear_attempts(self, host: str) -> None:
+        with self._attempt_lock:
+            self._failures.pop(host, None)
 
     def _load(self) -> dict[str, Any]:
         if self.path.exists():

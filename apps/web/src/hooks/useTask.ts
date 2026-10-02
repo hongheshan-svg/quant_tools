@@ -10,6 +10,21 @@ export const POLL_MS = 800
 export async function waitForTask<R>(task: Task<R>, onUpdate?: (t: Task<R>) => void, pollMs = POLL_MS): Promise<R> {
   let current = task
   onUpdate?.(current)
+  if (current.status !== 'done' && current.status !== 'error' && typeof EventSource !== 'undefined' && pollMs === POLL_MS) {
+    const terminal = await new Promise<Task<R> | null>((resolve) => {
+      const source = new EventSource(api.taskEventsUrl(current.id), { withCredentials: true })
+      const finish = (value: Task<R> | null) => { source.close(); resolve(value) }
+      source.onmessage = (event) => {
+        try {
+          current = JSON.parse(event.data) as Task<R>
+          onUpdate?.(current)
+          if (current.status === 'done' || current.status === 'error') finish(current)
+        } catch { finish(null) }
+      }
+      source.onerror = () => finish(null)
+    })
+    if (terminal) current = terminal
+  }
   while (current.status !== 'done' && current.status !== 'error') {
     await new Promise((r) => setTimeout(r, pollMs))
     current = (await api.task(current.id)) as Task<R>

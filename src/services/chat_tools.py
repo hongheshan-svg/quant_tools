@@ -16,6 +16,7 @@ from loguru import logger
 from src.database.db import get_db_session
 from src.database.models import LimitUpStock, StockDaily
 from src.utils.stock_code import bare_code, board_of, code_candidates
+from src.utils.redaction import redact_text
 
 MAX_RESULT_CHARS = 1500
 DEFAULT_BAR_DAYS = 20
@@ -37,6 +38,7 @@ class ToolSpec:
 
 
 TOOL_SPECS: tuple[ToolSpec, ...] = (
+    ToolSpec("context_pack", "统一研究证据", "code", "本地行情、日线、财务和新闻证据包，明确缺失和来源；不会联网"),
     ToolSpec("resolve_stock", "查找股票", "query: 名称/代码/拼音首字母", "按名称、代码或拼音首字母查找股票代码"),
     ToolSpec("quote", "最新行情", "code", "最新收盘价、涨跌幅、成交额、换手率、流通市值、市盈率、市净率"),
     ToolSpec("daily_bars", "日线走势", f"code, days（默认 {DEFAULT_BAR_DAYS}，最多 {MAX_BAR_DAYS}）", "最近 N 个交易日的收盘价和涨跌幅"),
@@ -62,7 +64,27 @@ def tools_prompt() -> str:
     return "\n".join(f"- {t.name}({t.args})：{t.description}" for t in TOOL_SPECS)
 
 
+def native_tool_schemas() -> list[dict]:
+    tools = []
+    for spec in TOOL_SPECS:
+        properties = {}
+        for name in ("code", "query", "days"):
+            if name in spec.args:
+                properties[name] = {"type": "integer" if name == "days" else "string"}
+        required = [name for name in properties if name != "days" and "可选" not in spec.args]
+        tools.append({"type": "function", "function": {"name": spec.name, "description": spec.description,
+            "parameters": {"type": "object", "properties": properties, "required": required, "additionalProperties": False}}})
+    return tools
+
+
 class ChatTools:
+    def _tool_context_pack(self, args: dict) -> str:
+        import json
+        from src.services.research_artifact import local_context_pack
+        code = self._resolve_kind(args)[0]
+        self.last_context_pack = local_context_pack(code, self.db_path)
+        return json.dumps(self.last_context_pack, ensure_ascii=False)
+
     def __init__(self, config: dict):
         self.config = config
         self.db_path = config.get("database", {}).get("sqlite_path", "data/quant.db")
@@ -79,7 +101,7 @@ class ChatTools:
             return STOCK_ONLY_TEXT
         except Exception as e:
             logger.warning(f"问股工具 {name} 失败: {e}")
-            return f"工具执行失败：{e}"
+            return f"工具执行失败：{redact_text(e, 300)}"
         return text if len(text) <= MAX_RESULT_CHARS else text[:MAX_RESULT_CHARS] + "…（已截断）"
 
     # ---- 股票解析 ----

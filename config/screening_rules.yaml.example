@@ -1,0 +1,44 @@
+# 复制为 screening_rules.yaml 后编辑；缺失指标不参与筛选，不以 0 代替。
+# 财务字段只读取诊断缓存；历史回测不会使用后来采集的财务快照。
+rules:
+  - name: value_quality
+    label: 价值质量
+    regimes: [均衡, 防守]
+    score: 70
+    conditions:
+      - {field: pe, op: between, value: [0.01, 20]}
+      - {field: roe, op: gte, value: 12}
+      - {field: pb, op: between, value: [0.01, 3]}
+  - name: quality_growth
+    label: 质量成长
+    regimes: [进攻, 均衡]
+    score: 72
+    conditions:
+      - {field: roe, op: gte, value: 15}
+      - {field: profit_yoy, op: gte, value: 20}
+      - {field: revenue_yoy, op: gte, value: 10}
+  - name: dividend_value
+    label: 股息价值
+    regimes: [防守, 冰点]
+    score: 65
+    conditions:
+      - {field: dividend_yield, op: gte, value: 3}
+      - {field: pe, op: between, value: [0.01, 20]}
+  - name: momentum_trend
+    label: 动量趋势
+    regimes: [进攻, 均衡]
+    score: 68
+    conditions:
+      - {field: ma5, op: gte, ref: ma20}
+      - {field: ma20, op: gte, ref: ma60}
+      - {field: ret_20, op: between, value: [10, 40]}
+      - {field: amount, op: gte, value: 100000000}
+  - name: defensive_low_volatility
+    label: 防守低波动
+    regimes: [防守, 冰点]
+    score: 60
+    conditions:
+      - {field: change_pct, op: between, value: [-2, 2]}
+      - {field: ret_20, op: between, value: [-5, 8]}
+      - {field: close, op: gte, ref: ma60}
+      - {field: amount, op: gte, value: 50000000}

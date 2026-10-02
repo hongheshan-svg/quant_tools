@@ -133,4 +133,42 @@ describe('策略选股历史', () => {
     renderPage()
     expect(await screen.findByText('暂无历史选股')).toBeInTheDocument()
   })
+
+  it('回测显示 T+1 口径与缺失样本，避免把样本复利显示为账户收益', async () => {
+    const report = {
+      start: '2026-09-01', end: '2026-09-23', dates: 10, skipped_dates: 1, created_at: '2026-10-02 08:00',
+      engine_version: 'a-share-t1-v2', status: 'partial', note: '数据不完整；本次不更新排序权重',
+      methodology: '次日开盘观察入场，持有 1/3/5 个交易日后收盘观察退出；样本复利未模拟共享资金与费用。',
+      strategies: [{ strategy: 'volume_breakout', label: '放量突破', days: 10, picks: 40, evaluated: 35,
+        unavailable: 3, entry_blocked: 2, avg_1d: 1, win_1d: 50, avg_3d: 2, avg_5d: 3,
+        limit_up_rate: 10, avg_1d_fit: 1, total_return: 5, max_drawdown: -2, weight: 1 }],
+    }
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const body = String(input).includes('/screening/dates') ? dates : { ...latest, backtest: report }
+      return new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } })
+    }))
+    renderPage()
+    expect(await screen.findByText(report.note)).toBeInTheDocument()
+    expect(screen.getByText(report.methodology)).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '持有1日均收益' })).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: '35/3/2' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '样本复利' })).toBeInTheDocument()
+    expect(screen.queryByRole('columnheader', { name: '累计收益' })).not.toBeInTheDocument()
+  })
+})
+
+it('风险和质量筛选保留缺失因子语义，评分明细可读', async () => {
+  const rows = [
+    { ...pick('600001', '可靠候选', ['均衡多因子']), risk_level: 'low', risk_penalty: 0, factor_scores: { value: null, momentum: 70 }, screen_score: 82, factor_coverage: .5, data_quality: { score: 90, source: '模拟源' } },
+    { ...pick('600002', '低质量候选', ['放量突破']), risk_level: 'high', risk_penalty: 30, factor_scores: { momentum: 80 }, data_quality: { score: 40, flags: [] } },
+  ]
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify(String(input).endsWith('/screening') ? { ...latest, picks: rows } : { dates: [], strategies: [] }), { headers: { 'content-type': 'application/json' } })))
+  renderPage()
+  await screen.findByText('可靠候选')
+  fireEvent.change(screen.getByLabelText('风险筛选'), { target: { value: 'low' } })
+  expect(screen.queryByText('低质量候选')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByText('评分明细'))
+  expect(screen.getByText('估值：缺失')).toBeInTheDocument()
+  expect(screen.getByText('动量：70.0')).toBeInTheDocument()
+  expect(screen.getByText('模拟源 · 50%')).toBeInTheDocument()
 })

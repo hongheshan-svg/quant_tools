@@ -16,7 +16,7 @@ from tests.test_validation_loop import diag_db  # noqa: F401  复用事后验证
 
 ANALYST_REPLIES = {
     "技术面分析员": {"view": "看多", "score": 80, "confidence": "高", "key_points": ["二板未炸板"], "risks": ["高位"]},
-    "情报分析员": {"view": "偏空，看空", "score": 40, "confidence": "中", "key_points": ["异常波动公告"], "risks": []},
+    "情报分析员": {"view": "看空", "score": 40, "confidence": "中", "key_points": ["异常波动公告"], "risks": []},
     "风险分析员": RuntimeError("timeout"),
 }
 
@@ -141,6 +141,7 @@ def test_tencent_quotes_include_pe_pb(tmp_path, monkeypatch):
     fields = ["1", "贵州茅台", "600519", "1243.88", "1237.00", "1236.00"] + [""] * 26
     fields += ["0.56", "1244.01", "1228.10", "", "28218", "348872", "0.23", "19.09", "", "", "", "",
                "15549.52", "15549.52", "6.19", "", ""]
+    fields[30] = "20260928150000"
     text = 'v_sh600519="' + "~".join(fields) + '";'
 
     class _Resp:
@@ -150,7 +151,7 @@ def test_tencent_quotes_include_pe_pb(tmp_path, monkeypatch):
             self.text = t
 
     monkeypatch.setattr(httpx, "get", lambda url, **kw: _Resp(text))
-    collector = StockDataCollector({})
+    collector = StockDataCollector({"data_sources": {"realtime": ["tencent"]}})
     monkeypatch.setattr(collector, "_get_all_stock_codes", lambda: ["sh600519"])
     collector._collect_realtime_quotes("2026-09-28", path)
     with get_db_session(path) as session:

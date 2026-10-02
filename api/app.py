@@ -31,7 +31,14 @@ DEFAULT_CORS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 def apply_config(app: FastAPI, config: dict[str, Any]) -> None:
     """设置保存后把新配置同步给应用内的服务。"""
     app.state.pipeline.config = config
+    from src.collectors.request_budget import configure_policy
+    configure_policy(config)
+    collector = getattr(app.state.pipeline, "collector", None)
+    if collector is not None:
+        collector.config = config
     app.state.chat_store.config = config
+    from src.scheduler import refresh_scheduler
+    refresh_scheduler(getattr(app.state, "scheduler", None), config)
 
 
 def create_app(config: dict[str, Any] | None = None, *, pipeline=None, start_scheduler: bool | None = None,
@@ -72,18 +79,30 @@ def create_app(config: dict[str, Any] | None = None, *, pipeline=None, start_sch
             app.state.scheduler = None
             scheduler.shutdown(wait=False)
         app.state.tasks.shutdown()
+        from src.collectors.source_chain import source_health
+        source_health.reset()
 
     app = FastAPI(title="A股量化交易系统 API", version="1.0", lifespan=lifespan)
+    from src.utils.stock_code import StockCodeError
+
+    @app.exception_handler(StockCodeError)
+    async def stock_code_error(request: Request, error: StockCodeError):
+        return JSONResponse({"detail": str(error)}, status_code=400)
     if pipeline is None:
         from src.services.pipeline_service import PipelineService
 
         pipeline = PipelineService(config)
+        from src.collectors.source_chain import source_health
+        from src.collectors.request_budget import configure_policy
+        source_health.reset()
+        source_health.configure(pipeline.db_path)
+        configure_policy(config)
     from src.services.chat_sessions import ChatSessionStore
 
     app.state.pipeline = pipeline
     app.state.scheduler = None  # lifespan 启动定时任务后赋值
     app.state.background = run_scheduler  # 本进程是否运行定时任务和聊天机器人
-    app.state.tasks = TaskManager(workers=int(web.get("task_workers", 4)))
+    app.state.tasks = TaskManager(workers=int(web.get("task_workers", 4)), db_path=(config.get("database") or {}).get("sqlite_path"))
     app.state.auth = auth or AuthStore()
     app.state.chat_store = ChatSessionStore(config)
 

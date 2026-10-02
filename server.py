@@ -38,8 +38,8 @@ def bundle_dir() -> Path | None:
 def prepare_workdir(workdir: str | Path, bundle: Path | None = None) -> None:
     """切换到数据目录，并把内置的默认配置放进去。
 
-    示例配置每次覆盖（新版本新增的配置项靠它提供默认值），股票池规则只在缺失时复制，
-    不覆盖用户改过的版本。
+    示例配置每次覆盖（新版本新增的配置项和策略靠它提供默认值），股票池规则只在缺失时复制，
+    不覆盖用户改过的规则文件。
     """
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
@@ -50,6 +50,12 @@ def prepare_workdir(workdir: str | Path, bundle: Path | None = None) -> None:
     example = bundle / "config" / "settings.yaml.example"
     if example.exists():
         shutil.copyfile(example, "config/settings.yaml.example")
+    rules_example = bundle / "config" / "screening_rules.yaml.example"
+    if rules_example.exists():
+        shutil.copyfile(rules_example, "config/screening_rules.yaml.example")
+    profiles_example = bundle / "config" / "scoring_profiles.yaml.example"
+    if profiles_example.exists():
+        shutil.copyfile(profiles_example, "config/scoring_profiles.yaml.example")
     pool = bundle / "config" / "stock_pool.yaml"
     if pool.exists() and not Path("config/stock_pool.yaml").exists():
         shutil.copyfile(pool, "config/stock_pool.yaml")
@@ -193,4 +199,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
     main()

@@ -90,7 +90,7 @@ describe('设置页分享图品牌', () => {
     const calls: Call[] = []
     stub(calls)
     renderAt('/settings')
-    fireEvent.click(screen.getByRole('tab', { name: '推送' }))
+    fireEvent.click(await screen.findByRole('tab', { name: '推送' }))
     const block = await screen.findByRole('group', { name: /图片推送/ })
     // 等表单用接口数据完成初始化，否则输入会被随后的同步覆盖
     await waitFor(() => expect(screen.getByLabelText(/Chat ID/)).toHaveValue('-100'))

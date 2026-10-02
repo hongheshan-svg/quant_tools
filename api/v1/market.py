@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 
 from api.deps import get_config, get_pipeline, get_tasks
-from api.tasks import TaskManager
+from api.tasks import TaskManager, business_result_error, collection_result_error
 from src.services.pipeline_service import PipelineService
 
 router = APIRouter(tags=["market"])
@@ -97,7 +97,7 @@ def themes(dimension: str = Query("concept", pattern="^(concept|industry)$"),
 
 @router.post("/pipeline/collect")
 def collect(tasks: TaskManager = Depends(get_tasks), pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
-    return tasks.submit("collect", pipeline.collect, dedupe_key="collect", label="采集全部数据")
+    return tasks.submit("collect", pipeline.collect, dedupe_key="collect", label="采集全部数据", result_error=collection_result_error)
 
 
 def _collect_rss(config: dict) -> dict[str, int]:
@@ -147,13 +147,18 @@ def diagnosis_outcomes(days: int = Query(60, ge=5, le=365), pipeline: PipelineSe
 
 
 @router.get("/alerts")
-def alerts(limit: int = Query(200, ge=1, le=1000), pipeline: PipelineService = Depends(get_pipeline)) -> list[dict[str, Any]]:
-    return pipeline.recent_alerts(limit)
+def alerts(limit: int = Query(200, ge=1, le=1000), offset: int = Query(0, ge=0, le=100000),
+           severity: str = Query("", pattern="^(|info|warning|critical)$"), code: str = Query("", pattern="^(|[0-9]{6})$"),
+           channel: str = Query("", pattern="^[a-z_]*$"), pipeline: PipelineService = Depends(get_pipeline)) -> list[dict[str, Any]]:
+    if not offset and not severity and not code and not channel:
+        return pipeline.recent_alerts(limit)
+    from src.services.alert_service import AlertService
+    return AlertService(pipeline.config).recent(limit, offset=offset, severity=severity, code=code, channel=channel)
 
 
 @router.post("/alerts/check")
 def check_alerts(tasks: TaskManager = Depends(get_tasks), pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
-    return tasks.submit("check_alerts", pipeline.check_alerts, dedupe_key="check_alerts", label="检查盘中提醒")
+    return tasks.submit("check_alerts", pipeline.check_alerts, dedupe_key="check_alerts", label="检查盘中提醒", result_error=business_result_error)
 
 
 ALERT_SETTING_KEYS = ("enabled", "cooldown_minutes", "big_drop_pct", "near_stop_pct", "market_regime", "regime_score_drop", "watchlist",

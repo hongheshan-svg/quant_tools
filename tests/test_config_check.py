@@ -124,7 +124,7 @@ def test_removed_qt_desktop_keys_not_unknown():
 def test_dynamic_keys_exempt():
     raw = {
         "strategy": {"adaptive_weights": {"foo_score": 0.3}, "source_confidence": {"某源": 0.8}},
-        "screening": {"strategies": {"我的策略": {"x": 1}}},
+        "screening": {"strategies": {"volume_breakout": {"vol_ratio_min": 2.5}}},
         "llm": {"pricing": {"my-model": {"input": 1, "output": 2}}},
         "notifier": {"routes": {"alert": ["wechat"]}},
         "search": {"bocha": {"api_keys": ["k"], "whatever": 1}, "tavily": {"extra": 2}},

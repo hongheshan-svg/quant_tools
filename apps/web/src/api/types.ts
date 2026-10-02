@@ -3,6 +3,8 @@
 export type Dict<T = unknown> = Record<string, T>
 
 export interface Task<R = unknown> {
+  revision?: number
+  trace_id?: string
   id: string
   kind: string
   label: string
@@ -194,6 +196,9 @@ export interface StockRef {
 }
 
 export interface DailyBar {
+  source?: string | null
+  price_adjustment?: string | null
+  updated_at?: string | null
   code: string
   name: string
   trade_date: string
@@ -252,11 +257,17 @@ export interface DiagnosisHistoryPage {
 }
 
 export interface RunLogStep {
+  metadata?: { source?: string; attempt?: number; cache_hit?: boolean; stale_seconds?: number; record_count?: number }
   name: string
-  kind: 'data' | 'llm' | 'note'
+  kind: 'data' | 'llm' | 'note' | 'provider' | 'save' | 'notify'
   ok: boolean
   ms: number
   detail: string
+  source?: string
+  attempt?: number
+  cache_hit?: boolean
+  stale_seconds?: number
+  record_count?: number
 }
 
 export interface RunLog {
@@ -313,6 +324,8 @@ export interface MarketPhase {
 }
 
 export interface Diagnosis {
+  context_pack?: ContextPack | null
+  structured_report?: ResearchArtifact
   phase_decision?: PhaseDecision
   signal_attribution?: SignalAttribution
   market_phase?: MarketPhase
@@ -355,6 +368,68 @@ export interface Diagnosis {
   decision_profile?: DecisionProfile
 }
 
+export interface ContextPack {
+  pack_version: '1.0'
+  subject: Record<string, string>
+  blocks: Record<string, { status: string; source?: string | null; as_of?: string | null; limitations: string[]; items: Record<string, { status: string; value: unknown; source?: string | null; as_of?: string | null }> }>
+}
+
+export interface ResearchArtifact {
+  created_at?: string | null
+  schema_version: 'research-artifact-v1'
+  subject: { stock_code: string; stock_name?: string; market?: string }
+  thesis: { summary: string; direction: string; score?: number | null; confidence?: number | null; reasons: string[]; risks: string[] }
+  evidence: { id: string; source_type: string; title: string; summary?: string | null; source?: string | null; as_of?: string | null; freshness: string; quality_level: string }[]
+  invalidation_conditions: { id: string; category: string; description: string }[]
+  next_actions: { action: string; label: string; reason?: string; due_at?: string | null }[]
+}
+
+export interface ProfileBlock<T> {
+  status: 'fresh' | 'partial' | 'unavailable'
+  limitations: string[]
+  data?: T
+}
+
+export interface StockProfile {
+  code: string
+  kind: 'stock' | 'etf' | 'index'
+  name: string
+  quote: ProfileBlock<{ trade_date: string; close: number; change_pct: number; source?: string | null; price_adjustment?: string | null; updated_at?: string | null }>
+  research: ProfileBlock<{ action: string; score: number; one_sentence: string; structured_report: ResearchArtifact; context_pack?: ContextPack }>
+  history: ProfileBlock<{ total: number; history_days: number; recent_reports: DiagnosisHistoryItem[] }>
+  intelligence: ProfileBlock<{ items: ScopedIntelligenceItem[] }>
+  portfolio: ProfileBlock<{ held: boolean; holdings: { source: string; label: string; quantity: number; avg_cost: number; market_price: number; unrealized_pnl_pct: number | null }[] }>
+  signals: ProfileBlock<{ active: { id: number; action_label: string; stop_loss: number | null; target_price: number | null }[] }>
+  monitors: ProfileBlock<{ in_watchlist: boolean; alert_rules: { type: string; text: string; note: string }[] }>
+}
+
+export interface ScopedIntelligenceItem {
+  id: number | string
+  source_id?: number | null
+  source: string
+  title: string
+  summary?: string
+  url?: string
+  symbol?: string | null
+  market?: string
+  sector?: string | null
+  published_at?: string | null
+  collected_at: string
+}
+
+export interface ScopedIntelligenceSource {
+  id: number
+  name: string
+  url: string
+  enabled: boolean
+  symbol?: string | null
+  market?: string
+  sector?: string | null
+  managed_by_config?: boolean
+  last_fetched_at?: string | null
+  last_error?: string
+}
+
 export type DecisionProfile = 'conservative' | 'balanced' | 'aggressive'
 
 export interface ReassessResult {
@@ -395,9 +470,11 @@ export interface SkillOpinion {
 }
 
 export interface SkillConsensus {
+  status?: 'ready' | 'insufficient'
   stance?: string
-  score?: number
+  score?: number | null
   agreement?: string
+  valid_count?: number
 }
 
 // ---------- 策略选股 ----------
@@ -413,6 +490,25 @@ export interface ScreeningPick {
   labels: string[]
   reasons: string[]
   next_change_pct: number | null
+  screen_score?: number
+  factor_scores?: Record<string, number | null>
+  factor_coverage?: number
+  data_quality?: { score: number; flags: string[]; source?: string; price_adjustment?: string; price_revision?: string }
+  financial_status?: string
+  industry?: string
+  themes?: string[]
+  risk_penalty?: number
+  portfolio_penalty?: number
+  risk_flags?: string[]
+  risk_level?: string
+  llm_score?: number | null
+  llm_reason?: string
+  post_analysis?: { status: string; report_id?: number; action?: string; score?: number; reason?: string }
+}
+
+export interface ScreeningSettings {
+  screening: { profiles_file?: string; pipeline?: Record<string, number | boolean>; max_total?: number; [key: string]: unknown }
+  profiles: { name: string; label?: string; enabled?: boolean; weights: Record<string, number>; conditions?: unknown[]; [key: string]: unknown }[]
 }
 
 export interface StrategyPerformance {
@@ -433,6 +529,10 @@ export interface BacktestStrategy {
   picks: number
   days: number
   evaluated: number
+  evaluated_days?: number
+  unavailable?: number
+  entry_blocked?: number
+  pending?: number
   avg_1d: number | null
   win_1d: number | null
   avg_3d: number | null
@@ -445,6 +545,7 @@ export interface BacktestStrategy {
 }
 
 export interface BacktestReport {
+  benchmark?: { name: string; status: string; samples: number; missing: number; avg_1d: number | null }
   start: string
   end: string
   dates: number
@@ -453,10 +554,16 @@ export interface BacktestReport {
   created_at: string
   strategies: BacktestStrategy[]
   weights: Dict<number>
+  status?: 'success' | 'partial'
+  engine_version?: string
+  methodology?: string
+  attempted_dates?: number
+  failed_dates?: number
   note?: string
 }
 
 export interface ScreeningLatest {
+  last_run?: { id: number; status: string; trade_date: string; created_at: string; notes: string[]; stats: Dict<number> } | null
   picks: ScreeningPick[]
   performance: StrategyPerformance[]
   backtest: BacktestReport | null
@@ -482,6 +589,7 @@ export interface ScreeningPicks {
 }
 
 export interface ScreenResult {
+  status?: 'success' | 'partial'
   trade_date: string
   regime: string
   picks: unknown[]
@@ -650,6 +758,11 @@ export interface ChatSkill {
   instructions: string
 }
 
+export interface ChatContext {
+  stock_context?: { code: string }
+  skills?: string[]
+}
+
 export interface ChatTurn {
   question: string
   answer: string
@@ -657,6 +770,9 @@ export interface ChatTurn {
   tools: { name: string; label: string; args: Dict; result: string }[]
   error: string
   asked_at: string
+  stock_context?: { code: string } | null
+  skills?: string[]
+  run_log?: RunLog
 }
 
 export type ChatStreamEvent =
@@ -686,6 +802,7 @@ export interface ChatSession {
 // ---------- 自选股 ----------
 
 export interface WatchlistRow {
+  quote_source?: string | null
   code: string
   name: string
   kind?: 'stock' | 'etf' | 'index'
@@ -694,7 +811,45 @@ export interface WatchlistRow {
   trade_date: string
   close: number | null
   change_pct: number | null
-  diagnosis: { action: string; action_label: string; score: number; created_at: string; one_sentence: string } | null
+  diagnosis: { diagnosis_id?: number; action: string; action_label: string; score: number; created_at: string; one_sentence: string } | null
+}
+
+export interface StockWorkspace {
+  today: string
+  watchlist: WatchlistRow[]
+  today_reports: DiagnosisHistoryItem[]
+  recent_reports: DiagnosisHistoryItem[]
+  analyzed_today: number
+}
+
+export interface DataSourceSettings {
+  realtime: string[]
+  daily_history: string[]
+  tushare_token: string
+  tushare_http_url: string
+  tickflow_api_key: string
+  tickflow_kline_adjust: string
+  request_timeout_seconds: number
+  stage_timeout_seconds?: number
+  collect_timeout_seconds?: number
+  isolate_collection?: boolean
+  require_auxiliary_sources?: boolean
+  minimum_realtime_rows: number
+  pytdx_servers: string[]
+}
+
+export interface DataSourceSettingsResponse {
+  data_sources: DataSourceSettings
+  realtime_options: string[]
+  daily_options: string[]
+}
+
+export interface DataSourceProbe {
+  ok: boolean
+  source: string
+  code: string
+  bars: number
+  latest_date: string
 }
 
 export interface WatchlistReport {
@@ -852,6 +1007,9 @@ export interface RealPortfolio {
 // ---------- 提醒、数据源、用量 ----------
 
 export interface AlertRow {
+  id?: number
+  channels?: Record<string, boolean>
+  rule_id?: string
   time: string
   code: string
   name: string
@@ -1164,4 +1322,17 @@ export interface WatchlistSettings {
   workers: number
   single_notify: boolean
   timeout_minutes: number
+}
+
+
+export interface SchedulerSettings {
+  hot_search_interval: number
+  cailianshe_interval: number
+  stock_data_interval: number
+  daily_analysis_time: string
+  daily_signal_time: string
+  daily_report_time: string
+  watchlist_report_time: string
+  self_learning_time: string
+  signal_lifecycle_time: string
 }

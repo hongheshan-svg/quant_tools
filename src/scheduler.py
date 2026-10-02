@@ -43,8 +43,23 @@ def _report_error(config: dict, source: str, error: Exception) -> None:
         logger.error(f"系统错误推送异常: {e}")
 
 
+def _isolate_collection_job(job_id: str, config: dict) -> bool:
+    """定时采集也受硬期限保护，避免第三方 SDK 卡住后一直占用调度槽。"""
+    sources = config.get("data_sources") or {}
+    if not sources.get("isolate_collection", False) or config.get("_isolated_collection"):
+        return False
+    from src.services.analysis_process import isolated_result
+    from src.collectors.source_chain import source_health
+    source_health.configure((config.get("database") or {}).get("sqlite_path", "data/quant.db"))
+    cfg = {**config, "diagnosis": {**(config.get("diagnosis") or {}), "timeout_seconds": sources.get("collect_timeout_seconds", 240)}}
+    isolated_result("collection_job", cfg, {"job_id": job_id})
+    return True
+
+
 def _run_hot_search_collection(config: dict):
     """执行热搜采集任务"""
+    if _isolate_collection_job("hot_search", config):
+        return
     from src.collectors.douyin import DouyinCollector
     from src.collectors.toutiao import ToutiaoCollector
     from src.collectors.weibo import WeiboCollector
@@ -80,6 +95,8 @@ def _run_hot_search_collection(config: dict):
 
 def _run_cailianshe_collection(config: dict):
     """执行财联社采集任务"""
+    if _isolate_collection_job("cailianshe", config):
+        return
     from src.collectors.cailianshe import CailiansheCollector
     from src.database.db import bulk_insert
     from src.database.models import FinanceNews
@@ -108,6 +125,8 @@ def _run_cailianshe_collection(config: dict):
 
 def _run_rss_collection(config: dict):
     """执行 RSS/Atom 资讯源采集（与交易日无关）"""
+    if _isolate_collection_job("rss", config):
+        return
     cfg = config.get("intelligence") or {}
     if not cfg.get("enabled", True):
         return
@@ -130,12 +149,16 @@ def _run_rss_collection(config: dict):
 
 def _run_stock_data_collection(config: dict):
     """执行行情数据采集任务"""
+    if _isolate_collection_job("stock_data", config):
+        return
     if _skip_non_trade_day(config, "行情数据采集"):
         return
     from src.collectors.stock_data import StockDataCollector
     collector = StockDataCollector(config)
     try:
         collector.safe_collect()
+        if getattr(collector, "last_result", {}).get("status") == "fetch_failed":
+            raise RuntimeError("行情采集失败，保留已有数据并暂停后续行情驱动任务")
     except Exception as e:
         logger.error(f"行情数据采集任务异常: {e}")
         _report_error(config, "行情数据采集", e)
@@ -168,6 +191,8 @@ def _run_stock_data_collection(config: dict):
 
 def _run_global_data_collection(config: dict):
     """执行国际数据采集任务"""
+    if _isolate_collection_job("global_data", config):
+        return
     from src.collectors.global_news import GlobalNewsCollector
     from src.collectors.us_earnings import USEarningsCollector
 
@@ -666,6 +691,31 @@ def build_scheduler(config: dict, scheduler=None):
     for job in scheduler.get_jobs():
         logger.info(f"  - {job.name} ({job.trigger})")
     return scheduler
+
+
+def refresh_scheduler(scheduler, config: dict) -> None:
+    """热更新本服务的触发器和参数，保留暂停状态与无关任务。"""
+    if scheduler is None:
+        return
+    from apscheduler.schedulers.background import BackgroundScheduler
+    desired = {job.id: job for job in build_scheduler(config, BackgroundScheduler()).get_jobs()}
+    for job in scheduler.get_jobs():
+        if job.id in JOBS and job.id not in desired:
+            scheduler.remove_job(job.id)
+    for job_id, wanted in desired.items():
+        current = scheduler.get_job(job_id)
+        if current is None:
+            scheduler.add_job(wanted.func, trigger=wanted.trigger, args=wanted.args, id=job_id, name=wanted.name)
+            continue
+        # IntervalTrigger 的起始时间每次构建不同，只比较配置中的周期。
+        old, new = current.trigger, wanted.trigger
+        same = old.interval == new.interval if isinstance(old, IntervalTrigger) and isinstance(new, IntervalTrigger) else str(old) == str(new)
+        paused = hasattr(current, "next_run_time") and current.next_run_time is None
+        if not same:
+            scheduler.reschedule_job(job_id, trigger=new)
+            if paused:
+                scheduler.pause_job(job_id)
+        scheduler.modify_job(job_id, args=wanted.args, name=wanted.name)
 
 
 # 一次性运行（GitHub Actions、Docker 或系统定时任务在收盘后调用）：按定时任务的先后顺序执行

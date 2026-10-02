@@ -41,7 +41,7 @@ COPY api/ ./api/
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 # 默认配置放在镜像内的 defaults 目录，启动时复制进（可能挂载了的）config 目录
-COPY config/settings.yaml.example config/stock_pool.yaml ./defaults/config/
+COPY config/settings.yaml.example config/stock_pool.yaml config/screening_rules.yaml.example config/scoring_profiles.yaml.example ./defaults/config/
 COPY --from=web /web/dist ./apps/web/dist
 COPY docker/entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh \

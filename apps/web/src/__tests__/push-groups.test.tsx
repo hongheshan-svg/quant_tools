@@ -52,7 +52,7 @@ describe('邮件分组编辑', () => {
   async function openPush(calls: Call[], groups: unknown[]) {
     stub(calls, groups)
     render(<MemoryRouter initialEntries={['/settings']}><AppRoutes authEnabled={false} /></MemoryRouter>)
-    fireEvent.click(screen.getByRole('tab', { name: '推送' }))
+    fireEvent.click(await screen.findByRole('tab', { name: '推送' }))
     // 等表单用接口数据完成初始化，否则输入会被随后的同步覆盖
     await waitFor(() => expect(screen.getByLabelText(/Chat ID/)).toHaveValue('-100'))
   }

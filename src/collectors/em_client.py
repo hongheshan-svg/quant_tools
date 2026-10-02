@@ -13,6 +13,7 @@ from contextlib import suppress
 import pandas as pd
 from loguru import logger
 from playwright.sync_api import sync_playwright
+from src.utils.redaction import redact_text
 
 HTTP_OK_STATUS = 200
 DEFAULT_REFERER = "https://quote.eastmoney.com/"
@@ -55,7 +56,7 @@ class EastMoneyClient:
                 self._page.goto('https://quote.eastmoney.com/', timeout=15000)
                 self._page.wait_for_timeout(1000)
             except Exception as e:
-                logger.warning(f"东方财富主页预热失败: {e}")
+                logger.warning(f"东方财富主页预热失败: {redact_text(e, 500)}")
 
     def request_json(self, url: str, params: dict | None = None, timeout: int = 15000, referer: str | None = None) -> dict | None:
         """通用 JSON 请求（带浏览器 TLS 指纹），供各采集器调用东方财富的其他接口；失败返回 None。"""
@@ -67,7 +68,7 @@ class EastMoneyClient:
         try:
             return future.result(timeout=timeout / 1000 + BROWSER_STARTUP_SECONDS)
         except Exception as e:
-            logger.warning(f"东方财富 API 请求失败: {e}")
+            logger.warning(f"东方财富 API 请求失败: {redact_text(e, 500)}")
             return None
 
     def _request_in_browser_thread(self, url: str, params: dict | None, timeout: int, referer: str | None) -> dict | None:
@@ -84,7 +85,7 @@ class EastMoneyClient:
                 return None
             return resp.json()
         except Exception as e:
-            logger.warning(f"东方财富 API 请求失败: {e}")
+            logger.warning(f"东方财富 API 请求失败: {redact_text(e, 500)}")
             return None
 
     def close(self):

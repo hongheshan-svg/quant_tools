@@ -174,10 +174,12 @@ def build_probes(trade_day: Callable[[], str]) -> list[Probe]:
         Probe("抖音热榜", collector("douyin", "DouyinCollector"), browser=True),
         Probe("今日头条", collector("toutiao", "ToutiaoCollector"), browser=True),
     ]
-    from src.collectors.extra_sources import data_source_config
-
-    if data_source_config().get("tushare_token"):  # 没有 token 时不检查
-        probes.append(Probe("Tushare 日线", extra_daily("tushare")))
+    from src.config_loader import load_config
+    from src.services.data_source_settings import source_configured, probe_daily_source
+    config = load_config()
+    for name, label in (("tickflow", "TickFlow 日线"), ("tushare", "Tushare 日线")):
+        if source_configured(config, name):
+            probes.append(Probe(label, lambda name=name: probe_daily_source(name, SAMPLE_CODE)["bars"]))
     return probes
 
 
@@ -208,7 +210,8 @@ def run_probe(probe: Probe, timeout: float = PROBE_TIMEOUT) -> Result:
     except FutureTimeout:
         return Result(probe, False, 0, time.monotonic() - started, f"超过 {timeout:.0f} 秒没有响应")
     except Exception as e:
-        return Result(probe, False, 0, time.monotonic() - started, f"{type(e).__name__}: {e}"[:200])
+        from src.utils.redaction import redact_text
+        return Result(probe, False, 0, time.monotonic() - started, redact_text(f"{type(e).__name__}: {e}", 200))
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
 
@@ -228,6 +231,7 @@ def main() -> int:
     parser.add_argument("--only", help="只检查名称包含这些关键词的数据源，逗号分隔")
     parser.add_argument("--no-browser", action="store_true", help="跳过需要 Playwright 浏览器的数据源")
     parser.add_argument("--timeout", type=float, default=PROBE_TIMEOUT, help="单个数据源的超时（秒）")
+    parser.add_argument("--json-output", help="保存脱敏检查结果，供连续监测与验收留档")
     args = parser.parse_args()
 
     logger.remove()
@@ -248,6 +252,12 @@ def main() -> int:
         print(f"[{mark}] {probe.name:<10} {result.count:>6} 条 {result.seconds:6.1f}s  {result.error}", flush=True)
 
     summary = render_markdown(results, trade_day())
+    if args.json_output:
+        import json
+        from src.utils.redaction import redact
+        payload = {"checked_at": datetime.now().isoformat(), "trade_date": trade_day(), "results": [
+            {"source": r.probe.name, "ok": r.ok, "critical": r.probe.critical, "count": r.count, "seconds": round(r.seconds, 3), "error": r.error} for r in results]}
+        Path(args.json_output).write_text(json.dumps(redact(payload), ensure_ascii=False, indent=2), encoding="utf-8")
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
             f.write(summary)

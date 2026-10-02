@@ -1,6 +1,7 @@
 // 任务中心：显示界面发起的后台任务和进度
 import { ListChecks, Loader2 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { api } from '@/api/endpoints'
 import { progressText } from '@/hooks/useTask'
 import { useT } from '@/i18n'
 import { useTaskStore } from '@/stores/tasks'
@@ -13,6 +14,18 @@ export function TaskCenter() {
   const tasks = Object.values(useTaskStore((s) => s.tasks)).sort((a, b) => b.created_at.localeCompare(a.created_at))
   const running = tasks.filter((x) => x.status === 'pending' || x.status === 'running')
   const [open, setOpen] = useState(false)
+  useEffect(() => {
+    let alive = true
+    const refresh = () => {
+      if (document.visibilityState === 'hidden') return
+      void api.tasks().then((rows) => {
+        if (alive && Array.isArray(rows)) rows.forEach((row) => useTaskStore.getState().upsert(row))
+      }).catch(() => {})
+    }
+    refresh()
+    const timer = setInterval(refresh, 5000)
+    return () => { alive = false; clearInterval(timer) }
+  }, [])
   return (
     <div className="relative">
       <button

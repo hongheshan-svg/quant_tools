@@ -21,8 +21,29 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.paths.outputs.backend }}
+      web: ${{ steps.paths.outputs.web }}
+      desktop: ${{ steps.paths.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: paths
+        env:
+          DIFF_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 scripts/ci_changes.py
+
   backend:
-    name: Backend tests
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    name: Backend tests (${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -42,14 +63,68 @@ jobs:
 
       # 测试不访问网络，也不需要 Playwright 浏览器
       - name: Run tests
-        run: python -m pytest -q -p no:cacheprovider tests/
+        run: python scripts/pytest_shard.py --index ${{ matrix.shard }} --count 3
 
       - name: Run script-style tests
+        if: matrix.shard == 0
         run: |
           python tests/test_basic.py
           python tests/test_self_learning.py
 
+      - name: Python syntax and critical lint
+        if: matrix.shard == 0
+        run: |
+          python -m compileall -q src api scripts main.py server.py
+          pip install ruff==0.16.10
+          ruff check --select E9,F63,F7,F82 src api scripts main.py server.py
+          python scripts/check_alignment_assets.py
+
+  browser:
+    needs: changes
+    if: needs.changes.outputs.web == 'true' || needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - run: |
+          grep -viE '^pyinstaller' requirements.txt > /tmp/requirements.txt
+          pip install -r /tmp/requirements.txt
+          playwright install --with-deps chromium
+          npm ci --prefix apps/web
+          npm run build --prefix apps/web
+          python scripts/web_e2e.py --output /tmp/quant-web-e2e
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: browser-evidence
+          path: /tmp/quant-web-e2e
+
+  docker:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker build -f docker/Dockerfile -t quant-ci .
+      - run: |
+          docker run -d --name quant-ci -p 127.0.0.1:8000:8000 -e QUANT__WEB__API_TOKEN=quant-ci-smoke -e QUANT_NO_NOTIFY=1 quant-ci python server.py --host 0.0.0.0 --no-scheduler
+          QUANT_SMOKE_API_TOKEN=quant-ci-smoke python scripts/check_alignment_assets.py --url http://127.0.0.1:8000 --wait 120
+      - if: always()
+        run: docker logs quant-ci; docker rm -f quant-ci
+
   web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     name: Web (lint, test, build)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -78,6 +153,8 @@ jobs:
         run: npm run build
 
   desktop:
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
     name: Desktop tests
     runs-on: ubuntu-latest
     timeout-minutes: 10

@@ -51,6 +51,41 @@ def test_retries_before_moving_on(monkeypatch):
 
     result = fetch_with_fallback("行情", [("腾讯", flaky), ("新浪", lambda: [9])], attempts=2, retry_wait=1)
     assert result.source == "腾讯" and len(calls) == 2
+    assert result.errors == {}
+
+
+def test_all_open_sources_do_not_bypass_cooldown(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(cb_mod.time, "monotonic", lambda: clock[0])
+    calls = []
+    breaker = sc.get_breaker("行情")
+    for name in ("一", "二"):
+        for _ in range(3):
+            breaker.record_failure(name)
+    result = fetch_with_fallback("行情", [("一", lambda: calls.append(1)), ("二", lambda: calls.append(2))])
+    assert not result.ok and calls == []
+    assert result.errors == {"一": "熔断冷却中", "二": "熔断冷却中"}
+
+
+def test_unused_backup_keeps_half_open_probe_for_next_request(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(cb_mod.time, "monotonic", lambda: clock[0])
+    breaker = sc.get_breaker("行情")
+    for _ in range(3):
+        breaker.record_failure("后备")
+    clock[0] += 301
+    result = fetch_with_fallback("行情", [("主源", lambda: [1]), ("后备", lambda: [2])])
+    assert result.source == "主源"
+    result = fetch_with_fallback("行情", [("主源", _boom), ("后备", lambda: [2])])
+    assert result.source == "后备"
+
+
+def test_empty_symbol_history_does_not_open_provider_circuit_for_other_symbols():
+    for i in range(4):
+        result = fetch_with_fallback("历史", [("源", lambda: [])], cache_key=str(i), count_empty_failures=False)
+        assert not result.ok
+    result = fetch_with_fallback("历史", [("源", lambda: [1])], cache_key="正常股票", count_empty_failures=False)
+    assert result.ok and result.errors == {}
 
 
 def test_open_breaker_skips_source(monkeypatch):

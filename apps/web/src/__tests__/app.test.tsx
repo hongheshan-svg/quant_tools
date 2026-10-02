@@ -28,17 +28,17 @@ describe('app routes', () => {
         premarket_predictions: [], market_overview: { sh_index: '3250.12', sh_change_pct: 0.85, up_count: 3000, down_count: 2000 } },
       '/market/regime': { regime: '均衡', summary: '市场环境：均衡（55分）' },
     })
-    render(<MemoryRouter initialEntries={['/']}><AppRoutes authEnabled={false} /></MemoryRouter>)
+    render(<MemoryRouter initialEntries={['/market']}><AppRoutes authEnabled={false} /></MemoryRouter>)
     expect(screen.getByRole('link', { name: /AI 问股/ })).toBeInTheDocument()
     expect(await screen.findByText('贵州茅台')).toBeInTheDocument()
     expect(screen.getByText('市场环境：均衡（55分）')).toBeInTheDocument()
     expect(screen.getByText('3250.12')).toBeInTheDocument()
   })
 
-  it('shows not found page', () => {
+  it('shows not found page', async () => {
     stubFetch({})
     render(<MemoryRouter initialEntries={['/nope']}><AppRoutes authEnabled={false} /></MemoryRouter>)
-    expect(screen.getByText('页面不存在')).toBeInTheDocument()
+    expect(await screen.findByText('页面不存在')).toBeInTheDocument()
   })
 })
 
@@ -59,10 +59,10 @@ describe('LoginPage', () => {
 describe('SettingsPage desktop tab', () => {
   const llm = { llm: { primary: {}, fallback: {} }, platforms: {} }
 
-  it('is hidden in the browser', () => {
+  it('is hidden in the browser', async () => {
     stubFetch({ '/settings/llm': llm })
     render(<MemoryRouter initialEntries={['/settings']}><AppRoutes authEnabled={false} /></MemoryRouter>)
-    expect(screen.getByRole('tab', { name: 'AI 模型' })).toBeInTheDocument()
+    expect(await screen.findByRole('tab', { name: 'AI 模型' })).toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: '桌面端' })).not.toBeInTheDocument()
   })
 
@@ -77,7 +77,7 @@ describe('SettingsPage desktop tab', () => {
     }
     vi.stubGlobal('quantDesktop', desktop)
     render(<MemoryRouter initialEntries={['/settings']}><AppRoutes authEnabled={false} /></MemoryRouter>)
-    fireEvent.click(screen.getByRole('tab', { name: '桌面端' }))
+    fireEvent.click(await screen.findByRole('tab', { name: '桌面端' }))
     expect(await screen.findByText('/Users/u/AStockQuant')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: '打开日志目录' }))
     expect(desktop.openLogDir).toHaveBeenCalled()
@@ -93,7 +93,7 @@ describe('SettingsPage bot tab', () => {
     })
     stubFetch({ '/settings/llm': { llm: { primary: {}, fallback: {} }, platforms: {} } })
     render(<MemoryRouter initialEntries={['/settings']}><AppRoutes authEnabled={false} /></MemoryRouter>)
-    fireEvent.click(screen.getByRole('tab', { name: '聊天机器人' }))
+    fireEvent.click(await screen.findByRole('tab', { name: '聊天机器人' }))
     const enable = (await screen.findAllByLabelText('启用'))[0]
     // 等 BotForm 把 botSettings 同步进表单状态后再操作，否则随后的同步会覆盖点击/输入
     await waitFor(() => expect(screen.getByLabelText(/Client ID/)).toHaveValue('key'))

@@ -16,7 +16,7 @@ from src.strategy.screener import StrategyScreener
 from src.strategy.strategy_backtest import StrategyBacktester, max_drawdown, strategy_weights
 from tests.test_screener import TRADE_DATE, _reset_db_engine, config  # noqa: F401  复用选股测试的合成行情
 
-FORWARD_DAYS = ["2026-09-22", "2026-09-23", "2026-09-24", "2026-09-28", "2026-09-29"]
+FORWARD_DAYS = ["2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25", "2026-09-28", "2026-09-29"]
 
 
 @pytest.fixture
@@ -24,9 +24,10 @@ def backtest_db(config, monkeypatch):  # noqa: F811
     monkeypatch.setattr(StrategyScreener, "_regime", lambda self, d, point_in_time=False: "均衡" if point_in_time else "进攻")
     with get_db_session(config["database"]["sqlite_path"]) as session:
         # 突破股：次日高开 11.0 后涨停
-        for day, (o, c, ch) in zip(FORWARD_DAYS, [(11.0, 12.1, 10.0), (12.1, 12.0, -0.8), (12.0, 12.5, 4.2), (12.5, 12.0, -4.0), (12.0, 11.5, -4.2)]):
-            session.add(StockDaily(code="600001", name="突破股", trade_date=day, open=o, close=c, high=c, low=o, change_pct=ch))
-        session.add(StockDaily(code="000005", name="趋势股", trade_date=FORWARD_DAYS[0], open=13.3, close=13.0, change_pct=-2.0))
+        for day, (o, c, ch) in zip(FORWARD_DAYS, [(11.0, 12.1, 10.0), (12.1, 12.0, -0.8), (12.0, 12.5, 4.2), (12.5, 12.0, -4.0), (12.0, 11.5, -4.2), (11.5, 11.0, -4.35)]):
+            session.add(StockDaily(code="600001", name="突破股", trade_date=day, open=o, close=c, high=max(o, c), low=min(o, c), change_pct=ch))
+        session.add(StockDaily(code="000005", name="趋势股", trade_date=FORWARD_DAYS[0], open=13.3, close=13.0, high=13.4, low=12.9, change_pct=-2.0))
+        session.add(StockDaily(code="000005", name="趋势股", trade_date=FORWARD_DAYS[1], open=13.0, close=12.8, high=13.1, low=12.7, change_pct=-1.54))
     return config
 
 
@@ -39,13 +40,13 @@ def test_backtest_point_in_time_stats(backtest_db):
 
     breakout = stats["volume_breakout"]
     assert (breakout["picks"], breakout["evaluated"], breakout["days"]) == (1, 1, 1)
-    assert breakout["avg_1d"] == 10.0 and breakout["win_1d"] == 100.0 and breakout["limit_up_rate"] == 100.0
-    assert breakout["avg_3d"] == pytest.approx(13.64, abs=0.01) and breakout["avg_5d"] == pytest.approx(4.55, abs=0.01)
-    assert breakout["total_return"] == 10.0 and breakout["max_drawdown"] == 0.0
-    assert breakout["avg_1d_fit"] == 10.0          # 回测用当时的大盘环境（均衡），放量突破适配
+    assert breakout["avg_1d"] == 9.09 and breakout["win_1d"] == 100.0 and breakout["limit_up_rate"] == 100.0
+    assert breakout["avg_3d"] == pytest.approx(9.09, abs=0.01) and breakout["avg_5d"] == 0.0
+    assert breakout["total_return"] == 9.09 and breakout["max_drawdown"] == 0.0
+    assert breakout["avg_1d_fit"] == 9.09          # 回测用当时的大盘环境（均衡），放量突破适配
     trend = stats["trend_pullback"]
-    assert trend["avg_1d"] == pytest.approx(-2.26, abs=0.01) and trend["avg_1d_fit"] == pytest.approx(-2.26, abs=0.01)
-    assert trend["max_drawdown"] == pytest.approx(-2.26, abs=0.01) and trend["avg_3d"] is None
+    assert trend["avg_1d"] == pytest.approx(-3.76, abs=0.01) and trend["avg_1d_fit"] == pytest.approx(-3.76, abs=0.01)
+    assert trend["max_drawdown"] == pytest.approx(-3.76, abs=0.01) and trend["avg_3d"] is None
     assert stats["dragon_pullback"]["picks"] == 1 and stats["dragon_pullback"]["evaluated"] == 0
     assert report["weights"] == {} and all(s["weight"] == 1.0 for s in report["strategies"])  # 样本不足不调权重
 
@@ -62,26 +63,30 @@ def test_backtest_skips_partial_market_days(backtest_db):
 
 def test_strategy_weights_and_drawdown():
     stats = [
-        {"strategy": "a", "evaluated": 40, "avg_1d": 3.0},
-        {"strategy": "b", "evaluated": 40, "avg_1d": -1.0},
-        {"strategy": "c", "evaluated": 10, "avg_1d": 9.0},
+        {"strategy": "a", "evaluated": 40, "evaluated_days": 10, "avg_1d": 3.0},
+        {"strategy": "b", "evaluated": 40, "evaluated_days": 10, "avg_1d": -1.0},
+        {"strategy": "c", "evaluated": 10, "evaluated_days": 10, "avg_1d": 9.0},
     ]
-    overall = (3 * 40 - 1 * 40 + 9 * 10) / 90
+    overall = 1
     weights = strategy_weights(stats)
     assert weights == {"a": round(1 + (3 - overall) * bt.WEIGHT_PER_PCT, 2), "b": round(1 + (-1 - overall) * bt.WEIGHT_PER_PCT, 2)}
-    assert strategy_weights([{"strategy": "x", "evaluated": 50, "avg_1d": 20.0}, {"strategy": "y", "evaluated": 50, "avg_1d": -20.0}]) == {"x": 1.2, "y": 0.8}
+    assert strategy_weights([{"strategy": "x", "evaluated": 50, "evaluated_days": 10, "avg_1d": 20.0}, {"strategy": "y", "evaluated": 50, "evaluated_days": 10, "avg_1d": -20.0}]) == {"x": 1.2, "y": 0.8}
     assert strategy_weights([]) == {}
     assert max_drawdown([10, -20, 5]) == -20.0 and max_drawdown([1, 2]) == 0.0
 
 
 def test_screener_applies_latest_backtest_weights(backtest_db):
     path = backtest_db["database"]["sqlite_path"]
+    report = {"engine_version": bt.BACKTEST_ENGINE_VERSION, "strategy_signature": StrategyScreener(backtest_db).strategy_signature(),
+              "status": "success", "calendar_verified": True, "weights": {"volume_breakout": 0.8, "strong_close": 1.2},
+              "strategies": [{"strategy": "volume_breakout", "evaluated": 40, "evaluated_days": 10, "avg_1d": -5},
+                             {"strategy": "strong_close", "evaluated": 40, "evaluated_days": 10, "avg_1d": 5}]}
     with get_db_session(path) as session:
         session.add(StrategyBacktest(start_date="2026-08-01", end_date="2026-09-18",
-                                     result_json=json.dumps({"weights": {"volume_breakout": 0.8}})))
+                                     result_json=json.dumps(report)))
     result = StrategyScreener(backtest_db).run(TRADE_DATE, save=False)
     pick = next(p for p in result.picks if p.code == "600001")
-    assert result.weights == {"volume_breakout": 0.8}
+    assert result.weights == {"volume_breakout": 0.8, "strong_close": 1.2}
     assert pick.labels == ["强势未板", "放量突破"] and pick.scores[1] == pytest.approx(68.0)  # 85 × 0.8
     assert StrategyScreener(backtest_db).run(TRADE_DATE, save=False, point_in_time=True).weights == {}  # 回测不用权重
     backtest_db["screening"] = {"adaptive_strategy_weights": False}

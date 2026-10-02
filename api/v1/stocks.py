@@ -7,11 +7,11 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from loguru import logger
 
 from api.deps import get_config, get_pipeline, get_tasks
-from api.tasks import TaskManager
+from api.tasks import TaskManager, business_result_error
 from src.services.pipeline_service import PipelineService
 from src.utils.stock_code import bare_code
 
@@ -32,6 +32,23 @@ def list_diagnoses(code: str = Query("", max_length=20), action: str = Query("",
     return pipeline.list_diagnoses(code or None, action or None, days, limit, offset)
 
 
+class DeleteDiagnosesBody(BaseModel):
+    ids: list[int] | None = Field(None, min_length=1, max_length=200)
+    code: str | None = Field(None, min_length=1, max_length=20)
+
+    @model_validator(mode="after")
+    def exactly_one_filter(self):
+        if bool(self.ids) == bool(self.code):
+            raise ValueError("必须且只能指定诊断 ID 列表或股票代码")
+        return self
+
+
+@router.post("/diagnoses/delete")
+def delete_diagnoses(body: DeleteDiagnosesBody, pipeline: PipelineService = Depends(get_pipeline)):
+    from src.services.data_query_service import DataQueryService
+    return {"deleted": DataQueryService(pipeline.db_path).delete_diagnoses(body.ids, body.code)}
+
+
 def _get_or_404(pipeline: PipelineService, diagnosis_id: int) -> dict[str, Any]:
     row = pipeline.get_diagnosis(diagnosis_id)
     if row is None:
@@ -50,6 +67,13 @@ def _attachment(row: dict[str, Any], ext: str) -> str:
 @router.get("/diagnoses/{diagnosis_id}")
 def get_diagnosis(diagnosis_id: int, pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
     return _get_or_404(pipeline, diagnosis_id)
+
+
+@router.get("/diagnoses/{diagnosis_id}/outcomes")
+def diagnosis_outcomes(diagnosis_id: int, pipeline: PipelineService = Depends(get_pipeline)):
+    _get_or_404(pipeline, diagnosis_id)
+    from src.services.outcome_engine import OutcomeEngine
+    return OutcomeEngine(pipeline.config).list("diagnosis", diagnosis_id)
 
 
 @router.delete("/diagnoses/{diagnosis_id}")
@@ -122,8 +146,19 @@ def diagnosis_image(diagnosis_id: int, pipeline: PipelineService = Depends(get_p
 def _fund(code: str, pipeline: PipelineService) -> dict[str, Any] | None:
     """ETF / 指数的识别结果；指数代码带交易所前缀，不能对它调用 bare_code。"""
     from src.services.fund_registry import resolve_fund
+    from src.utils.stock_code import resolve_identity
+
+    code = resolve_identity(code).code
 
     return resolve_fund(code, pipeline.db_path)
+
+
+@router.get("/{code}/profile")
+def stock_profile(code: str, history_days: int = Query(90, ge=1, le=3650), pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
+    """个股研究聚合：行情、最近诊断、决策信号、持仓、盯盘信息（只读本地数据，每块独立给出 status）。"""
+    from src.services.stock_profile import StockProfileService
+
+    return StockProfileService(pipeline).build(code, history_days)
 
 
 @router.get("/{code}/daily")
@@ -144,7 +179,7 @@ def daily(code: str, limit: int | None = Query(None, ge=1, le=5000), pipeline: P
 
 
 @router.post("/{code}/history")
-def ensure_history(code: str, name: str = "", pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
+def ensure_history(code: str, name: str = "", refresh: bool = False, pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
     """本地日线不足时联网补齐，返回新写入的根数。"""
     fund = _fund(code, pipeline)
     if fund:
@@ -155,7 +190,11 @@ def ensure_history(code: str, name: str = "", pipeline: PipelineService = Depend
         except Exception as e:
             logger.warning(f"补齐 ETF/指数日线异常 [{fund['code']}]: {e}")
             return {"added": 0}
-    return {"added": pipeline.ensure_history(bare_code(code), name)}
+    try:
+        return {"added": pipeline.ensure_history(bare_code(code), name, refresh=refresh)}
+    except Exception as error:
+        from src.utils.redaction import redact_text
+        raise HTTPException(status_code=502, detail=redact_text(error, 300)) from error
 
 
 @router.get("/{code}/news")
@@ -182,4 +221,5 @@ def diagnosis_trend(code: str, days: int = Query(180, ge=1, le=730), pipeline: P
 def diagnose(code: str, tasks: TaskManager = Depends(get_tasks), pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
     fund = _fund(code, pipeline)
     code = fund["code"] if fund else bare_code(code)
-    return tasks.submit("diagnosis", pipeline.diagnose_stock, code, True, dedupe_key=f"diagnosis:{code}", label=f"AI 诊断 {fund['name'] if fund else code}")
+    return tasks.submit("diagnosis", pipeline.diagnose_stock, code, True, dedupe_key=f"diagnosis:{code}",
+                        result_error=business_result_error, label=f"AI 诊断 {fund['name'] if fund else code}")

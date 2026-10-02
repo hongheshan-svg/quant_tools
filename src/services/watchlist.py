@@ -50,7 +50,7 @@ def _table_tokens(text: str) -> tuple[list[str], list[str]] | None:
             code = values[code_idx] if code_idx < len(values) else ""
             match = _CODE.search(code)
             if match:
-                codes.append(match.group(1))
+                codes.append(diagnosis_code(match.group(0)))
             elif name_idx is not None and name_idx < len(values) and values[name_idx]:
                 names.append(values[name_idx])
         return list(dict.fromkeys(codes)), list(dict.fromkeys(names))
@@ -63,7 +63,7 @@ def extract_tokens(text: str) -> tuple[list[str], list[str]]:
     table = _table_tokens(text)
     if table:
         return table
-    codes = list(dict.fromkeys(m.group(1) for m in _CODE.finditer(text or "")))
+    codes = list(dict.fromkeys(diagnosis_code(m.group(0)) for m in _CODE.finditer(text or "")))
     stripped = _CODE.sub(" ", text or "")
     names = []
     for token in _SPLIT.split(stripped):
@@ -116,7 +116,7 @@ class WatchlistService:
         with get_db_session(self.db_path) as session:
             for r in rows:
                 if r["kind"] == "stock":
-                    bar = (session.query(StockDaily.trade_date, StockDaily.close, StockDaily.change_pct)
+                    bar = (session.query(StockDaily.trade_date, StockDaily.close, StockDaily.change_pct, StockDaily.source)
                            .filter(StockDaily.code.in_(code_candidates(r["code"])), StockDaily.close > 0)
                            .order_by(StockDaily.trade_date.desc()).first())
                 else:
@@ -125,9 +125,10 @@ class WatchlistService:
                            .order_by(FundDaily.trade_date.desc()).first())
                 r.update({"trade_date": bar[0], "close": bar[1], "change_pct": bar[2]} if bar else
                          {"trade_date": "", "close": None, "change_pct": None})
+                r["quote_source"] = bar[3] if bar and r["kind"] == "stock" else None
         for r in rows:
             latest = (diagnosis if r["kind"] == "stock" else fund_diagnosis).latest(r["code"])
-            r["diagnosis"] = ({k: latest.get(k) for k in ("action", "action_label", "score", "created_at", "one_sentence")}
+            r["diagnosis"] = ({k: latest.get(k) for k in ("diagnosis_id", "action", "action_label", "score", "created_at", "one_sentence")}
                               if latest and not latest.get("error") else None)
         return rows
 

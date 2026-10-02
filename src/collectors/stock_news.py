@@ -110,14 +110,14 @@ def fetch_stock_notices(code: str, limit: int = NOTICE_LIMIT) -> list[NewsItem]:
     return items
 
 
-def get_stock_news(code: str, refresh: bool = False, now: datetime | None = None) -> dict[str, list[dict[str, Any]]]:
+def get_stock_news(code: str, refresh: bool = False, now: datetime | None = None, *, include_status: bool = False) -> dict:
     """近 7 天新闻和近 30 天公告：{"news": [...], "notices": [...]}，按日期倒序。"""
     bare = bare_code(code)
     now = now or datetime.now()
     with _cache_lock:
         cached = _cache.get(bare)
         if cached and not refresh and now - cached[0] < timedelta(minutes=CACHE_MINUTES):
-            return cached[1]
+            return {**cached[1], "states": {"news": "available", "notices": "available"}} if include_status else cached[1]
 
     def recent(items: list[NewsItem] | None, days: int) -> list[dict[str, Any]]:
         since = (now - timedelta(days=days)).strftime("%Y-%m-%d")
@@ -132,6 +132,8 @@ def get_stock_news(code: str, refresh: bool = False, now: datetime | None = None
             _cache[bare] = (now, result)
     else:
         logger.debug(f"个股新闻/公告获取不完整 [{bare}]: {news.errors or ''} {notices.errors or ''}")
+    if include_status:
+        return {**result, "states": {"news": "available" if news.data is not None else "fetch_failed", "notices": "available" if notices.data is not None else "fetch_failed"}}
     return result
 
 

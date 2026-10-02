@@ -82,10 +82,7 @@ class DataQueryService:
         with get_db_session(self.db_path) as session:
             query = session.query(StockDiagnosis)
             if code:
-                raw = code.strip()
-                if raw[-3:-2] == "." and raw[-2:].lower() in ("sh", "sz", "bj"):
-                    raw = raw[:-3]  # 兼容 600519.SH 写法
-                query = query.filter(StockDiagnosis.code == diagnosis_code(raw))
+                query = query.filter(StockDiagnosis.code == diagnosis_code(code))
             if action:
                 query = query.filter(StockDiagnosis.action == (normalize_action(action) or action))
             if days and days > 0:
@@ -118,7 +115,11 @@ class DataQueryService:
             r = session.get(StockDiagnosis, diagnosis_id)
             if r is None:
                 return None
-            detail = self._diagnosis_detail(r)
+            from src.utils.redaction import redact
+            detail = redact(self._diagnosis_detail(r))
+            if detail:
+                from src.services.research_artifact import build_research_artifact
+                detail["structured_report"] = build_research_artifact({"code": r.code, "name": r.name, **detail}, r.id)
             return {
                 "id": r.id,
                 "code": r.code,
@@ -139,7 +140,8 @@ class DataQueryService:
             data = json.loads(text) if text else None
         except ValueError:
             return None
-        return data if isinstance(data, dict) else None
+        from src.utils.redaction import redact
+        return redact(data) if isinstance(data, dict) else None
 
     def diagnosis_trend(self, code: str, days: int = 180) -> list[dict]:
         """某代码近 days 天的诊断评分走势（时间正序），附诊断行情日的收盘价（取不到为 None）。"""
@@ -188,6 +190,15 @@ class DataQueryService:
                 return False
             session.delete(r)
         return True
+
+    def delete_diagnoses(self, ids: list[int] | None = None, code: str | None = None) -> int:
+        """只能按显式 ID 集合或单一标的清理；禁止空条件删除全部历史。"""
+        if bool(ids) == bool(code):
+            raise ValueError("必须且只能指定诊断 ID 列表或股票代码")
+        with get_db_session(self.db_path) as session:
+            query = session.query(StockDiagnosis)
+            query = query.filter(StockDiagnosis.id.in_(set(ids))) if ids else query.filter(StockDiagnosis.code == diagnosis_code(code))
+            return query.delete(synchronize_session=False)
 
     def get_dashboard_snapshot(self, for_date: str | None = None) -> dict:
         """首页（交易决策）所需的数据快照；资讯流单独由 get_unified_news() 提供。"""
@@ -946,6 +957,9 @@ class DataQueryService:
                         "total_mv": r.total_mv,
                         "circ_mv": r.circ_mv,
                         "_priority": self._code_match_priority(r.code, bare_code),
+                        "source": r.source,
+                        "price_adjustment": r.price_adjustment,
+                        "updated_at": r.updated_at.isoformat(timespec="seconds") if r.updated_at else None,
                     }
                     existing = by_date.get(r.trade_date)
                     if (existing is None) or (row["_priority"] > existing["_priority"]):

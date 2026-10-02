@@ -47,7 +47,7 @@ describe('SettingsPage image push', () => {
     const calls: Call[] = []
     stubSettings(calls)
     render(<MemoryRouter initialEntries={['/settings']}><AppRoutes authEnabled={false} /></MemoryRouter>)
-    fireEvent.click(screen.getByRole('tab', { name: '推送' }))
+    fireEvent.click(await screen.findByRole('tab', { name: '推送' }))
     const block = await screen.findByRole('group', { name: /图片推送/ })
     // 只有支持图片的渠道可选（钉钉、飞书不在其中）
     expect(within(block).queryByRole('checkbox', { name: /钉钉/ })).toBeNull()

@@ -85,7 +85,7 @@ class StockDaily(Base):
     close = Column(Float, comment="收盘价")
     high = Column(Float, comment="最高价")
     low = Column(Float, comment="最低价")
-    volume = Column(Float, comment="成交量（手）")
+    volume = Column(Float, comment="成交量（股）")
     amount = Column(Float, comment="成交额（元）")
     change_pct = Column(Float, comment="涨跌幅 %")
     turnover = Column(Float, comment="换手率 %")
@@ -93,6 +93,9 @@ class StockDaily(Base):
     circ_mv = Column(Float, comment="流通市值（元）")
     pe = Column(Float, comment="市盈率（动态，腾讯/东方财富口径，亏损为负）")
     pb = Column(Float, comment="市净率")
+    source = Column(String(60), comment="行情或回补的实际来源；历史记录未知时为空")
+    price_adjustment = Column(String(30), comment="前复权/不复权/供应商指定口径")
+    price_revision = Column(String(64), comment="历史价格下载或修订批次")
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, comment="最后更新时间")
 
@@ -180,6 +183,7 @@ class StrategyPick(Base):
     close = Column(Float, comment="选股日收盘价")
     change_pct = Column(Float, comment="选股日涨跌幅 %")
     fits_regime = Column(Boolean, default=True, comment="策略是否适配当时的大盘环境")
+    metadata_json = Column(Text, comment="筛选、因子、风险、上下文和模型排序的完整证据")
     created_at = Column(DateTime, default=datetime.now)
 
     __table_args__ = (
@@ -229,10 +233,43 @@ class AlertRecord(Base):
     notified = Column(Boolean, default=False, comment="是否已推送")
     suppressed_reason = Column(String(20), comment="未推送原因：冷却中/免打扰时段/未启用推送")
     triggered_at = Column(DateTime, default=datetime.now)
+    event_key = Column(String(200))
+    rule_id = Column(String(80))
+    channel_results_json = Column(Text, comment="逐渠道通知结果，脱敏 JSON")
 
     __table_args__ = (
         Index("idx_alert_record_time", "triggered_at"),
     )
+
+
+class AlertCooldown(Base):
+    __tablename__ = "alert_cooldown"
+    key = Column(String(200), primary_key=True)
+    last_triggered_at = Column(DateTime, nullable=False)
+
+
+class AlertRule(Base):
+    __tablename__ = "alert_rule"
+    id = Column(String(80), primary_key=True)
+    rule_json = Column(Text, nullable=False)
+    enabled = Column(Boolean, default=True)
+    updated_at = Column(DateTime, default=datetime.now)
+
+
+class ResearchCache(Base):
+    __tablename__ = "research_cache"
+    key = Column(String(100), primary_key=True)
+    payload_json = Column(Text, nullable=False)
+    updated_at = Column(DateTime, default=datetime.now)
+
+
+class ScreeningRun(Base):
+    __tablename__ = "screening_run"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    trade_date = Column(String(10))
+    status = Column(String(20), nullable=False)
+    result_json = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.now)
 
 
 class RealAccount(Base):
@@ -900,5 +937,105 @@ class SkillOpinion(Base):
     hit = Column(Boolean, comment="看多涨/看空跌为命中；中性为空")
     evaluated_at = Column(DateTime)
     created_at = Column(DateTime, default=datetime.now)
+    sample_key = Column(String(64), comment="输入与策略版本确定的不可变样本指纹")
+    skill_version = Column(String(64), comment="策略指令摘要，区分规则变更")
 
     __table_args__ = (Index("idx_skill_opinion_skill_created", "skill", "created_at"),)
+
+
+class IntelligenceSource(Base):
+    """独立资讯源及最近拉取状态；原有 YAML 源作为可同步的配置来源。"""
+    __tablename__ = "intelligence_source"
+    id = Column(Integer, primary_key=True)
+    url = Column(String(1000), nullable=False, unique=True)
+    name = Column(String(100), nullable=False)
+    enabled = Column(Boolean, default=True)
+    managed_by_config = Column(Boolean, default=False)
+    symbol = Column(String(12))
+    market = Column(String(8), default="CN")
+    sector = Column(String(100))
+    last_fetched_at = Column(DateTime)
+    last_error = Column(Text)
+    created_at = Column(DateTime, default=datetime.now)
+
+
+class TaskRun(Base):
+    """公开后台任务状态；重启后可读已完成结果，未完成任务明确标记中断。"""
+    __tablename__ = "task_run"
+    id = Column(String(32), primary_key=True)
+    payload_json = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.now)
+
+
+class SourceAttemptRecord(Base):
+    """数据源近期健康历史，跨隔离进程及重启可见。"""
+    __tablename__ = "source_attempt"
+    id = Column(Integer, primary_key=True)
+    dataset = Column(String(100), nullable=False)
+    source = Column(String(100), nullable=False)
+    success = Column(Boolean, nullable=False)
+    elapsed = Column(Float)
+    error = Column(String(300))
+    trace_id = Column(String(40))
+    created_at = Column(DateTime, default=datetime.now, index=True)
+
+
+class FinancialSnapshot(Base):
+    """不可覆盖的已取得财务快照；历史筛选只使用当时已取得的记录。"""
+    __tablename__ = "financial_snapshot"
+    id = Column(Integer, primary_key=True)
+    code = Column(String(12), nullable=False, index=True)
+    payload_json = Column(Text, nullable=False)
+    collected_at = Column(DateTime, default=datetime.now, index=True)
+    fingerprint = Column(String(64), nullable=False, unique=True)
+
+
+class PriceRevision(Base):
+    """旧价格留档，新价格修订不会抹掉观察结果的输入证据。"""
+    __tablename__ = "price_revision"
+    id = Column(Integer, primary_key=True)
+    code = Column(String(12), nullable=False, index=True)
+    trade_date = Column(String(10), nullable=False)
+    previous_json = Column(Text, nullable=False)
+    revision = Column(String(64), nullable=False)
+    created_at = Column(DateTime, default=datetime.now)
+
+
+class ResearchOutcome(Base):
+    """不同观察窗口和引擎版本的独立结果；已评估结果不覆盖。"""
+    __tablename__ = "research_outcome"
+    id = Column(Integer, primary_key=True)
+    owner_type = Column(String(20), nullable=False)
+    owner_id = Column(Integer, nullable=False)
+    horizon = Column(Integer, nullable=False)
+    engine_version = Column(String(40), nullable=False)
+    status = Column(String(15), nullable=False, default="pending")
+    reason = Column(String(100))
+    base_date = Column(String(10))
+    end_date = Column(String(10))
+    base_price = Column(Float)
+    end_price = Column(Float)
+    return_pct = Column(Float)
+    hit = Column(Boolean)
+    neutral_band_pct = Column(Float)
+    data_quality_json = Column(Text)
+    evaluated_at = Column(DateTime, default=datetime.now)
+    __table_args__ = (Index("idx_research_outcome_identity", "owner_type", "owner_id", "horizon", "engine_version", unique=True),)
+
+
+class IntelligenceItem(Base):
+    """资讯事实记录及股票/市场/行业范围；不和舆情分析结果混用。"""
+    __tablename__ = "intelligence_item"
+    id = Column(Integer, primary_key=True)
+    fingerprint = Column(String(64), nullable=False, unique=True)
+    source_id = Column(Integer)
+    source = Column(String(100))
+    title = Column(String(500), nullable=False)
+    summary = Column(Text)
+    url = Column(String(1000))
+    symbol = Column(String(12))
+    market = Column(String(8), default="CN")
+    sector = Column(String(100))
+    published_at = Column(DateTime)
+    collected_at = Column(DateTime, default=datetime.now)
+    __table_args__ = (Index("idx_intelligence_scope", "symbol", "market", "sector"),)

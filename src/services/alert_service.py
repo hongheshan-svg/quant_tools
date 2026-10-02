@@ -21,6 +21,8 @@
 from __future__ import annotations
 
 import threading
+import hashlib
+import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -34,7 +36,7 @@ from src.database.db import get_db_session
 from src.analyzers.indicators import crossed, kdj, macd, rsi, sma
 from src.database.models import AlertRecord, StockDaily, TradeSignal
 from src.notifier import broadcast, enabled_channels
-from src.notifier.noise import SEVERITY_RANK, NoiseFilter
+from src.notifier.noise import SEVERITY_RANK, NoiseFilter, in_quiet_hours
 from src.utils.stock_code import bare_code, code_candidates, daily_limit_pct
 
 LIMIT_TOLERANCE = 0.2       # 涨幅距涨停幅度 0.2 个百分点以内视为封板
@@ -95,10 +97,11 @@ VALID_SEVERITIES = ("info", "warning", "critical")
 
 def normalize_code(raw: Any) -> str:
     """股票代码规范为 6 位（去掉 sh/sz/bj 前缀和 .SH 后缀）；无法识别时原样返回小写。"""
-    code = str(raw or "").strip().lower()
-    if code[-3:] in (".sh", ".sz", ".bj"):
-        code = code[:-3]
-    return bare_code(code)
+    from src.utils.stock_code import resolve_identity
+    identity = resolve_identity(raw)
+    if identity.kind != "stock":
+        raise ValueError("盘中提醒仅支持 A 股个股")
+    return identity.code
 
 
 def validate_rule(rule: dict) -> dict:
@@ -146,7 +149,10 @@ def validate_rule(rule: dict) -> dict:
     if rule.get("severity") in VALID_SEVERITIES:   # 沿用配置文件里手写的级别
         out["severity"] = rule["severity"]
     if rule.get("id") not in (None, ""):
-        out["id"] = rule["id"]
+        out["id"] = str(rule["id"])
+    else:
+        identity = {k: v for k, v in out.items() if k not in {"enabled", "note", "severity"}}
+        out["id"] = hashlib.sha256(json.dumps(identity, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:24]
     return out
 
 
@@ -180,7 +186,14 @@ class AlertService:
         self.enabled = bool(cfg.get("enabled", True))
         self.big_drop_pct = float(cfg.get("big_drop_pct", -7))
         self.extra_watchlist = [bare_code(str(c)) for c in cfg.get("watchlist") or []]
-        self.rules = [r for r in cfg.get("rules") or [] if isinstance(r, dict) and r.get("code") and r.get("enabled", True) is not False]
+        self.rules = []
+        for raw in cfg.get("rules") or []:
+            try:
+                rule = validate_rule(raw)
+                if rule["enabled"]:
+                    self.rules.append(rule)
+            except (ValueError, TypeError):
+                logger.warning("忽略无效告警规则")
         self.near_stop_pct = float(cfg.get("near_stop_pct", 2))
         self.market_alerts = bool(cfg.get("market_regime", True))
         self.regime_score_drop = float(cfg.get("regime_score_drop", 15))
@@ -196,11 +209,12 @@ class AlertService:
             return {"alerts": 0, "skipped": "未启用"}
         if not trading_calendar.in_trade_session(now):
             return {"alerts": 0, "skipped": "非交易时段"}
+        self._sync_rules()
         can_push = bool(enabled_channels(self.config, "alert"))
         fresh, to_push = [], []
         for ev in self.evaluate():
             cooldown = timedelta(days=1) if ev.alert_type in DAILY_ONCE_TYPES else None
-            reason = _noise.check(ev.key, ev.severity, now, cooldown)
+            reason = self._claim_event(ev, now, cooldown or _noise.cooldown)
             if reason == "冷却中":
                 continue
             if not reason and SEVERITY_RANK.get(ev.severity, 0) < SEVERITY_RANK[self.min_severity]:
@@ -210,13 +224,14 @@ class AlertService:
             fresh.append((ev, reason))
             if not reason:
                 to_push.append(ev)
+        results = {}
         if to_push:
             lines = [f"- {SEVERITY_ICON.get(ev.severity, '')} {ev.message}" for ev in to_push]
             results = broadcast(self.config, f"盘中提醒 {now:%H:%M}", "\n".join(lines), kind="alert")
             pushed = any(results.values())
         else:
             pushed = False
-        self._save(fresh, pushed, now)
+        self._save(fresh, pushed, now, results)
         for ev, reason in fresh:
             logger.info(f"盘中提醒: {ev.message}" + (f"（未推送：{reason}）" if reason else ""))
         return {"alerts": len(fresh), "pushed": len(to_push) if pushed else 0}
@@ -336,7 +351,7 @@ class AlertService:
             q = quotes.get(code)
             if not q:
                 continue
-            name, kind, rule_id = watch.get(code) or q["name"], rule.get("type"), str(rule.get("id", idx))
+            name, kind, rule_id = watch.get(code) or q["name"], rule.get("type"), rule["id"]
             outcome = self._check_rule(rule, code, name, q)
             if outcome and outcome[0]:
                 _, text, observed, threshold = outcome
@@ -492,7 +507,46 @@ class AlertService:
         avg = sum(history) / len(history) if history else 0
         return volume / avg if avg else None
 
-    def _save(self, fresh: list[tuple[AlertEvent, str]], pushed: bool, now: datetime) -> None:
+    def _claim_event(self, ev: AlertEvent, now: datetime, cooldown: timedelta) -> str:
+        """SQLite 条件 upsert 原子领取冷却键，重启及多进程不会重复推送。"""
+        from sqlalchemy.dialects.sqlite import insert
+        from src.database.models import AlertCooldown
+        key = f"{now:%Y-%m-%d}|{ev.code}|{ev.alert_type}|{ev.rule_id}"
+        statement = insert(AlertCooldown).values(key=key, last_triggered_at=now)
+        statement = statement.on_conflict_do_update(index_elements=[AlertCooldown.key],
+            set_={"last_triggered_at": now}, where=AlertCooldown.last_triggered_at <= now - cooldown)
+        with get_db_session(self.db_path) as session:
+            claimed = session.execute(statement).rowcount
+        if not claimed:
+            return "冷却中"
+        if ev.severity != "critical" and in_quiet_hours(now, _noise.quiet_hours):
+            return "免打扰时段"
+        return ""
+
+    def _sync_rules(self) -> None:
+        from src.database.models import AlertRule
+        with get_db_session(self.db_path) as session:
+            current = set()
+            for raw in (self.config.get("alerts") or {}).get("rules") or []:
+                try:
+                    rule = validate_rule(raw)
+                except (ValueError, TypeError) as error:
+                    from src.utils.redaction import redact_text
+                    logger.warning("忽略无效告警规则: {}", redact_text(error, 200))
+                    continue
+                payload = json.dumps(rule, ensure_ascii=False, sort_keys=True)
+                rule_id = str(rule.get("id") or hashlib.sha256(payload.encode()).hexdigest()[:24])
+                current.add(rule_id)
+                row = session.get(AlertRule, rule_id)
+                if row is None:
+                    row = AlertRule(id=rule_id)
+                    session.add(row)
+                row.rule_json, row.enabled, row.updated_at = payload, rule["enabled"], datetime.now()
+            for row in session.query(AlertRule):
+                if row.id not in current:
+                    row.enabled = False
+
+    def _save(self, fresh: list[tuple[AlertEvent, str]], pushed: bool, now: datetime, channel_results: dict | None = None) -> None:
         if not fresh:
             return
         with get_db_session(self.db_path) as session:
@@ -501,6 +555,8 @@ class AlertService:
                     code=ev.code, name=ev.name, alert_type=ev.alert_type, severity=ev.severity, message=ev.message,
                     observed=ev.observed, threshold=ev.threshold, notified=pushed and not reason,
                     suppressed_reason=reason or ("" if pushed else "推送失败"), triggered_at=now,
+                    event_key=f"{now:%Y-%m-%d}|{ev.code}|{ev.alert_type}|{ev.rule_id}", rule_id=ev.rule_id,
+                    channel_results_json=json.dumps(channel_results if not reason else {}, ensure_ascii=False),
                 ))
 
     def digest(self, day: str | None = None, push: bool = True) -> dict[str, Any]:
@@ -549,12 +605,20 @@ class AlertService:
             result["pushed"] = any(results.values())
         return result
 
-    def recent(self, limit: int = 200) -> list[dict[str, Any]]:
+    def recent(self, limit: int = 200, *, offset: int = 0, severity: str = "", code: str = "", channel: str = "") -> list[dict[str, Any]]:
         with get_db_session(self.db_path) as session:
-            rows = session.query(AlertRecord).order_by(AlertRecord.triggered_at.desc()).limit(limit).all()
+            query = session.query(AlertRecord)
+            if severity:
+                query = query.filter(AlertRecord.severity == severity)
+            if code:
+                query = query.filter(AlertRecord.code == bare_code(code))
+            if channel:
+                query = query.filter(AlertRecord.channel_results_json.contains('"' + channel + '"'))
+            rows = query.order_by(AlertRecord.triggered_at.desc(), AlertRecord.id.desc()).offset(offset).limit(limit).all()
             return [
-                {"time": r.triggered_at.strftime("%m-%d %H:%M"), "code": r.code, "name": r.name,
+                {"id": r.id, "time": r.triggered_at.strftime("%Y-%m-%d %H:%M"), "code": r.code, "name": r.name,
                  "type": TYPE_LABELS.get(r.alert_type, r.alert_type), "severity": r.severity, "message": r.message,
+                 "event_key": r.event_key, "rule_id": r.rule_id, "channels": json.loads(r.channel_results_json or "{}"),
                  "notified": r.notified, "reason": r.suppressed_reason or ""}
                 for r in rows
             ]

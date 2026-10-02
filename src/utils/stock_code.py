@@ -8,28 +8,70 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from dataclasses import dataclass
 
 EXCHANGE_PREFIXES = ("sh", "sz", "bj")
 CODE_LENGTH = 6
 PREFIXED_CODE_LENGTH = 8
+_CODE = re.compile(r"^(?:(sh|sz|bj)[.\-]?)?(\d{6})(?:\.(sh|sz|bj))?$", re.I)
+
+
+class StockCodeError(ValueError):
+    """标的代码无效或显式交易所与代码不一致。"""
+
+
+@dataclass(frozen=True)
+class StockIdentity:
+    code: str
+    exchange: str
+    kind: str = "stock"
+    market: str = "CN"
+    currency: str = "CNY"
+
+
+def _inferred_exchange(digits: str) -> str:
+    if digits.startswith(("92", "4", "8")):
+        return "bj"
+    return "sh" if digits.startswith(("6", "9", "5")) else "sz"
+
+
+def resolve_identity(code: str | None) -> StockIdentity:
+    """单一 A 股/ETF/指数身份入口；显式指数优先，裸数字不会被猜成指数。"""
+    raw = unicodedata.normalize("NFKC", str(code or "")).strip().lower()
+    from src.services.fund_registry import ETF_PREFIXES, INDEX_CODES, _INDEX_BY_NAME
+
+    index = INDEX_CODES.get(raw) or _INDEX_BY_NAME.get(raw)
+    if index:
+        return StockIdentity(index["code"], index["code"][:2], "index")
+    match = _CODE.fullmatch(raw)
+    if not match:
+        raise StockCodeError("股票代码应为 6 位数字，可带 sh/sz/bj 前缀或 .SH/.SZ/.BJ 后缀")
+    prefix, digits, suffix = match.groups()
+    if prefix and suffix and prefix != suffix:
+        raise StockCodeError("股票代码的交易所前后缀冲突")
+    explicit = prefix or suffix
+    index = INDEX_CODES.get(f"{explicit}{digits}") if explicit else None
+    if index:
+        return StockIdentity(index["code"], explicit, "index")
+    expected = _inferred_exchange(digits)
+    if explicit and explicit != expected:
+        raise StockCodeError(f"交易所与股票代码冲突：{digits} 应使用 {expected.upper()}")
+    return StockIdentity(digits, expected, "etf" if digits.startswith(ETF_PREFIXES) else "stock")
 
 
 def bare_code(code: str | None) -> str:
     """去掉 sh/sz/bj 前缀，返回 6 位代码（无法识别时原样返回小写去空格的输入）。"""
-    raw = (code or "").strip().lower()
-    if len(raw) == PREFIXED_CODE_LENGTH and raw[:2] in EXCHANGE_PREFIXES and raw[2:].isdigit():
-        return raw[2:]
+    raw = unicodedata.normalize("NFKC", str(code or "")).strip().lower()
+    if _CODE.fullmatch(raw):
+        identity = resolve_identity(raw)
+        return identity.code[2:] if identity.kind == "index" else identity.code
     return raw
 
 
 def exchange_of(code: str | None) -> str:
     """按代码段判断交易所：92/4/8 开头为北交所，6/9/5 开头为上交所，其余为深交所。"""
     bare = bare_code(code)
-    if bare.startswith("92") or bare.startswith(("4", "8")):
-        return "bj"
-    if bare.startswith(("6", "9", "5")):
-        return "sh"
-    return "sz"
+    return _inferred_exchange(bare)
 
 
 def prefixed_code(code: str | None) -> str:
@@ -43,11 +85,14 @@ def code_candidates(code: str | None) -> list[str]:
     raw = (code or "").strip().lower()
     if not raw:
         return []
-    bare = bare_code(raw)
-    cands = [raw]
-    if len(bare) == CODE_LENGTH and bare.isdigit():
-        cands.extend([bare, *(f"{p}{bare}" for p in EXCHANGE_PREFIXES)])
-    return list(dict.fromkeys(cands))
+    if not _CODE.fullmatch(raw):
+        return [raw]
+    identity = resolve_identity(raw)
+    if identity.kind == "index":
+        digits = identity.code[2:]
+        return list(dict.fromkeys([identity.code, f"{digits}.{identity.exchange}", raw]))
+    return list(dict.fromkeys([identity.code, f"{identity.exchange}{identity.code}",
+                               f"{identity.code}.{identity.exchange}", raw]))
 
 
 def board_of(code: str | None) -> str:
@@ -78,13 +123,7 @@ def diagnosis_code(code: str | None) -> str:
 
     指数与个股的 6 位代码会冲突（000001 上证指数 vs 平安银行），指数代码绝不能调用 bare_code。
     """
-    raw = (code or "").strip().lower()
-    if len(raw) == PREFIXED_CODE_LENGTH and raw[:2] in EXCHANGE_PREFIXES and raw[2:].isdigit():
-        from src.services.fund_registry import INDEX_CODES
-
-        if raw in INDEX_CODES:
-            return raw
-    return bare_code(raw)
+    return resolve_identity(code).code
 
 
 def normalize_name(name: str | None) -> str:

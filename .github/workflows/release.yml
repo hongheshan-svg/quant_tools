@@ -37,8 +37,10 @@ jobs:
         include:
           - os: windows-latest
             label: Windows
-          - os: macos-latest
-            label: macOS
+          - os: macos-15-intel
+            label: macOS-x64
+          - os: macos-15
+            label: macOS-arm64
           - os: ubuntu-22.04
             label: Linux
     runs-on: ${{ matrix.os }}
@@ -85,6 +87,7 @@ jobs:
           path: |
             apps/desktop/dist/*.exe
             apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.zip
             apps/desktop/dist/*.AppImage
             apps/desktop/dist/latest*.yml
             apps/desktop/dist/*.blockmap
@@ -217,9 +220,14 @@ jobs:
       - name: Download packages
         uses: actions/download-artifact@v8
         with:
-          path: assets
+          path: downloaded-packages
           pattern: desktop-*
-          merge-multiple: true
+          merge-multiple: false
+
+      - name: Merge architecture packages and update metadata
+        run: |
+          python3 -m pip install PyYAML
+          python3 scripts/merge_release_assets.py downloaded-packages assets
 
       - name: Write release notes
         run: python3 scripts/release_notes.py "$GITHUB_REF_NAME" -o release-notes.md

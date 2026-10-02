@@ -23,11 +23,11 @@ function readDismissed(): boolean {
 }
 
 /** 配置未完成提示条：必需项未完成时始终显示，仅可选项未完成时可「暂不提示」 */
-function SetupBanner() {
+export function SetupBanner() {
   const t = useT()
   const { data } = useApi(api.setupStatus)
   const [dismissed, setDismissed] = useState(readDismissed)
-  if (!data || data.done >= data.total) return null
+  if (!data || !Number.isFinite(data.total) || data.done >= data.total) return null
   if (dismissed && data.required_missing === 0) return null
   const missing = data.total - data.done
   return (

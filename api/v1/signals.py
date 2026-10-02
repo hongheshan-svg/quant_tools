@@ -59,6 +59,14 @@ def get_signal(signal_id: int, config: dict[str, Any] = Depends(get_config)):
     return item
 
 
+@router.get("/{signal_id}/outcomes")
+def signal_outcomes(signal_id: int, config: dict = Depends(get_config)):
+    if not DecisionSignalService(config).get(signal_id):
+        raise not_found("决策信号不存在")
+    from src.services.outcome_engine import OutcomeEngine
+    return OutcomeEngine(config).list("signal", signal_id)
+
+
 class StatusBody(BaseModel):
     status: str
     reason: str = ""

@@ -145,6 +145,12 @@ def parse_feed(text: str) -> tuple[str, list[dict]]:
 def _enabled_sources(config: dict) -> list[dict]:
     """intelligence.sources 中启用且有效的源"""
     cfg = (config or {}).get("intelligence") or {}
+    if (config.get("database") or {}).get("sqlite_path"):
+        from src.services.intelligence import IntelligenceService
+        try:
+            return [s for s in IntelligenceService(config).sources() if s["enabled"]]
+        except Exception as error:
+            logger.warning(f"读取持久化资讯源失败，使用配置源: {error}")
     result = []
     for src in cfg.get("sources") or []:
         if not isinstance(src, dict) or src.get("enabled", True) is False:
@@ -216,6 +222,9 @@ class RSSCollector(BaseCollector):
             except Exception as e:  # 单个源失败不影响其他源
                 logger.warning(f"[rss] 源 {src['name']} 采集失败: {e}")
                 source_health.record(DATASET, src["name"], False, str(e)[:200], time.monotonic() - started)
+                if src.get("id"):
+                    from src.services.intelligence import IntelligenceService
+                    IntelligenceService(self.config).record_fetch(src["id"], e)
                 continue
             source_health.record(DATASET, src["name"], True, elapsed=time.monotonic() - started)
             for entry in entries[:limit]:
@@ -225,7 +234,13 @@ class RSSCollector(BaseCollector):
                     "news_time": entry["published"],
                     "url": entry["url"],
                     "category": src["name"],
+                    "source": src["name"],
                 })
+            if src.get("id"):
+                from src.services.intelligence import IntelligenceService
+                service = IntelligenceService(self.config)
+                service.ingest([{**e, "source": src["name"]} for e in entries[:limit]], src)
+                service.record_fetch(src["id"])
         return results
 
 
@@ -262,6 +277,8 @@ def save_items(items: list[dict], db_path: str, keep_days: int = 7) -> int:
                 url=url[:1000] or None,
             ))
             added += 1
+    from src.services.intelligence import IntelligenceService
+    IntelligenceService({"database": {"sqlite_path": db_path}}).ingest(items)
     return added
 
 

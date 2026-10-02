@@ -176,6 +176,8 @@ def main():
         echo=db_cfg.get("echo", False),
     )
     logger.info("数据库初始化完成")
+    from src.collectors.source_chain import source_health
+    source_health.configure(db_cfg.get("sqlite_path", "data/quant.db"))
 
     # 4. 执行一次，或启动调度器
     if args.stocks:
@@ -206,4 +208,6 @@ def main():
 
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
     main()

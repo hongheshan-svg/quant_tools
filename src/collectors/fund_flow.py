@@ -103,7 +103,7 @@ def collect_fund_flow(trade_date: str, db_path: str, force: bool = False) -> int
             return 0
         fetched = fetch_with_fallback("个股资金流", [("同花顺", fetch_ths_fund_flow), ("东方财富", fetch_em_fund_flow)])
         if not fetched.ok:
-            return 0
+            raise RuntimeError("个股资金流采集失败：" + str(fetched.errors))
         rows = {r["code"]: r for r in fetched.data}.values()
         with get_db_session(db_path) as session:
             session.query(StockFundFlow).filter(StockFundFlow.trade_date == trade_date).delete()

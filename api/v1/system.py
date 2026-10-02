@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import copy
+import json
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
-from api.auth import COOKIE_NAME, AuthStore
+from api.auth import COOKIE_NAME, AuthStore, AuthRateLimited
 from api.deps import bad_request, get_auth, get_config, get_pipeline, get_tasks, not_found
 from api.tasks import TaskManager
 from src.services.pipeline_service import PipelineService
@@ -44,13 +45,20 @@ def auth_status(request: Request, auth: AuthStore = Depends(get_auth), config: d
 
 
 @router.post("/auth/login")
-def login(body: PasswordBody, response: Response, auth: AuthStore = Depends(get_auth), config: dict = Depends(get_config)) -> dict[str, Any]:
-    if not auth.has_password():
-        if len(body.password) < 6:
-            raise bad_request("首次登录请设置至少 6 位的密码")
-        auth.set_password(body.password)
-    elif not auth.verify_password(body.password):
-        raise bad_request("密码错误")
+def login(body: PasswordBody, request: Request, response: Response, auth: AuthStore = Depends(get_auth), config: dict = Depends(get_config)) -> dict[str, Any]:
+    host = request.client.host if request.client else "unknown"
+    try:
+        with auth.attempt(host):
+            if not auth.has_password():
+                if len(body.password) < 6:
+                    raise bad_request("首次登录请设置至少 6 位的密码")
+                auth.set_password(body.password)
+            elif not auth.verify_password(body.password):
+                auth.failed_attempt(host)
+                raise bad_request("密码错误")
+            auth.clear_attempts(host)
+    except AuthRateLimited as e:
+        raise HTTPException(429, "登录失败次数过多，请稍后再试", headers={"Retry-After": str(e.retry_after)}) from e
     days = float((config.get("web") or {}).get("session_days", 7))
     response.set_cookie(COOKIE_NAME, auth.issue_session(days), max_age=int(days * 86400), httponly=True, samesite="lax")
     return {"ok": True}
@@ -68,9 +76,8 @@ class ChangePasswordBody(BaseModel):
 
 
 @router.post("/settings/password")
-def change_password(body: ChangePasswordBody, auth: AuthStore = Depends(get_auth)) -> dict[str, Any]:
-    if auth.has_password() and not auth.verify_password(body.current_password):
-        raise bad_request("当前密码错误")
+def change_password(body: ChangePasswordBody, request: Request, auth: AuthStore = Depends(get_auth)) -> dict[str, Any]:
+    _verify_setting_password(auth, body.current_password, request)
     if len(body.new_password) < 6:
         raise bad_request("新密码至少 6 位")
     auth.set_password(body.new_password)
@@ -82,12 +89,28 @@ class WebAuthBody(BaseModel):
     password: str = ""
 
 
+def _verify_setting_password(auth: AuthStore, password: str, request: Request) -> None:
+    if not auth.has_password():
+        return
+    host = request.client.host if request.client else "unknown"
+    try:
+        with auth.attempt(host):
+            if not auth.verify_password(password):
+                auth.failed_attempt(host)
+                raise bad_request("当前密码错误")
+            auth.clear_attempts(host)
+    except AuthRateLimited as error:
+        raise HTTPException(429, "密码验证失败次数过多，请稍后再试", headers={"Retry-After": str(error.retry_after)}) from error
+
+
 @router.put("/settings/web-auth")
 def set_web_auth(body: WebAuthBody, request: Request, response: Response, auth: AuthStore = Depends(get_auth)) -> dict[str, Any]:
     """开关 Web 登录；开启时如果还没有密码，必须同时设置（至少 6 位），并直接登录当前浏览器。"""
     from api.app import apply_config
     from src.config_loader import reload_config
     from src.settings_store import save_section
+
+    _verify_setting_password(auth, body.password, request)
 
     if body.auth_enabled and not auth.has_password():
         if len(body.password) < 6:
@@ -115,6 +138,19 @@ def get_task(task_id: str, tasks: TaskManager = Depends(get_tasks)) -> dict[str,
     if task is None:
         raise not_found("任务不存在或已过期")
     return task
+
+
+@router.get("/tasks/{task_id}/events")
+def task_events(task_id: str, after_revision: int = 0, tasks: TaskManager = Depends(get_tasks)):
+    if tasks.get(task_id) is None:
+        raise not_found("任务不存在或已过期")
+    def generate():
+        for task in tasks.events(task_id, after_revision):
+            if task is None:
+                yield ": heartbeat\n\n"
+            else:
+                yield f"id: {task['revision']}\ndata: {json.dumps(task, ensure_ascii=False)}\n\n"
+    return StreamingResponse(generate(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 # ---------- 定时任务面板 ----------
@@ -176,6 +212,122 @@ def data_capabilities(config: dict = Depends(get_config)) -> list[dict[str, Any]
     from src.services.data_capabilities import capabilities
 
     return capabilities(config)
+
+
+class DataSourceSettingsBody(BaseModel):
+    data_sources: dict[str, Any]
+
+
+class ScreeningSettingsBody(BaseModel):
+    screening: dict[str, Any]
+    profiles: list[dict[str, Any]] | None = None
+
+
+@router.get("/settings/screening")
+def screening_settings(config: dict = Depends(get_config)) -> dict:
+    from src.strategy.screening_pipeline import load_profiles
+    cfg = config.get("screening") or {}
+    return {"screening": cfg, "profiles": load_profiles(cfg.get("profiles_file", "config/scoring_profiles.yaml"), include_disabled=True)}
+
+
+@router.put("/settings/screening")
+def save_screening_settings(body: ScreeningSettingsBody, request: Request, config: dict = Depends(get_config)) -> dict:
+    import tempfile
+    from pathlib import Path
+    import yaml
+    from src.services.config_check import check_config
+    from src.settings_store import save_section
+    from src.strategy.screening_pipeline import load_profiles
+    cfg = {**(config.get("screening") or {}), **body.screening}
+    proposed = {**config, "screening": cfg}
+    issues = check_config(proposed).get("issues", [])
+    errors = [issue for issue in issues if issue.get("level") == "error" and str(issue.get("path", "")).startswith("screening")]
+    if errors:
+        raise bad_request("；".join(str(issue.get("message", "设置无效")) for issue in errors))
+    if body.profiles is not None:
+        text = yaml.safe_dump({"profiles": body.profiles}, allow_unicode=True, sort_keys=False)
+        with tempfile.TemporaryDirectory(prefix="quant-profile-validation-") as folder:
+            candidate = Path(folder) / "profiles.yaml"
+            candidate.write_text(text, encoding="utf-8")
+            try:
+                profiles = load_profiles(str(candidate), include_disabled=True)
+                from src.strategy.screener import STRATEGIES
+                from src.strategy.screening_rules import load_rules
+                reserved = {s.name for s in STRATEGIES} | {r["name"] for r in load_rules(cfg.get("rules_file", "config/screening_rules.yaml"))}
+                if reserved & {p["name"] for p in profiles}:
+                    raise ValueError("评分策略不能覆盖已有策略标识")
+            except (ValueError, TypeError, yaml.YAMLError) as error:
+                raise bad_request(str(error)) from error
+        target = Path(cfg.get("profiles_file", "config/scoring_profiles.yaml")).resolve()
+        if not target.is_relative_to(Path("config").resolve()):
+            raise bad_request("界面只能修改 config 目录内的评分策略")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent, suffix=".tmp", delete=False) as handle:
+            handle.write(text)
+            temporary = Path(handle.name)
+        try:
+            temporary.replace(target)
+        finally:
+            temporary.unlink(missing_ok=True)
+    save_section("screening", cfg)
+    from api.app import apply_config
+    apply_config(request.app, proposed)
+    return screening_settings(proposed)
+
+
+@router.get("/settings/data-sources")
+def get_data_source_settings(config: dict = Depends(get_config)) -> dict:
+    from src.services.data_source_settings import DEFAULTS, DAILY_NAMES, REALTIME_NAMES, source_order
+    value = copy.deepcopy({**DEFAULTS, **(config.get("data_sources") or {})})
+    for dataset in ("realtime", "daily_history"):
+        value[dataset] = source_order(config, dataset)
+    for key in ("tushare_token", "tickflow_api_key"):
+        value[key] = MASK if value.get(key) else ""
+    return {"data_sources": value, "realtime_options": REALTIME_NAMES, "daily_options": DAILY_NAMES}
+
+
+@router.put("/settings/data-sources")
+def save_data_source_settings(body: DataSourceSettingsBody, request: Request, config: dict = Depends(get_config)) -> dict:
+    from src.services.data_source_settings import DEFAULTS, validate_settings
+    from src.settings_store import save_section
+    from src.config_loader import reload_config
+    from api.app import apply_config
+    incoming = body.data_sources
+    if any(k not in DEFAULTS for k in incoming):
+        raise bad_request("含未知的数据源配置项")
+    value = {**(config.get("data_sources") or {}), **incoming}
+    for key in ("tushare_token", "tickflow_api_key"):
+        if value.get(key) == MASK:
+            value[key] = (config.get("data_sources") or {}).get(key, "")
+    try:
+        value = validate_settings(value)
+    except (ValueError, TypeError) as error:
+        raise bad_request(str(error)) from error
+    save_section("data_sources", value)
+    new_config = reload_config()
+    apply_config(request.app, new_config)
+    return get_data_source_settings(new_config)
+
+
+class SourceProbeBody(BaseModel):
+    source: str
+    code: str = "600519"
+
+
+@router.post("/system/sources/probe")
+def probe_source(body: SourceProbeBody, config: dict = Depends(get_config), tasks: TaskManager = Depends(get_tasks)) -> dict:
+    from src.services.data_source_settings import DAILY_NAMES, source_configured, probe_daily_source
+    from src.utils.stock_code import resolve_identity
+    try:
+        identity = resolve_identity(body.code)
+    except ValueError as error:
+        raise bad_request(str(error)) from error
+    if identity.kind != "stock" or body.source not in DAILY_NAMES:
+        raise bad_request("只支持 A 股个股日线来源校验")
+    if not source_configured(config, body.source):
+        raise bad_request("请先保存供应商密钥")
+    return tasks.submit("source_probe", probe_daily_source, body.source, identity.code,
+                        dedupe_key=f"source_probe:{body.source}:{identity.code}", label="校验个股日线来源")
 
 
 # ---------- AI 设置 ----------
@@ -666,6 +818,14 @@ def test_notifier(channel: str, body: NotifierBody, config: dict = Depends(get_c
     return test_channel({**config, "notifier": _merge_notifier(config.get("notifier") or {}, body.notifier)}, channel)
 
 
+@router.post("/settings/notifier/test-batch")
+def test_notifier_batch(body: NotifierBody, config: dict = Depends(get_config)) -> dict[str, Any]:
+    from src.notifier import enabled_channels, test_channel
+    merged = {**config, "notifier": _merge_notifier(config.get("notifier") or {}, body.notifier)}
+    results = {channel: test_channel(merged, channel) for channel in enabled_channels(merged)}
+    return {"ok": bool(results) and all(r.get("ok") for r in results.values()), "channels": results}
+
+
 # ---------- 聊天机器人 ----------
 
 BOT_SECRETS = (("dingtalk", "client_secret"), ("feishu", "app_secret"), ("discord", "token"))
@@ -830,3 +990,57 @@ def preview_report_template(name: str, body: TemplateBody, config: dict = Depend
         return {"ok": True, "markdown": report_templates.preview(name, body.text, config=config)}
     except ValueError as e:
         return {"ok": False, "error": str(e), "markdown": ""}
+
+
+# 调度设置只允许已有配置字段，环境变量覆盖仍由 config_loader 处理。
+class SchedulerSettings(BaseModel):
+    hot_search_interval: int = Field(30, ge=1, le=1440)
+    cailianshe_interval: int = Field(5, ge=1, le=1440)
+    stock_data_interval: int = Field(15, ge=1, le=1440)
+    daily_analysis_time: str = Field("15:30", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    daily_signal_time: str = Field("16:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    daily_report_time: str = Field("16:10", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    watchlist_report_time: str = Field("16:30", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    self_learning_time: str = Field("16:20", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    signal_lifecycle_time: str = Field("16:25", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+@router.get("/settings/scheduler")
+def get_scheduler_settings(config: dict = Depends(get_config)) -> dict:
+    fields = SchedulerSettings.model_fields
+    return SchedulerSettings(**{key: value for key, value in (config.get("scheduler") or {}).items() if key in fields}).model_dump()
+
+
+@router.put("/settings/scheduler")
+def save_scheduler_settings(body: SchedulerSettings, request: Request) -> dict:
+    from api.app import apply_config
+    from src.config_loader import reload_config
+    from src.settings_store import save_section
+    save_section("scheduler", body.model_dump(), merge=True)
+    config = reload_config()
+    apply_config(request.app, config)
+    return get_scheduler_settings(config)
+
+
+@router.get("/settings/schema")
+def settings_schema() -> dict:
+    """公共默认值与字段类型；不读取用户配置，也不返回密钥默认值。"""
+    import yaml
+    from src.services.config_check import EXAMPLE_PATH, ENUMS, INT_RANGES
+    from src.utils.redaction import redact
+    defaults = redact(yaml.safe_load(EXAMPLE_PATH.read_text(encoding="utf-8")))
+    def fields(data, path=()):
+        result = []
+        for key, value in data.items():
+            current = (*path, key)
+            if isinstance(value, dict):
+                result.extend(fields(value, current))
+                continue
+            entry = {"path": ".".join(current), "type": "boolean" if isinstance(value, bool) else "number" if isinstance(value, (int, float)) else "array" if isinstance(value, list) else "string", "default": value}
+            if current in ENUMS:
+                entry["options"] = list(ENUMS[current])
+            if current in INT_RANGES:
+                entry["minimum"], entry["maximum"] = INT_RANGES[current]
+            result.append(entry)
+        return result
+    return {"fields": fields(defaults), "scheduler": SchedulerSettings.model_json_schema()}

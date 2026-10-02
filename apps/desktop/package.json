@@ -51,7 +51,10 @@
       "shortcutName": "A股量化"
     },
     "mac": {
-      "target": "dmg",
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "identity": "-",
       "artifactName": "AStockQuant-${version}-macos-${arch}.${ext}",
       "hardenedRuntime": false
@@ -60,7 +63,8 @@
       "target": "AppImage",
       "artifactName": "AStockQuant-${version}-linux-${arch}.${ext}",
       "category": "Finance"
-    }
+    },
+    "afterPack": "scripts/afterPackMacos.js"
   },
   "dependencies": {
     "electron-updater": "^6.8.9"

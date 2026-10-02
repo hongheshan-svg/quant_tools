@@ -25,7 +25,7 @@ describe('SettingsPage bot tab: Discord', () => {
       return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } })
     }))
     render(<MemoryRouter initialEntries={['/settings']}><AppRoutes authEnabled={false} /></MemoryRouter>)
-    fireEvent.click(screen.getByRole('tab', { name: '聊天机器人' }))
+    fireEvent.click(await screen.findByRole('tab', { name: '聊天机器人' }))
     expect((await screen.findAllByText(/Discord/)).length).toBeGreaterThan(0)
     const token = screen.getByLabelText(/Bot Token/) as HTMLInputElement
     expect(token.type).toBe('password')

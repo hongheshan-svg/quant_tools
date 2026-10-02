@@ -202,7 +202,8 @@ def resolve_fund(text: str, db_path: str) -> dict[str, Any] | None:
 
     裸 6 位数字只按 ETF 匹配，不当作指数（避免与个股冲突）。
     """
-    query = (text or "").strip()
+    import unicodedata
+    query = unicodedata.normalize("NFKC", text or "").strip()
     if not query:
         return None
     parsed = _parse_code(query)
@@ -212,6 +213,9 @@ def resolve_fund(text: str, db_path: str) -> dict[str, Any] | None:
             index = INDEX_CODES.get(f"{prefix}{digits}")
             if index:
                 return {"kind": "index", "code": index["code"], "name": index["name"]}
+            from src.utils.stock_code import resolve_identity
+
+            resolve_identity(query)  # ETF 和个股也不能静默丢掉错误的交易所
         try:
             etf = _etf_row(db_path, digits)
         except Exception as e:

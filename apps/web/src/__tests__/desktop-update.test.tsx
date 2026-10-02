@@ -27,7 +27,7 @@ const base = () => ({
 async function openDesktopTab() {
   stubFetch({ '/settings/llm': { llm: { primary: {}, fallback: {} }, platforms: {} } })
   render(<MemoryRouter initialEntries={['/settings']}><AppRoutes authEnabled={false} /></MemoryRouter>)
-  fireEvent.click(screen.getByRole('tab', { name: '桌面端' }))
+  fireEvent.click(await screen.findByRole('tab', { name: '桌面端' }))
   await screen.findByText('/data')
 }
 

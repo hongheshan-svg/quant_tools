@@ -8,6 +8,7 @@ import { DataTable, type Column } from '@/components/DataTable'
 import { DiagnosisView } from '@/components/DiagnosisView'
 import { RunLogView } from '@/components/RunLogView'
 import { ScoreTrendChart } from '@/components/ScoreTrendChart'
+import { ShareImageButton } from '@/components/ShareImageButton'
 import { StockSearch } from '@/components/StockSearch'
 import { Badge, Button, Card, ErrorBox, Modal, PageHeader, Select, Spinner } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
@@ -27,7 +28,10 @@ export function HistoryPage() {
   const [action, setAction] = useState('')
   const [days, setDays] = useState(30)
   const [limit, setLimit] = useState(PAGE_SIZE)
-  const [openId, setOpenId] = useState<number | null>(null)
+  const linkedId = Number(params.get('id'))
+  const [openId, setOpenId] = useState<number | null>(Number.isSafeInteger(linkedId) && linkedId > 0 ? linkedId : null)
+  const [selected, setSelected] = useState<number[]>([])
+  const [deleting, setDeleting] = useState(false)
   const { data, error, loading, reload } = useApi(
     () => api.diagnosisHistoryList({ code: code || undefined, action: action || undefined, days, limit, offset: 0 }),
     [code, action, days, limit],
@@ -35,10 +39,13 @@ export function HistoryPage() {
 
   const setCode = (c: string) => {
     setLimit(PAGE_SIZE)
+    setSelected([])
     setParams(c ? { code: c } : {})
   }
 
   const columns: Column<DiagnosisHistoryItem>[] = [
+    { key: 'select', title: <input type="checkbox" aria-label={t('选择当前页')} checked={!!data?.items.length && data.items.every((r) => selected.includes(r.id))} onChange={(e) => setSelected(e.target.checked ? (data?.items.map((r) => r.id) ?? []) : [])} />,
+      render: (r) => <input type="checkbox" aria-label={t('选择诊断 {id}', { id: r.id })} checked={selected.includes(r.id)} onClick={(e) => e.stopPropagation()} onChange={(e) => setSelected((ids) => e.target.checked ? [...ids, r.id] : ids.filter((id) => id !== r.id))} /> },
     { key: 'time', title: t('时间'), render: (r) => <span className="num text-xs">{r.created_at}</span> },
     { key: 'stock', title: t('股票'), render: (r) => <>{r.name} <span className="num text-xs text-muted">{r.code}</span></> },
     {
@@ -52,6 +59,20 @@ export function HistoryPage() {
   return (
     <div>
       <PageHeader title={t('诊断历史')} description={t('历史 AI 诊断记录，可导出 Markdown 或分享图')} />
+      <div className="mb-3 flex gap-2">
+        <Button variant="danger" disabled={!selected.length} loading={deleting} onClick={async () => {
+          if (!window.confirm(t('确定删除选中的诊断记录？'))) return
+          setDeleting(true)
+          try { const r = await api.deleteDiagnoses({ ids: selected }); toast.success(t('已删除 {n} 条', { n: r.deleted })); setSelected([]); await reload() }
+          catch (e) { toast.error(e instanceof Error ? e.message : String(e)) } finally { setDeleting(false) }
+        }}>{t('删除选中')}（{selected.length}）</Button>
+        {code && <Button variant="danger" loading={deleting} onClick={async () => {
+          if (!window.confirm(t('确定清理该股票的全部诊断历史？'))) return
+          setDeleting(true)
+          try { const r = await api.deleteDiagnoses({ code }); toast.success(t('已删除 {n} 条', { n: r.deleted })); setSelected([]); await reload() }
+          catch (e) { toast.error(e instanceof Error ? e.message : String(e)) } finally { setDeleting(false) }
+        }}>{t('清理本股历史')}</Button>}
+      </div>
       <Card className="mb-4" bodyClassName="flex flex-wrap items-center gap-3">
         {code ? (
           <span className="inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-2 py-1 text-sm text-accent">
@@ -61,11 +82,11 @@ export function HistoryPage() {
         ) : (
           <StockSearch className="w-64" placeholder={t('按股票筛选')} onSelect={(s) => setCode(s.code)} />
         )}
-        <Select aria-label={t('操作建议')} value={action} onChange={(e) => { setAction(e.target.value); setLimit(PAGE_SIZE) }}>
+        <Select aria-label={t('操作建议')} value={action} onChange={(e) => { setAction(e.target.value); setLimit(PAGE_SIZE); setSelected([]) }}>
           <option value="">{t('全部建议')}</option>
           {Object.entries(ACTIONS).map(([k, v]) => <option key={k} value={k}>{t(v)}</option>)}
         </Select>
-        <Select aria-label={t('时间范围')} value={days} onChange={(e) => { setDays(Number(e.target.value)); setLimit(PAGE_SIZE) }}>
+        <Select aria-label={t('时间范围')} value={days} onChange={(e) => { setDays(Number(e.target.value)); setLimit(PAGE_SIZE); setSelected([]) }}>
           {DAYS.map((d) => <option key={d.v} value={d.v}>{t(d.t)}</option>)}
         </Select>
         {data && <span className="text-xs text-muted">{t('共 {n} 条', { n: data.total })}</span>}
@@ -122,7 +143,7 @@ function DetailModal({ id, onClose, onDeleted }: { id: number; onClose: () => vo
           <Button variant="danger" onClick={remove}>{t('删除')}</Button>
           <Button onClick={copy}>{t('复制 Markdown')}</Button>
           <a className={linkClass} href={api.diagnosisMarkdownUrl(id)} download>{t('下载 Markdown')}</a>
-          <a className={linkClass} href={api.diagnosisImageUrl(id)} download>{t('下载分享图')}</a>
+          <ShareImageButton url={api.diagnosisImageUrl(id)} filename={`diagnosis-${id}.png`} />
         </>
       )}
     >

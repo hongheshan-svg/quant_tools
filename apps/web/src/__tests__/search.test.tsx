@@ -50,7 +50,7 @@ afterEach(() => {
 
 async function openSearchTab() {
   render(<MemoryRouter initialEntries={['/settings']}><AppRoutes authEnabled={false} /></MemoryRouter>)
-  fireEvent.click(screen.getByRole('tab', { name: '联网搜索' }))
+  fireEvent.click(await screen.findByRole('tab', { name: '联网搜索' }))
 }
 
 describe('SettingsPage search tab', () => {

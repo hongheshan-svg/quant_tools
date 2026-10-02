@@ -219,9 +219,9 @@ def fetch_daily_tushare(code: str, start_date: str, end_date: str, pro=None) -> 
         token = str(data_source_config().get("tushare_token") or "").strip()
         if not token:
             raise RuntimeError("没有配置 data_sources.tushare_token")
-        import tushare as ts
+        from src.collectors.paid_market import TushareHttpClient
 
-        pro = ts.pro_api(token)
+        pro = TushareHttpClient(data_source_config())
     df = pro.daily(ts_code=tushare_code(code), start_date=start_date.replace("-", ""), end_date=end_date.replace("-", ""))
     if df is None or df.empty:
         return pd.DataFrame()

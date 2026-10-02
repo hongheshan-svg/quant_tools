@@ -7,6 +7,7 @@ import type { ImageImportResult, ImportResult, WatchlistReport, WatchlistRow } f
 import { DataTable, type Column } from '@/components/DataTable'
 import { Markdown } from '@/components/Markdown'
 import { WatchlistSettings } from '@/components/WatchlistSettings'
+import { ShareImageButton } from '@/components/ShareImageButton'
 import { StockSearch } from '@/components/StockSearch'
 import { Button, Card, ErrorBox, Modal, PageHeader, Pct, Textarea } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
@@ -37,6 +38,7 @@ export function WatchlistPage() {
   const [imageResult, setImageResult] = useState<ImageImportResult | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [adding, setAdding] = useState(false)
+  const [selectedCodes, setSelectedCodes] = useState<string[]>([])
   const imageInput = useRef<HTMLInputElement>(null)
   const run = useTask<{ done: number; total: number; pushed: boolean; error?: string }>()
 
@@ -85,6 +87,8 @@ export function WatchlistPage() {
   }
 
   const columns: Column<WatchlistRow>[] = [
+    { key: 'selected', title: <input type="checkbox" aria-label={t('选择全部自选股')} checked={!!list.data?.length && list.data.every((row) => selectedCodes.includes(row.code))} onChange={(event) => setSelectedCodes(event.target.checked ? (list.data?.map((row) => row.code) ?? []) : [])} />,
+      render: (row) => <input type="checkbox" aria-label={t('选择股票 {code}', { code: row.code })} checked={selectedCodes.includes(row.code)} onClick={(event) => event.stopPropagation()} onChange={(event) => setSelectedCodes((codes) => event.target.checked ? [...codes, row.code] : codes.filter((code) => code !== row.code))} /> },
     { key: 'name', title: t('股票'), render: (r) => (
       <>
         <div>
@@ -174,12 +178,13 @@ export function WatchlistPage() {
           bodyClassName="p-0"
         >
           {list.error && <ErrorBox message={list.error} onRetry={list.reload} />}
+          {selectedCodes.length > 0 && <div className="p-3"><Button loading={run.running} onClick={() => void run.run(() => api.runSelectedWatchlist(selectedCodes), { success: t('所选股票分析完成') }).then(() => { void list.reload(); void report.reload() }).catch(() => {})}>{t('分析选中（{n}）', { n: selectedCodes.length })}</Button></div>}
           <DataTable columns={columns} rows={list.data ?? []} rowKey={(r) => r.code} onRowClick={(r) => navigate(`/stocks/${r.code}`)} empty={t('还没有自选股，用上方搜索框添加，或批量导入')} />
         </Card>
         <Card title={t('决策仪表盘')} actions={report.data && (
           <span className="flex items-center gap-3">
             <span className="text-xs text-muted">{report.data.created_at}</span>
-            <a className="inline-flex items-center rounded-md border border-line px-3 py-1.5 text-sm font-medium hover:bg-panel-2" href={api.watchlistReportImageUrl()} target="_blank" rel="noreferrer">{t('分享图')}</a>
+            <ShareImageButton url={api.watchlistReportImageUrl()} filename="watchlist.png" />
           </span>
         )}>
           {report.data ? <Markdown text={report.data.markdown} /> : <p className="text-sm text-muted">{t('还没有仪表盘，点「分析全部并推送」生成')}</p>}

@@ -4,8 +4,8 @@ from src.utils.stock_code import bare_code, board_of, code_candidates, daily_lim
 def test_bare_and_candidates():
     assert bare_code(" SH600519 ") == "600519"
     assert bare_code("600519") == "600519"
-    assert code_candidates("sz000001") == ["sz000001", "000001", "sh000001", "bj000001"]
-    assert code_candidates("600519") == ["600519", "sh600519", "sz600519", "bj600519"]
+    assert code_candidates("sz000001") == ["000001", "sz000001", "000001.sz"]
+    assert code_candidates("600519") == ["600519", "sh600519", "600519.sh"]
     assert code_candidates("") == []
 
 

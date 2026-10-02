@@ -27,7 +27,7 @@ BACKEND_DIST = ROOT / "dist" / "backend"
 NPM = "npm.cmd" if sys.platform == "win32" else "npm"
 
 # 运行时按字符串导入、PyInstaller 静态分析找不到的模块
-HIDDEN_IMPORTS = ["tiktoken_ext", "tiktoken_ext.openai_public", "multipart"]
+HIDDEN_IMPORTS = ["tiktoken_ext", "tiktoken_ext.openai_public", "multipart", "tickflow"]
 # 带数据文件（价格表、日历、字典等）的包
 COLLECT_DATA = ["litellm", "akshare", "tiktoken_ext", "efinance"]
 # 大量按需导入子模块的包
@@ -68,6 +68,8 @@ def pyinstaller_args() -> list[str]:
         "--paths", str(ROOT),
         "--add-data", f"{ROOT / 'config' / 'settings.yaml.example'}{sep}config",
         "--add-data", f"{ROOT / 'config' / 'stock_pool.yaml'}{sep}config",
+        "--add-data", f"{ROOT / 'config' / 'screening_rules.yaml.example'}{sep}config",
+        "--add-data", f"{ROOT / 'config' / 'scoring_profiles.yaml.example'}{sep}config",
         "--add-data", f"{web_dist}{sep}web",
         # 内置问股策略（strategy_skills.BUILTIN_DIR = Path(__file__).parent / "skills"）
         "--add-data", f"{ROOT / 'src' / 'services' / 'skills'}{sep}src/services/skills",
