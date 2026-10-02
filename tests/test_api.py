@@ -65,6 +65,20 @@ def _wait(client, task: dict, timeout: float = 5.0) -> dict:
 
 # ---------- 鉴权 ----------
 
+def test_api_version_matches_release_packages(env):
+    import json
+
+    from src import __version__
+
+    _, app, _ = env
+    assert app.openapi()["info"]["version"] == __version__
+    root = Path(__file__).resolve().parents[1]
+    for app_name in ("web", "desktop"):
+        package = json.loads((root / "apps" / app_name / "package.json").read_text())
+        lock = json.loads((root / "apps" / app_name / "package-lock.json").read_text())
+        assert package["version"] == lock["version"] == lock["packages"][""]["version"] == __version__
+
+
 def test_access_rules(tmp_path):
     store = AuthStore(tmp_path / "auth.json")
     assert check_request({}, store, "/api/v1/dashboard", "127.0.0.1", None, None) == ""
