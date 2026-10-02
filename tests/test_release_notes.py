@@ -8,6 +8,7 @@ def test_build_notes_links_and_docker_tags():
     assert notes.startswith("## 主要功能")
     assert "https://github.com/Owner/Repo/releases/download/v1.2.3/AStockQuant-1.2.3-windows-setup.exe" in notes
     assert "AStockQuant-1.2.3-macos-arm64.dmg" in notes and "AStockQuant-1.2.3-linux-x86_64.AppImage" in notes
+    assert "https://github.com/Owner/Repo/releases/download/v1.2.3/AStockQuant-1.2.3-macos-x64.dmg" in notes
     assert "docker pull ghcr.io/owner/repo:1.2.3" in notes        # GHCR 镜像名必须小写
     assert "`1.2.3`、`1.2` 和 `latest`" in notes
 
@@ -18,6 +19,7 @@ def test_build_notes_without_highlights():
 
 def test_highlights_exist_for_released_versions():
     assert (NOTES_DIR / "v1.0.0.md").exists()
+    assert (NOTES_DIR / "v1.1.0.md").exists()
 
 
 def test_changelog_link():

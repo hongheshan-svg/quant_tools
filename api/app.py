@@ -22,6 +22,7 @@ from loguru import logger
 
 from api.auth import COOKIE_NAME, AuthStore, check_request
 from api.tasks import TaskManager
+from src import __version__
 from src.config_loader import load_config
 
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parent.parent / "apps" / "web" / "dist"
@@ -82,7 +83,7 @@ def create_app(config: dict[str, Any] | None = None, *, pipeline=None, start_sch
         from src.collectors.source_chain import source_health
         source_health.reset()
 
-    app = FastAPI(title="A股量化交易系统 API", version="1.0", lifespan=lifespan)
+    app = FastAPI(title="A股量化交易系统 API", version=__version__, lifespan=lifespan)
     from src.utils.stock_code import StockCodeError
 
     @app.exception_handler(StockCodeError)

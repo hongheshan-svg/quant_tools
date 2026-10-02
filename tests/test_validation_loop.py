@@ -14,13 +14,20 @@ from src.services.diagnosis_outcome import DiagnosisOutcomeService, plan_result
 from src.strategy import strategy_backtest as bt
 from src.strategy.screener import StrategyScreener
 from src.strategy.strategy_backtest import StrategyBacktester, max_drawdown, strategy_weights
-from tests.test_screener import TRADE_DATE, _reset_db_engine, config  # noqa: F401  复用选股测试的合成行情
+from tests.test_screener import DAYS, TRADE_DATE, _reset_db_engine, config  # noqa: F401  复用选股测试的合成行情
 
 FORWARD_DAYS = ["2026-09-22", "2026-09-23", "2026-09-24", "2026-09-25", "2026-09-28", "2026-09-29"]
 
 
 @pytest.fixture
 def backtest_db(config, monkeypatch):  # noqa: F811
+    # 合成行情按工作日生成（含真实中秋休市日），必须使用同一合成日历，
+    # 避免其他测试留下的正式日历改变持有期。回测测试不读取外部日历。
+    calendar = set(DAYS + FORWARD_DAYS)
+    monkeypatch.setattr(trading_calendar, "_trade_days", calendar)
+    monkeypatch.setattr(trading_calendar, "_first_day", min(calendar))
+    monkeypatch.setattr(trading_calendar, "_last_day", max(calendar))
+    monkeypatch.setattr(trading_calendar, "load", lambda *args, **kwargs: True)
     monkeypatch.setattr(StrategyScreener, "_regime", lambda self, d, point_in_time=False: "均衡" if point_in_time else "进攻")
     with get_db_session(config["database"]["sqlite_path"]) as session:
         # 突破股：次日高开 11.0 后涨停
@@ -59,6 +66,15 @@ def test_backtest_skips_partial_market_days(backtest_db):
     report = StrategyBacktester(backtest_db).run(days=0, end=TRADE_DATE)  # 默认要求 1000 只以上
     assert report["dates"] == 0 and report["skipped_dates"] == 1 and "fetch_history.py" in report["note"]
     assert StrategyBacktester(backtest_db).latest() is None  # 没有回测到任何一天时不保存
+
+
+def test_backtest_respects_holiday_calendar(backtest_db, monkeypatch):
+    # 正式日历下 9 月 25 日休市；3 日持有期应落到 28 日，而非沿用合成工作日。
+    monkeypatch.setattr(trading_calendar, "_trade_days", set(DAYS + FORWARD_DAYS) - {"2026-09-25"})
+    report = StrategyBacktester(backtest_db, min_universe=5).run(days=0, end=TRADE_DATE, save=False)
+    breakout = next(row for row in report["strategies"] if row["strategy"] == "volume_breakout")
+    assert breakout["avg_3d"] == pytest.approx((11.5 / 11.0 - 1) * 100, abs=0.01)
+    assert breakout["avg_5d"] is None  # 9 月 30 日的退出行情未提供，不能压缩缺失交易日
 
 
 def test_strategy_weights_and_drawdown():

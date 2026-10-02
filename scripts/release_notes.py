@@ -30,6 +30,7 @@ def build_notes(tag: str, repo: str, highlights: str = "", previous_tag: str = "
     files = {
         "windows": f"AStockQuant-{version}-windows-setup.exe",
         "macos": f"AStockQuant-{version}-macos-arm64.dmg",
+        "macos_intel": f"AStockQuant-{version}-macos-x64.dmg",
         "linux": f"AStockQuant-{version}-linux-x86_64.AppImage",
     }
     parts = []
@@ -41,6 +42,7 @@ def build_notes(tag: str, repo: str, highlights: str = "", previous_tag: str = "
 | --- | --- | --- |
 | Windows 10/11（x64） | [{files['windows']}]({base}/{files['windows']}) | 安装程序 |
 | macOS 13 及以上（Apple 芯片） | [{files['macos']}]({base}/{files['macos']}) | 拖进「应用程序」 |
+| macOS 13 及以上（Intel 芯片） | [{files['macos_intel']}]({base}/{files['macos_intel']}) | 拖进「应用程序」 |
 | Linux x64（glibc 2.35+，如 Ubuntu 22.04 及以上） | [{files['linux']}]({base}/{files['linux']}) | 免安装，直接运行 |
 
 桌面端已内置后台服务和 Web 界面，不需要安装 Python 或 Node.js。启动时会检查本页的新版本（Windows、Linux 下载后重启即完成更新，macOS 提示前往下载）。
