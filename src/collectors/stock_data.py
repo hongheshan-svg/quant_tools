@@ -833,7 +833,7 @@ class StockDataCollector(BaseCollector):
 
                 new_count = 0
                 upd_count = 0
-                from datetime import datetime as _dt
+                from src.utils.timestamps import quote_now
                 for rec in records:
                     existing = existing_map.get(rec.code)
                     if existing:
@@ -842,7 +842,7 @@ class StockDataCollector(BaseCollector):
                         for col in ["open", "close", "high", "low", "volume",
                                     "amount", "change_pct", "turnover", "total_mv", "circ_mv", "pe", "pb", "source", "price_adjustment"]:
                             setattr(existing, col, getattr(rec, col))
-                        existing.updated_at = _dt.now()
+                        existing.updated_at = quote_now()
                         upd_count += 1
                     else:
                         session.add(rec)

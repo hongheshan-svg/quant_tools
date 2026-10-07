@@ -186,7 +186,8 @@ def fetch_fund_daily(code: str, days: int = 250) -> list[dict]:
     source_health.record("基金日线", label, True, elapsed=time.monotonic() - begin)
     for bar in bars:
         bar["source"] = label
-        bar["updated_at"] = datetime.now()
+        from src.utils.timestamps import quote_now
+        bar['updated_at'] = quote_now()
         bar.setdefault("price_adjustment", "unadjusted")
     return bars
 

@@ -15,6 +15,14 @@ from src.strategy.screener import StrategyScreener
 from tests.test_screener import config, TRADE_DATE  # noqa: F401
 
 
+def test_quote_clock_is_always_shanghai():
+    from zoneinfo import ZoneInfo
+    from src.utils.timestamps import quote_now
+    stamp = quote_now()
+    assert stamp.tzinfo is None
+    assert abs((stamp - datetime.now(ZoneInfo('Asia/Shanghai')).replace(tzinfo=None)).total_seconds()) < 2
+
+
 def phase(expected="2026-09-22", now="2026-09-22 16:00", partial=False):
     return {"phase": "intraday" if partial else "postmarket", "now": now,
             "effective_daily_bar_date": expected, "is_partial_bar": partial}

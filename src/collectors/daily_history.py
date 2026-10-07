@@ -22,6 +22,7 @@ from loguru import logger
 from src.collectors.source_chain import fetch_with_fallback
 from src.database.db import get_db_session
 from src.database.models import StockDaily
+from src.utils.timestamps import quote_now
 from src.utils.stock_code import bare_code, code_candidates, normalize_name, prefixed_code
 
 CHANGE_LOOKBACK_DAYS = 10   # 多取几天，区间第一天的涨跌幅也按前收计算
@@ -326,7 +327,7 @@ def ensure_daily_history(code: str, db_path: str, name: str = "", min_bars: int 
     bare = bare_code(code)
     if len(bare) != 6 or not bare.isdigit():
         return 0
-    now = now or datetime.now()
+    now = now or quote_now()
     start = (now - timedelta(days=ENSURE_CALENDAR_DAYS)).strftime("%Y-%m-%d")
     with get_db_session(db_path) as session:
         existing = {

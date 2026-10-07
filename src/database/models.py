@@ -4,6 +4,7 @@
 """
 
 from datetime import datetime
+from src.utils.timestamps import quote_now
 
 from sqlalchemy import (
     Boolean,
@@ -97,7 +98,7 @@ class StockDaily(Base):
     price_adjustment = Column(String(30), comment="前复权/不复权/供应商指定口径")
     price_revision = Column(String(64), comment="历史价格下载或修订批次")
     created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, comment="最后更新时间")
+    updated_at = Column(DateTime, default=quote_now, onupdate=quote_now, comment="最后更新时间（上海时区）")
 
     __table_args__ = (
         Index("idx_daily_code_date", "code", "trade_date", unique=True),
@@ -898,7 +899,7 @@ class FundDaily(Base):
     change_pct = Column(Float, comment="涨跌幅 %")
     source = Column(String(60), comment="日线实际来源")
     price_adjustment = Column(String(30), comment="已知复权口径")
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, comment="日线取得时刻")
+    updated_at = Column(DateTime, default=quote_now, onupdate=quote_now, comment="日线取得时刻（上海时区）")
     created_at = Column(DateTime, default=datetime.now)
 
     __table_args__ = (
