@@ -38,8 +38,8 @@ def _worker(connection, operation: str, config: dict, payload: dict, deadline: f
             job_id = payload["job_id"]
             if job_id not in {"hot_search", "cailianshe", "rss", "stock_data", "global_data"}:
                 raise ValueError("不支持的采集任务")
-            JOBS[job_id][1]({**config, "_isolated_collection": True})
-            send(("result", {"status": "available"}))
+            result = JOBS[job_id][1]({**config, "_isolated_collection": True})
+            send(("result", result or {"status": "available"}))
         elif operation in ("diagnosis", "fund_diagnosis"):
             if operation == "fund_diagnosis":
                 from src.services.fund_diagnosis import FundDiagnosisService as Service

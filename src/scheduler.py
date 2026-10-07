@@ -54,7 +54,7 @@ def _report_error(config: dict, source: str, error: Exception) -> None:
         logger.error(f"系统错误推送异常: {e}")
 
 
-def _isolate_collection_job(job_id: str, config: dict) -> bool:
+def _isolate_collection_job(job_id: str, config: dict) -> dict | bool:
     """定时采集也受硬期限保护，避免第三方 SDK 卡住后一直占用调度槽。"""
     sources = config.get("data_sources") or {}
     if not sources.get("isolate_collection", False) or config.get("_isolated_collection"):
@@ -63,14 +63,20 @@ def _isolate_collection_job(job_id: str, config: dict) -> bool:
     from src.collectors.source_chain import source_health
     source_health.configure((config.get("database") or {}).get("sqlite_path", "data/quant.db"))
     cfg = {**config, "diagnosis": {**(config.get("diagnosis") or {}), "timeout_seconds": sources.get("collect_timeout_seconds", 240)}}
-    isolated_result("collection_job", cfg, {"job_id": job_id})
-    return True
+    return isolated_result("collection_job", cfg, {"job_id": job_id}) or {'status': 'available'}
+
+
+def _require_collection_result(collector):
+    result = getattr(collector, 'last_result', {}) or {}
+    if result.get('status') in {'partial', 'fetch_failed'}:
+        raise RuntimeError(f"{getattr(collector, 'SOURCE_NAME', '采集')}：{result['status']}；" + '；'.join(result.get('errors') or []))
+    return result
 
 
 def _run_hot_search_collection(config: dict):
     """执行热搜采集任务"""
-    if _isolate_collection_job("hot_search", config):
-        return
+    isolated = _isolate_collection_job('hot_search', config)
+    if isolated: return isolated
     from src.collectors.douyin import DouyinCollector
     from src.collectors.toutiao import ToutiaoCollector
     from src.collectors.weibo import WeiboCollector
@@ -83,6 +89,7 @@ def _run_hot_search_collection(config: dict):
         ToutiaoCollector(config),
     ]
 
+    errors = []
     for collector in collectors:
         try:
             items = collector.safe_collect()
@@ -99,15 +106,18 @@ def _run_hot_search_collection(config: dict):
             ]
             if records:
                 bulk_insert(records, config.get("database", {}).get("sqlite_path", "data/quant.db"))
+            _require_collection_result(collector)
         except Exception as e:
             logger.error(f"热搜采集任务异常 [{collector.SOURCE_NAME}]: {e}")
             _report_error(config, "热搜数据采集", e)
+            errors.append(str(e))
+    if errors: raise RuntimeError('热搜采集未完整完成：' + '；'.join(errors))
 
 
 def _run_cailianshe_collection(config: dict):
     """执行财联社采集任务"""
-    if _isolate_collection_job("cailianshe", config):
-        return
+    isolated = _isolate_collection_job('cailianshe', config)
+    if isolated: return isolated
     from src.collectors.cailianshe import CailiansheCollector
     from src.database.db import bulk_insert
     from src.database.models import FinanceNews
@@ -129,39 +139,43 @@ def _run_cailianshe_collection(config: dict):
         ]
         if records:
             bulk_insert(records, config.get("database", {}).get("sqlite_path", "data/quant.db"))
+        return _require_collection_result(collector)
     except Exception as e:
         logger.error(f"财联社采集任务异常: {e}")
         _report_error(config, "财联社快讯采集", e)
+        raise
 
 
 def _run_rss_collection(config: dict):
     """执行 RSS/Atom 资讯源采集（与交易日无关）"""
-    if _isolate_collection_job("rss", config):
-        return
+    isolated = _isolate_collection_job('rss', config)
+    if isolated: return isolated
     cfg = config.get("intelligence") or {}
     if not cfg.get("enabled", True):
-        return
+        return {'status': 'skipped', 'reason': 'RSS 未启用'}
     from src.collectors.rss import RSSCollector, _enabled_sources, save_items
 
     if not _enabled_sources(config):
-        return
+        return {'status': 'skipped', 'reason': '没有启用的 RSS 来源'}
     collector = RSSCollector(config)
     try:
         items = collector.safe_collect()
         added = save_items(items, config.get("database", {}).get("sqlite_path", "data/quant.db"),
                            int(cfg.get("keep_days", 7)))
         logger.info(f"RSS 资讯入库 {added} 条（抓到 {len(items)} 条）")
+        return _require_collection_result(collector)
     except Exception as e:
         logger.error(f"RSS 采集任务异常: {e}")
         _report_error(config, "RSS 资讯源采集", e)
+        raise
     finally:
         collector.close()
 
 
 def _run_stock_data_collection(config: dict):
     """执行行情数据采集任务"""
-    if _isolate_collection_job("stock_data", config):
-        return
+    isolated = _isolate_collection_job('stock_data', config)
+    if isolated: return isolated
     if _skip_non_trade_day(config, "行情数据采集"):
         return
     from src.collectors.stock_data import StockDataCollector
@@ -170,14 +184,17 @@ def _run_stock_data_collection(config: dict):
         collector.safe_collect()
         if getattr(collector, "last_result", {}).get("status") == "fetch_failed":
             raise RuntimeError("行情采集失败，保留已有数据并暂停后续行情驱动任务")
+        _require_collection_result(collector)
     except Exception as e:
         logger.error(f"行情数据采集任务异常: {e}")
         _report_error(config, "行情数据采集", e)
-        return
+        raise
+    errors = []
     try:
         collector.collect_market_overview()  # 首页指数、涨跌家数、成交额随行情更新
     except Exception as e:
         logger.warning(f"市场概况刷新失败: {e}")
+        errors.append(str(e))
 
     # 行情更新后检查模拟盘持仓的止损止盈
     try:
@@ -189,6 +206,7 @@ def _run_stock_data_collection(config: dict):
     except Exception as e:
         logger.error(f"止损止盈检查异常: {e}")
         _report_error(config, "止损止盈检查", e)
+        errors.append(str(e))
 
     # 盘中提醒（封板/炸板/跌破止损/大跌/自定义规则）
     try:
@@ -198,22 +216,29 @@ def _run_stock_data_collection(config: dict):
     except Exception as e:
         logger.error(f"盘中提醒检查异常: {e}")
         _report_error(config, "盘中提醒检查", e)
+        errors.append(str(e))
+    if errors: raise RuntimeError('行情后续检查未完整完成：' + '；'.join(errors))
+    return getattr(collector, 'last_result', {})
 
 
 def _run_global_data_collection(config: dict):
     """执行国际数据采集任务"""
-    if _isolate_collection_job("global_data", config):
-        return
+    isolated = _isolate_collection_job('global_data', config)
+    if isolated: return isolated
     from src.collectors.global_news import GlobalNewsCollector
     from src.collectors.us_earnings import USEarningsCollector
 
+    errors = []
     for CollectorClass in [USEarningsCollector, GlobalNewsCollector]:
         try:
             collector = CollectorClass(config)
             collector.safe_collect()
+            _require_collection_result(collector)
         except Exception as e:
             logger.error(f"国际数据采集异常 [{CollectorClass.__name__}]: {e}")
             _report_error(config, "国际数据采集", e)
+            errors.append(str(e))
+    if errors: raise RuntimeError('国际背景采集未完整完成：' + '；'.join(errors))
 
 
 def _run_daily_analysis(config: dict):
@@ -535,7 +560,7 @@ def run_job(job_id: str, config: dict) -> dict:
             result = JOBS[job_id][1](config)
             if isinstance(result, dict) and result.get("error"):
                 raise RuntimeError(result["error"])
-            return {"status": "skipped" if _job_skipped.get() else "completed", "job_id": job_id, "result": result}
+            return {"status": "skipped" if _job_skipped.get() or isinstance(result, dict) and result.get('status') == 'skipped' else "completed", "job_id": job_id, "result": result}
         finally:
             _job_skipped.reset(token)
 
@@ -562,7 +587,7 @@ def run_job_entry(job_id: str, config_path: str | None = None) -> int:
         if not _job_reported.get():
             _report_error(config, name, e)
         return JOB_FAILED_EXIT
-    return JOB_SKIPPED_EXIT if _job_skipped.get() else 0
+    return JOB_SKIPPED_EXIT if _job_skipped.get() or isinstance(result, dict) and result.get('status') == 'skipped' else 0
 
 
 def run_scheduled_job(job_id: str, config: dict, scheduled_for: datetime | None = None) -> dict:
@@ -819,13 +844,15 @@ def run_once(config: dict, steps: list[str] | None = None, *, scheduled: bool = 
         label, jobs = ONCE_STEPS[key]
         logger.info(f"===== [{key}] {label} =====")
         started = time.monotonic()
+        outcomes = []
         for job in jobs:
             job_id = next((jid for jid, (_, fn) in JOBS.items() if fn is job), None)
             if job_id in ISOLATED_JOBS:
-                (run_scheduled_job if scheduled else run_job)(job_id, config)
+                outcome = (run_scheduled_job if scheduled else run_job)(job_id, config)
             else:
-                job(config)
-        results.append({"step": key, "label": label, "seconds": round(time.monotonic() - started, 1)})
+                outcome = run_job(job_id, config) if job_id else job(config)
+            outcomes.append(outcome or {'status': 'completed'})
+        results.append({"step": key, "label": label, "seconds": round(time.monotonic() - started, 1), 'status': 'skipped' if all(item.get('status') == 'skipped' for item in outcomes) else 'completed', 'jobs': outcomes})
     return results
 
 

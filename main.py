@@ -194,7 +194,7 @@ def main():
             logger.error(str(e))
             sys.exit(2)
         for r in results:
-            logger.info(f"{r['label']}：{r['seconds']}s")
+            logger.info(f"{r['label']}：{r.get('status', 'completed')}，{r['seconds']}s")
         return
 
     from src.bot.manager import start_bots

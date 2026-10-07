@@ -111,7 +111,8 @@ def test_daily_report_market_review_error_reported(reported, monkeypatch):
 
     monkeypatch.setattr(market_review.MarketReviewService, "generate", boom)
     config = {"notifier": {"daily_report_enabled": False}, "market_review": {"enabled": True}}
-    sched._run_daily_report(config)
+    with pytest.raises(RuntimeError, match='review-boom'):
+        sched._run_daily_report(config)
     _assert_reported(reported, "review-boom")
 
 
@@ -123,7 +124,8 @@ def test_self_learning_error_reported(reported, monkeypatch):
 
     monkeypatch.setattr(self_learning.SelfLearningService, "run_daily_learning", boom)
     monkeypatch.setattr(self_learning.SelfLearningService, "__init__", lambda self, config=None: None)
-    sched._run_self_learning({})
+    with pytest.raises(RuntimeError, match='learn-boom'):
+        sched._run_self_learning({})
     _assert_reported(reported, "learn-boom")
 
 
@@ -135,5 +137,6 @@ def test_watchlist_report_error_reported(reported, monkeypatch):
 
     monkeypatch.setattr(watchlist_report.WatchlistReportService, "run", boom)
     monkeypatch.setattr(watchlist_report.WatchlistReportService, "__init__", lambda self, config=None, **k: None)
-    sched._run_watchlist_report({"watchlist": {"daily_report": True}})
+    with pytest.raises(RuntimeError, match='watch-boom'):
+        sched._run_watchlist_report({"watchlist": {"daily_report": True}})
     _assert_reported(reported, "watch-boom")
