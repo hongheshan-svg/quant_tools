@@ -1,0 +1,255 @@
+{
+  "intent_scope_after_confirmation": {
+    "requested_scope": "600519",
+    "initial_confirmation": true,
+    "confirmed_tasks": [
+      {
+        "kind": "stock_analysis",
+        "question": "分析平安",
+        "targets": [
+          {
+            "code": "000001",
+            "name": "平安银行",
+            "kind": "stock"
+          }
+        ]
+      }
+    ],
+    "requires_confirmation": false
+  },
+  "intent_order_in_same_clause": {
+    "question": "先看看持仓再分析贵州茅台",
+    "task_order": [
+      "stock_analysis",
+      "portfolio_risk"
+    ]
+  },
+  "diagnosis_cached_before_close": {
+    "daily_quality": {
+      "status": "stale",
+      "trade_date": "2026-09-18",
+      "expected_date": "2026-09-18",
+      "fetched_at": "2026-09-18T14:00:00+08:00",
+      "is_partial_bar": false,
+      "limitations": [
+        "cached_before_close"
+      ]
+    },
+    "diagnosis_action": "buy",
+    "confidence": "高",
+    "guardrails": [],
+    "phase_limitations": []
+  },
+  "future_acquisition_timestamp": {
+    "status": "available",
+    "trade_date": "2026-09-18",
+    "expected_date": "2026-09-18",
+    "fetched_at": "2026-10-25T16:00:00+08:00",
+    "is_partial_bar": false,
+    "limitations": []
+  },
+  "corporate_action_date_without_quotes": {
+    "live_cash": 110.0,
+    "expected_final_assets_at_price_10": 210.0,
+    "drawdown": {
+      "max_drawdown": 0.0,
+      "max_drawdown_date": "",
+      "current_drawdown": 0.0,
+      "days": 3,
+      "quality": {
+        "status": "available",
+        "limitations": [],
+        "valuation_points": 3,
+        "method": "cashflow_adjusted_unit_nav",
+        "samples": [
+          {
+            "date": "2026-09-14",
+            "assets": 200.0,
+            "external_flow": 200.0,
+            "unit_nav": 1.0
+          },
+          {
+            "date": "2026-09-15",
+            "assets": 200.0,
+            "external_flow": 0.0,
+            "unit_nav": 1.0
+          },
+          {
+            "date": "2026-09-18",
+            "assets": 200.0,
+            "external_flow": 0.0,
+            "unit_nav": 1.0
+          }
+        ]
+      }
+    },
+    "known_missing_trade_days": [
+      "2026-09-16",
+      "2026-09-17"
+    ]
+  },
+  "defensive_signal_missing_from_portfolio": {
+    "seeded_active_signal": "sell",
+    "positions": [
+      {
+        "code": "600519",
+        "name": "",
+        "sector": "未知",
+        "weight": 47.6,
+        "market_value": 100.0,
+        "pnl_pct": 11.11,
+        "stop_loss": 8.55,
+        "stop_gap": 16.96,
+        "status": "",
+        "price_quality": {
+          "status": "available",
+          "trade_date": "2026-09-18",
+          "expected_date": "2026-09-18",
+          "fetched_at": "2026-09-18T16:00:00",
+          "is_partial_bar": false,
+          "limitations": []
+        },
+        "price_source": "audit-local-source",
+        "price_date": "2026-09-18",
+        "weight_available": true
+      }
+    ],
+    "warnings": [
+      "600519 占总资产 48%，超过单只上限 30%",
+      "行业分类覆盖 0/1；分类来源为历史涨停所属行业，行业风险仅覆盖已分类部分"
+    ],
+    "report_keys": [
+      "account",
+      "as_of",
+      "cash",
+      "cash_known",
+      "drawdown",
+      "exposure",
+      "positions",
+      "quality",
+      "realized_pnl",
+      "regime",
+      "sectors",
+      "suggested_exposure",
+      "total_assets",
+      "warnings"
+    ]
+  },
+  "data_center_actual_source": {
+    "seeded_source": "audit-local-source",
+    "daily_snapshot": {
+      "dataset": "个股日线",
+      "status": "available",
+      "trade_date": "2026-09-18",
+      "expected_date": "2026-09-18",
+      "fetched_at": "2026-09-18T16:00:00",
+      "is_partial_bar": false,
+      "limitations": [],
+      "rows_on_date": 1,
+      "scope": "database_latest_date",
+      "note": "最新日期的样本行不能证明全市场完整覆盖；配置及健康成功不能替代数据质量"
+    }
+  },
+  "rotation_missing_cutoff": {
+    "status": "partial",
+    "as_of": "2026-09-17",
+    "limitations": [
+      "history_does_not_reach_cutoff",
+      "insufficient_backtest_span"
+    ],
+    "parameters": {
+      "lookback_days": 5,
+      "rebalance": "weekly",
+      "top_n": 1,
+      "switch_buffer_pct": 2.0,
+      "cost_bps": 10.0,
+      "risk_assets": [
+        "510300"
+      ],
+      "safe_asset": null,
+      "start": "2026-08-03",
+      "end": "2026-09-18"
+    },
+    "next_action": {
+      "signal_date": "2026-09-17",
+      "execution_date": null,
+      "weights": {
+        "510300": 1.0
+      }
+    },
+    "metrics": {
+      "total_return": 0.07025421696332779,
+      "cagr": 1.073804783674758,
+      "ann_vol": 0.012485547200218359,
+      "sharpe": 55.370687583578025,
+      "max_drawdown": -0.0010000000000000009,
+      "calmar": 1073.804783674757
+    },
+    "curve_end": "2026-09-17"
+  },
+  "rotation_cached_before_close": {
+    "status": "partial",
+    "as_of": "2026-09-18",
+    "limitations": [
+      "insufficient_backtest_span"
+    ],
+    "next_action": {
+      "signal_date": "2026-09-18",
+      "execution_date": "2026-09-21",
+      "weights": {
+        "510300": 1.0
+      }
+    },
+    "ranking": [
+      {
+        "code": "510300",
+        "momentum": 0.04514799980073869,
+        "eligible": true
+      }
+    ]
+  },
+  "rotation_calendar_unavailable": {
+    "status": "partial",
+    "limitations": [
+      "calendar_uses_weekday_fallback",
+      "insufficient_backtest_span"
+    ],
+    "metrics": {
+      "total_return": 0.1052512362787652,
+      "cagr": 1.8414935609213008,
+      "ann_vol": 0.09223529465839897,
+      "sharpe": 10.65567499289899,
+      "max_drawdown": -0.0010000000000000009,
+      "calmar": 1841.4935609212991
+    },
+    "next_action": {
+      "signal_date": "2026-09-18",
+      "execution_date": "2026-09-21",
+      "weights": {
+        "510300": 1.0
+      }
+    }
+  },
+  "rotation_defensive_latest_quote_missing": {
+    "status": "partial",
+    "as_of": "2026-09-18",
+    "limitations": [
+      "insufficient_backtest_span"
+    ],
+    "next_action": {
+      "signal_date": "2026-09-18",
+      "execution_date": "2026-09-21",
+      "weights": {
+        "511880": 1.0
+      }
+    },
+    "ranking": [
+      {
+        "code": "510300",
+        "momentum": -0.014910269595243109,
+        "eligible": false
+      }
+    ],
+    "safe_asset_last_quote": "2026-09-17"
+  }
+}

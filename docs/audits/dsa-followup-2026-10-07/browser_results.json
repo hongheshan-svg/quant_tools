@@ -1,0 +1,18 @@
+{
+  "edit_during_save": {
+    "submitted_value": "11",
+    "edit_while_pending": "19",
+    "input_enabled_while_saving": true,
+    "before_response": "19",
+    "after_response": "11",
+    "unsaved_status_count": 1
+  },
+  "import_during_save": {
+    "pending_save_value": 13,
+    "imported_value": 29,
+    "import_finished_while_save_pending": true,
+    "server_value_after_import": 29,
+    "server_value_after_old_save": 13
+  },
+  "page_errors": []
+}

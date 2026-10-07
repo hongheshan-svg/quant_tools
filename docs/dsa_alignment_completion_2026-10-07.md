@@ -1,5 +1,7 @@
 # daily_stock_analysis 18 项对齐实施与验收（2026-10-07）
 
+> 后续[对齐后全面复核](dsa_alignment_followup_2026-10-07.md)确认部分已接入功能仍存在边界缺口，当前待办以该复核为准。下方保留当时的实施及验收记录，不表示全部边界已对齐。
+
 本次实现对应[修改前的 18 项审计](dsa_alignment_audit_2026-10-07.md)，参考上游固定提交 [`ce364e457aab288863a5707e7b3df79786ad07f2`](https://github.com/ZhuLinsen/daily_stock_analysis/commit/ce364e457aab288863a5707e7b3df79786ad07f2)。18 项均已接入本地实际服务；新增界面共用 Web 和 Electron。范围继续为 A 股、国内 ETF/指数，沿用现有数据、配置与任务系统。
 
 ## 逐项实现
