@@ -15,6 +15,7 @@ RealPortfolioService(account=None) 汇总全部账户，指定账户时只读写
 
 from __future__ import annotations
 
+import math
 import re
 from collections import defaultdict
 from datetime import datetime
@@ -436,11 +437,17 @@ class RealPortfolioService:
             return {"ok": False, "error": "日期格式不对，应为 YYYY-MM-DD"}
         if direction not in FLOW_LABELS:
             return {"ok": False, "error": "方向只能是入金或出金"}
-        amount = float(amount or 0)
+        try:
+            amount = float(amount or 0)
+        except (TypeError, ValueError, OverflowError):
+            return {"ok": False, "error": "金额必须为有限数值"}
+        if not math.isfinite(amount):
+            return {"ok": False, "error": "金额必须为有限数值"}
+        amount = round(amount, 2)
         if amount <= 0:
             return {"ok": False, "error": "金额必须大于 0"}
         with get_db_session(self.db_path) as session:
-            row = RealCashFlow(flow_date=flow_date, direction=direction, amount=round(amount, 2), note=(note or "")[:200],
+            row = RealCashFlow(flow_date=flow_date, direction=direction, amount=amount, note=(note or "")[:200],
                                account=self._write_account)
             session.add(row)
             session.flush()

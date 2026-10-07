@@ -546,3 +546,13 @@ def test_api_cash_flows(env):
     assert snap["cash"] == 20000 and snap["ledger_mode"] and snap["net_deposit"] == 20000
     assert client.delete(f"/api/v1/real/cash-flows/{rows[0]['id']}").json() == {"ok": True}
     assert client.delete(f"/api/v1/real/cash-flows/{rows[0]['id']}").status_code == 404
+
+
+@pytest.mark.parametrize("amount", [float("nan"), float("inf"), float("-inf"), "bad", 0.004])
+def test_invalid_cash_flow_cannot_pollute_cash_or_account_snapshot(config, amount):
+    svc = _svc(config, DEFAULT_ACCOUNT)
+    svc.add_cash_flow("2026-09-01", "in", 1000)
+    before = svc.snapshot()["account"]
+    assert not svc.add_cash_flow("2026-09-02", "in", amount)["ok"]
+    assert len(svc.cash_flows()) == 1
+    assert svc.snapshot()["account"] == before
