@@ -179,7 +179,8 @@ def fetch_with_fallback(
         for attempt in range(1, max(attempts, 1) + 1):
             started = time.monotonic()
             try:
-                data = bounded_call(fetch, min(timeout_seconds or POLICY.get().request_seconds, expires - started))
+                data = bounded_call(fetch, min(timeout_seconds or POLICY.get().request_seconds, expires - started),
+                                    quarantine_key=(dataset, name))
                 if is_valid(data):
                     elapsed = time.monotonic() - started
                     breaker.record_success(name)

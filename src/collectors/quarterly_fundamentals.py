@@ -125,7 +125,8 @@ class QuarterlyFundamentals:
         errors.extend(result.errors.values())
         try:
             dividend = dividend_events(bounded_call(lambda: ak.stock_history_dividend_detail(symbol=identity.code, indicator="分红", date=""),
-                                                   min(POLICY.get().request_seconds, expires - time.monotonic())))
+                                                   min(POLICY.get().request_seconds, expires - time.monotonic()),
+                                                   quarantine_key=("分红事件", "新浪")))
             source_health.record("分红事件", "新浪", True)
         except Exception as error:
             errors.append(redact_text(error, 160))

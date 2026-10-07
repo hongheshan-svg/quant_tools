@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import threading
 import time
+import math
 from datetime import datetime, timedelta
 
 import httpx
@@ -51,7 +52,8 @@ def is_index(code: str) -> bool:
 
 def _to_float(value) -> float:
     try:
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else 0.0
     except (TypeError, ValueError):
         return 0.0
 
@@ -86,6 +88,7 @@ def parse_kline(code: str, payload: dict, days: int) -> list[dict]:
             "open": open_, "high": high, "low": low, "close": close,
             "volume": volume, "amount": amount,
             "change_pct": (close - prev_close) / prev_close * 100 if prev_close else 0.0,
+            "price_adjustment": "forward" if data.get("qfqday") else "unadjusted",
         })
         prev_close = close
     if len(bars) > days:  # 多取的第一根只用来算涨跌幅
@@ -181,6 +184,10 @@ def fetch_fund_daily(code: str, days: int = 250) -> list[dict]:
         source_health.record("基金日线", label, False, str(e)[:200], time.monotonic() - begin)
         raise
     source_health.record("基金日线", label, True, elapsed=time.monotonic() - begin)
+    for bar in bars:
+        bar["source"] = label
+        bar["updated_at"] = datetime.now()
+        bar.setdefault("price_adjustment", "unadjusted")
     return bars
 
 

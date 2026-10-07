@@ -72,9 +72,8 @@ class StockProfileService:
             if row is None:
                 return {"status": UNAVAILABLE, "limitations": ["no_quote"]}
             data = {"trade_date": row.trade_date, "close": row.close, "change_pct": row.change_pct}
-            if kind == "stock":
-                data.update(source=row.source, price_adjustment=row.price_adjustment,
-                            updated_at=row.updated_at.isoformat(timespec="seconds") if row.updated_at else None)
+            data.update(source=row.source, price_adjustment=row.price_adjustment,
+                        updated_at=row.updated_at.isoformat(timespec="seconds") if row.updated_at else None)
             name = row.name or ""
         if kind == "stock" and not name:
             from src.services.stock_search import StockSearch
@@ -82,8 +81,12 @@ class StockProfileService:
             hit = next((r for r in StockSearch(self.db_path).search(code, limit=3) if r["code"] == code), None)
             name = hit["name"] if hit else ""
         # 比全市场最新的行情日早（停牌或只补齐到更早的日线），可用但不是最新
+        from src.services.data_freshness import daily_quality
+        quality = daily_quality(data["trade_date"], data.get("updated_at"), allow_partial=True)
         stale = bool(latest_market and data["trade_date"] < latest_market)
-        return {"status": PARTIAL if stale else FRESH, "limitations": ["stale_quote"] if stale else [], "data": data, "name": name}
+        limits = quality["limitations"] or (["stale_quote"] if stale else [])
+        return {"status": PARTIAL if limits else FRESH, "limitations": limits,
+                "data": {**data, "quality": quality}, "name": name}
 
     def _research(self, code: str) -> dict[str, Any]:
         latest = self.pipeline.latest_diagnosis(code)

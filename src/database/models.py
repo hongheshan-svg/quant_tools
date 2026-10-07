@@ -896,6 +896,9 @@ class FundDaily(Base):
     volume = Column(Float, comment="成交量（份/股）")
     amount = Column(Float, comment="成交额（元）；指数无此数据时为 0")
     change_pct = Column(Float, comment="涨跌幅 %")
+    source = Column(String(60), comment="日线实际来源")
+    price_adjustment = Column(String(30), comment="已知复权口径")
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now, comment="日线取得时刻")
     created_at = Column(DateTime, default=datetime.now)
 
     __table_args__ = (

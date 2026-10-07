@@ -9,6 +9,7 @@ from src.schemas.research import AnalysisContextPack, ContextBlock, ContextItem,
 from src.utils.redaction import redact
 from src.utils.stock_code import resolve_identity
 from src.services.opinion_validity import valid_score
+from src.services.data_freshness import iso_timestamp
 
 EVIDENCE_LABELS = {
     "quote": "行情", "daily": "日线", "technical": "技术面", "flow": "资金流", "chips": "筹码",
@@ -58,6 +59,12 @@ def build_context_pack(context: dict, run_log=None) -> dict[str, Any]:
         "notices": ("个股新闻公告", context.get("notices_evidence") or [], "东方财富公告", None),
     }
     for key, (label, value, source, as_of) in specifications.items():
+        raw_times = value if isinstance(value, dict) else {}
+        if key in ("daily", "technical"):
+            raw_times = quote
+        times = {"provider_timestamp": iso_timestamp(raw_times.get("provider_timestamp") or raw_times.get("observed_at")),
+                 "fetched_at": iso_timestamp(raw_times.get("fetched_at") or raw_times.get("collected_at") or raw_times.get("updated_at")),
+                 "timestamp": iso_timestamp(raw_times.get("timestamp"))}
         step = steps.get(label) or (steps.get("行情与日线") if key in ("quote", "daily") else None)
         missing = label in quality.get("missing", []) or not has_evidence(value)
         if key == "daily" and not (value.get("bars") or value.get("summary") or value.get("bar_count")):
@@ -76,9 +83,9 @@ def build_context_pack(context: dict, run_log=None) -> dict[str, Any]:
         elif key in ("quote", "daily", "technical", "chips") and as_of and (context.get("phase") or {}).get("effective_daily_bar_date") and as_of < str(context["phase"]["effective_daily_bar_date"]):
             status = "stale"
         values = value if isinstance(value, dict) else {"evidence" if isinstance(value, list) else "summary": value}
-        pack.blocks[key] = ContextBlock(status=status, source=source, as_of=as_of,
+        pack.blocks[key] = ContextBlock(status=status, source=source, as_of=as_of, **times,
                                        items={k: ContextItem(status="missing" if not has_evidence(v) else status, value=v, source=source, as_of=as_of,
-                                                              missing_reason="not_collected" if not has_evidence(v) else None) for k, v in values.items()},
+                                                              **times, missing_reason="not_collected" if not has_evidence(v) else None) for k, v in values.items()},
                                        limitations=[status] if status != "available" else [])
     return pack.to_safe_dict()
 
@@ -117,7 +124,8 @@ def local_context_pack(code: str, db_path: str) -> dict:
         news = session.query(FinanceNews).filter(FinanceNews.title.contains(identity.code), FinanceNews.news_time >= datetime.now() - timedelta(days=7), FinanceNews.news_time <= datetime.now()).order_by(FinanceNews.news_time.desc()).limit(10).all()
     return build_context_pack({"code": identity.code, "name": quote.get("name", ""), "quote": quote,
         "daily": {"bars": bars}, "fundamentals": fundamentals,
-        "data_quality": {"bar_count": len(bars)}, "news_evidence": [{"title": n.title, "source": n.source, "news_time": str(n.news_time or "")} for n in news]})
+        "data_quality": {"bar_count": len(bars)}, "news_evidence": [{"title": n.title, "source": n.source,
+        "news_time": str(n.news_time or ""), "collected_at": iso_timestamp(n.collected_at)} for n in news]})
 
 
 def build_research_artifact(result: dict, report_id: int | None = None) -> dict[str, Any]:
@@ -139,7 +147,11 @@ def build_research_artifact(result: dict, report_id: int | None = None) -> dict[
                              "source": details.get("source") or item.get("source"), "as_of": str(details.get("published_at") or details.get("published") or details.get("news_time") or details.get("date") or item.get("as_of") or "") or None,
                              "summary": redact(_summary(details.get("summary") or details.get("content") or entry))[:1200],
                              "freshness": "stale" if status == "stale" else "fresh" if item.get("as_of") and status == "available" else "unknown",
-                             "quality_level": "usable" if status == "available" else "limited", "metadata": {"status": status}})
+                             "quality_level": "usable" if status == "available" else "limited",
+                             "provider_timestamp": iso_timestamp(details.get("provider_timestamp") or details.get("published_at") or details.get("published") or details.get("news_time")) or item.get("provider_timestamp"),
+                             "fetched_at": iso_timestamp(details.get("fetched_at") or details.get("collected_at")) or item.get("fetched_at"),
+                             "timestamp": item.get("timestamp"),
+                             "metadata": {"status": status}})
     invalidations = [{"id": "reassessment", "category": "manual", "description": result.get("invalidation") or "研究条件或证据发生变化时重新评估"}]
     stop = (result.get("battle_plan") or {}).get("stop_loss")
     try:

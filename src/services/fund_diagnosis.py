@@ -218,6 +218,8 @@ class FundDiagnosisService(StockDiagnosisService):
             quote = {
                 "trade_date": last.trade_date, "close": last.close, "change_pct": last.change_pct,
                 "amount_yi": round((last.amount or 0) / 1e8, 2),
+                "source": last.source, "price_adjustment": last.price_adjustment,
+                "updated_at": last.updated_at.isoformat() if last.updated_at else None,
             }
         recent = [f"{b.trade_date} 收{b.close} {b.change_pct:+.2f}%" for b in bars[-RECENT_BARS:] if b.close and b.change_pct is not None]
         closes = [b.close for b in bars if b.close]

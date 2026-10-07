@@ -396,15 +396,28 @@ class StrategyScreener:
     def run(self, trade_date: str | None = None, save: bool = True, point_in_time: bool = False) -> ScreenResult:
         """point_in_time=True 用于历史回测：只用 trade_date 当天及以前的数据，策略权重不生效。"""
         trading_calendar.load(self.db_path, refresh=False)
+        from src.services.market_phase import current_phase
+        expected = current_phase().get("effective_daily_bar_date")
+        historical = point_in_time or bool(trade_date and expected and trade_date < expected)
+        if historical:
+            point_in_time = True
         with get_db_session(self.db_path) as session:
             trade_date = trade_date or self._latest_trade_date(session)
             if not trade_date:
                 return ScreenResult(notes=["没有行情数据，请先采集"], status="partial")
             result = ScreenResult(trade_date=trade_date)
+            from src.services.data_freshness import daily_quality
+            date_quality = daily_quality(trade_date, historical=historical)
             snapshot = self._snapshot(session, trade_date)
             pool = [r for r in snapshot.values() if self._in_pool(r)]
             candidates = [r for r in pool if (r.amount or 0) >= PRE_FILTER_AMOUNT]
             bars = self._history(session, trade_date, [r.code for r in candidates])
+            if not historical:
+                for row in snapshot.values():
+                    quality = daily_quality(row.trade_date, getattr(row, "updated_at", None))
+                    if quality["status"] != "available":
+                        date_quality = quality
+                        break
             stock_themes = self._stock_themes(session, trade_date)
             industries = {}
             for row in session.query(LimitUpStock).filter(LimitUpStock.trade_date <= trade_date).order_by(LimitUpStock.trade_date.desc()).limit(20000):
@@ -416,7 +429,10 @@ class StrategyScreener:
         result.regime = self._regime(trade_date, point_in_time)
         result.weights = {} if point_in_time else self.strategy_weights()
         result.pipeline = {"version": "screening-pipeline-v1", "mode": "point_in_time" if point_in_time else "live"}
-        if not point_in_time and self.pipeline_cfg.get("financial_enrichment", False):
+        result.pipeline["daily_quality"] = date_quality
+        if date_quality["status"] != "available":
+            result.notes.append("行情不是当前完整交易日，禁止联网补数、模型重排及覆盖成功批次：" + "、".join(date_quality["limitations"]))
+        if not point_in_time and date_quality["status"] == "available" and self.pipeline_cfg.get("financial_enrichment", False):
             self._enrich_financials(candidates, fundamentals, result)
 
         features = []
@@ -449,7 +465,7 @@ class StrategyScreener:
                                 f"可运行 python scripts/fetch_history.py --mode daily --start-date {start} 补齐")
         if result.regime in ("", "未知"):
             result.notes.append("大盘环境未知，所有策略按适配处理")
-        complete = len(snapshot) >= self.minimum_universe and history_complete
+        complete = len(snapshot) >= self.minimum_universe and history_complete and date_quality["status"] == "available"
         result.picks = self._rank(features, result, result.weights, point_in_time=point_in_time, allow_llm=complete)
         result.status = "success" if complete else "partial"
         if not complete:

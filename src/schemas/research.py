@@ -10,7 +10,24 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 EvidenceStatus = Literal["available", "missing", "not_supported", "fallback", "stale", "estimated", "partial", "fetch_failed"]
 
 
-class ContextItem(BaseModel):
+class EvidenceTimes(BaseModel):
+    provider_timestamp: str | None = None
+    fetched_at: str | None = None
+    timestamp: str | None = None
+
+    @field_validator("provider_timestamp", "fetched_at", "timestamp")
+    @classmethod
+    def valid_timestamp(cls, value):
+        if value is None:
+            return None
+        from src.services.data_freshness import iso_timestamp
+        stamp = iso_timestamp(value)
+        if stamp is None:
+            raise ValueError("证据时刻必须是明确的 ISO 日期时间")
+        return stamp
+
+
+class ContextItem(EvidenceTimes):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     status: EvidenceStatus
     value: Any = None
@@ -19,7 +36,7 @@ class ContextItem(BaseModel):
     missing_reason: str | None = None
 
 
-class ContextBlock(BaseModel):
+class ContextBlock(EvidenceTimes):
     model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
     status: EvidenceStatus
     items: dict[str, ContextItem] = Field(default_factory=dict)
@@ -59,7 +76,7 @@ class AnalysisContextPack(BaseModel):
         return redact(self.model_dump(mode="json"))
 
 
-class ResearchEvidence(BaseModel):
+class ResearchEvidence(EvidenceTimes):
     id: str
     source_type: str
     title: str
