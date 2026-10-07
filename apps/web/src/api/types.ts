@@ -597,6 +597,35 @@ export interface ScreenResult {
   notes: string[]
 }
 
+export interface ETFRotationSettings {
+  risk_assets: string[]
+  safe_asset: string
+  start: string
+  end: string
+  lookback_days: number
+  top_n: number
+  rebalance: 'weekly' | 'monthly'
+  switch_buffer_pct: number
+  cost_bps: number
+  refresh: boolean
+}
+export interface ETFRotationResult {
+  status: string
+  as_of: string
+  limitations: string[]
+  metrics: Record<string, number | null>
+  benchmark_metrics: Record<string, number | null>
+  annual_returns: Record<string, number | null>
+  parameter_sweep: { lookback_days: number; total_return: number | null; max_drawdown: number | null }[]
+  curve: { date: string; equity: number; benchmark: number }[]
+  trades: { signal_date: string; execution_date: string; to_weights: Record<string, number>; turnover: number }[]
+  ranking: { code: string; momentum: number | null; eligible: boolean }[]
+  current_weights: Record<string, number>
+  next_action: { signal_date: string; execution_date: string | null; weights: Record<string, number> }
+  price_snapshot_hash: string
+  note: string
+}
+
 // ---------- 绩效 ----------
 
 export interface SignalSummaryRow {

@@ -52,6 +52,8 @@ export const api = {
   alerts: (params: { limit?: number; offset?: number; severity?: string; code?: string; channel?: string } = {}) => http.get<T.AlertRow[]>('/alerts', params),
   screeningSettings: () => http.get<T.ScreeningSettings>('/settings/screening'),
   saveScreeningSettings: (body: T.ScreeningSettings) => http.put<T.ScreeningSettings>('/settings/screening', body),
+  etfRotationSettings: () => http.get<T.ETFRotationSettings>('/screening/rotation/settings'),
+  etfRotationRun: (body: T.ETFRotationSettings) => http.post<T.Task<T.ETFRotationResult>>('/screening/rotation/run', body),
   checkAlerts: () => http.post<T.Task>('/alerts/check'),
   alertRules: () => http.get<T.AlertRules>('/alerts/rules'),
   saveAlertRules: (rules: T.AlertRule[]) => http.put<{ rules: T.AlertRule[] }>('/alerts/rules', { rules }),

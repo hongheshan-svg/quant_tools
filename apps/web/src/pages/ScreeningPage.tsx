@@ -9,6 +9,7 @@ import { useApi } from '@/hooks/useApi'
 import { useT } from '@/i18n'
 import { progressText, useTask } from '@/hooks/useTask'
 import { fmtNum } from '@/utils/format'
+import { ETFRotationPanel } from '@/components/ETFRotationPanel'
 
 const rate = (v: number | null) => <Pct value={v} digits={1} signed={false} />
 
@@ -162,6 +163,7 @@ export function ScreeningPage() {
           </Card>
         </div>
       )}
+      <div className="mt-4"><ETFRotationPanel /></div>
     </div>
   )
 }

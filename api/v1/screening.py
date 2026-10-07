@@ -6,12 +6,39 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, ConfigDict, Field
 
 from api.deps import get_pipeline, get_tasks
 from api.tasks import TaskManager, business_result_error
 from src.services.pipeline_service import PipelineService
 
 router = APIRouter(prefix="/screening", tags=["screening"])
+
+
+class RotationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    risk_assets: list[str] | None = Field(None, min_length=1, max_length=30)
+    safe_asset: str | None = None
+    start: str | None = None
+    end: str | None = None
+    lookback_days: int | None = Field(None, ge=1, le=1000)
+    top_n: int | None = Field(None, ge=1, le=30)
+    rebalance: str | None = Field(None, pattern="^(weekly|monthly)$")
+    switch_buffer_pct: float | None = Field(None, ge=0, le=100)
+    cost_bps: float | None = Field(None, ge=0, lt=10000)
+    refresh: bool = False
+
+
+@router.get("/rotation/settings")
+def rotation_settings(pipeline: PipelineService = Depends(get_pipeline)):
+    from src.services.etf_rotation import ETFRotationService
+    return ETFRotationService(pipeline.config).settings()
+
+
+@router.post("/rotation/run")
+def rotation_run(body: RotationRequest, tasks: TaskManager = Depends(get_tasks), pipeline: PipelineService = Depends(get_pipeline)):
+    from src.services.etf_rotation import ETFRotationService
+    return tasks.submit("etf_rotation", ETFRotationService(pipeline.config).run, body.model_dump(exclude_none=True), dedupe_key="etf_rotation", label="ETF双动量轮动")
 
 
 @router.get("")

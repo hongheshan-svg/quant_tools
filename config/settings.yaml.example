@@ -551,6 +551,20 @@ desktop:
   realtime_ai_workers: 2
 
 # --- 日志配置 ---
+etf_rotation:
+  risk_assets: ["510300", "510500", "159915", "518880", "511010"] # 固定国内 ETF 池
+  safe_asset: "511880"          # 留空时防守槽为现金
+  lookback_days: 60
+  rebalance: "weekly"           # weekly / monthly，最后交易日产生信号
+  top_n: 1
+  switch_buffer_pct: 2.0
+  cost_bps: 10.0                # 单边交易成本，换仓两条证券腿分别收费
+  start: "2018-01-01"
+  end: ""                      # 空为最近已收盘交易日
+  min_years: 8                  # 未达到此跨度仍展示结果，但明确降级
+  refresh: false               # 手动开启更新前复权历史，不接真实自动交易
+
+# --- 日志配置 ---
 logging:
   level: "INFO"
   rotation: "10 MB"
