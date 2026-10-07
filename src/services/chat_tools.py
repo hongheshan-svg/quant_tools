@@ -8,6 +8,8 @@ technical、diagnosis；资金流、筹码、业绩、新闻公告等个股专�
 
 from __future__ import annotations
 
+import json
+
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -54,6 +56,7 @@ TOOL_SPECS: tuple[ToolSpec, ...] = (
     ToolSpec("market", "大盘环境", "无", "指数、涨跌家数、成交额、量化大盘环境、主线和降温板块、重要快讯"),
     ToolSpec("screening", "策略选股", "code（可选）", "最近一次全市场策略选股结果；给 code 时说明该股是否入选及理由"),
     ToolSpec("position", "持仓", "code（可选）", "模拟盘和实盘记账的持仓、成本、止损价和目标价"),
+    ToolSpec("portfolio_risk", "组合风险", "account（paper / real / real:账户名，可选）", "只读组合仓位、集中度、价格质量及现金流调整回撤"),
     ToolSpec("diagnosis", "历史诊断", "code", "该股最近一次 AI 诊断的结论和评分"),
     ToolSpec("watchlist", "自选股", "无", "自选股列表、最新涨跌和每只最近一次 AI 诊断结论"),
 )
@@ -68,7 +71,7 @@ def native_tool_schemas() -> list[dict]:
     tools = []
     for spec in TOOL_SPECS:
         properties = {}
-        for name in ("code", "query", "days"):
+        for name in ("code", "query", "days", "account"):
             if name in spec.args:
                 properties[name] = {"type": "integer" if name == "days" else "string"}
         required = [name for name in properties if name != "days" and "可选" not in spec.args]
@@ -364,6 +367,17 @@ class ChatTools:
             f"{p['name']}({p['code']}) {'+'.join(p['labels'])} {p['score']:.0f}分"
             f"{'' if p['fits_regime'] else '（与大盘环境不匹配）'}：{'；'.join(p['reasons'])}" for p in picks[:15]
         )
+
+    def _tool_portfolio_risk(self, args: dict) -> str:
+        from src.services.portfolio_risk import PortfolioRiskService
+
+        account = str(args.get('account') or 'paper').strip()
+        if account not in {'paper', 'real'} and not (account.startswith('real:') and account[5:].strip()):
+            raise ValueError('账户应为 paper、real 或 real:账户名')
+        report = PortfolioRiskService(self.config, account=account).report()
+        # 质量先于数值，截断也不能把估算值误当成已验证的风险结论。
+        return json.dumps({key: report.get(key) for key in
+                           ('account', 'quality', 'cash_known', 'drawdown', 'exposure', 'warnings', 'as_of')}, ensure_ascii=False)
 
     def _tool_position(self, args: dict) -> str:
         from src.services.real_portfolio import RealPortfolioService

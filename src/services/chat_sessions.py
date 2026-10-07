@@ -10,6 +10,8 @@ import threading
 import uuid
 from dataclasses import asdict
 from typing import Any, Callable, Iterator
+from copy import deepcopy
+import time
 
 from src.config_loader import load_config
 from src.database.db import get_db_session
@@ -63,6 +65,77 @@ class ChatSessionStore:
         chat.turns = [ChatTurn(**t) for t in record["turns"]]
         return chat
 
+    def _intent_stream(self, chat, question, perspective, cancel, stock_context, skills):
+        """一个用户问题保持一条记录，子任务按顺序各自锁定证券范围。"""
+        from src.services.chat_tools import ChatTools
+        if not isinstance(getattr(chat, 'tools', None), ChatTools):
+            extra = {"stock_context": stock_context, "skills": skills} if stock_context or skills else {}
+            yield from chat.ask_stream(question, perspective, cancel=cancel, **extra)
+            return
+        from src.services.web_intent import resolve
+        state = deepcopy(chat.turns[-1].intent_state) if chat.turns else {}
+        plan = resolve(question, self.db_path, state, stock_context)
+        aggregate = ChatTurn(question=question, perspective=perspective, stock_context=stock_context, skills=skills or [], intent_plan=plan['tasks'], intent_state=plan['state'])
+        before = len(chat.turns)
+        if plan['requires_confirmation']:
+            aggregate.answer = plan['message']
+            chat.turns.append(aggregate)
+            yield {"type": "intent", "tasks": plan['tasks'], "requires_confirmation": True, "candidates": (plan['state'].get('pending') or {}).get('candidates', [])}
+            yield {"type": "delta", "text": aggregate.answer}
+            yield {"type": "done", "turn": asdict(aggregate)}
+            return
+        from src.services.execution_budget import ExecutionBudget
+        budget = ExecutionBudget.from_config(chat.config)
+        original_config = chat.config
+        chat.config = {**chat.config, "_execution_deadline": budget.deadline}
+        yield {"type": "intent", "tasks": plan['tasks'], "requires_confirmation": False}
+        partial = None
+        try:
+            for task in plan['tasks']:
+                targets = task['targets'] or [None]
+                for target in targets:
+                    if cancel and cancel.is_set():
+                        aggregate.error = "已取消"
+                        break
+                    if not budget.remaining():
+                        aggregate.stage_events.append({"type": "stage", "stage_id": aggregate.message_id + ':budget', "name": task['kind'], "status": "budget_skipped", "elapsed_ms": 0})
+                        yield aggregate.stage_events[-1]
+                        aggregate.error = "问股超时：已达到分析总时长上限"
+                        break
+                    scope = {"code": target['code']} if target else None
+                    title = target.get('name') or target['code'] if target else task['kind']
+                    heading = f"\n\n### {title}\n\n" if len(plan['tasks']) > 1 or len(targets) > 1 else ''
+                    aggregate.answer += heading
+                    if heading: yield {"type": "delta", "text": heading}
+                    chat.config = {**chat.config, '_web_intent_kind': task['kind']}
+                    partial = chat.ask_stream(task['question'], perspective, cancel=cancel, stock_context=scope, skills=skills)
+                    for event in partial:
+                        if event['type'] == 'done':
+                            child = chat.turns[-1]
+                            aggregate.tools.extend(child.tools)
+                            aggregate.error = child.error or aggregate.error
+                            aggregate.failure_detail = child.failure_detail or aggregate.failure_detail
+                            aggregate.context_pack = child.context_pack or aggregate.context_pack
+                            aggregate.run_log = child.run_log
+                        else:
+                            if event['type'] == 'delta': aggregate.answer += event['text']
+                            elif event['type'] == 'stage': aggregate.stage_events.append(event)
+                            yield event
+                    partial = None
+                    if aggregate.error: break
+                if aggregate.error: break
+        finally:
+            if partial:
+                partial.close()
+                aggregate.error = aggregate.error or "已取消"
+                if len(chat.turns) > before:
+                    aggregate.stage_events = [*aggregate.stage_events, *[event for event in chat.turns[-1].stage_events if event not in aggregate.stage_events]]
+            chat.turns[before:] = [aggregate]
+            chat.config = original_config
+        public = asdict(aggregate)
+        public['tools'] = [{key: value for key, value in tool.items() if key != 'result'} for tool in aggregate.tools]
+        yield {"type": "done", "turn": public}
+
     def ask(self, session_id: str, question: str, perspective: str | None = None,
             progress: Callable[[str], None] | None = None, *, stock_context: dict | None = None,
             skills: list[str] | None = None) -> dict[str, Any]:
@@ -72,8 +145,14 @@ class ChatSessionStore:
             if record is None:
                 raise KeyError(session_id)
             chat = self._restore(record)
-            extra = {"stock_context": stock_context, "skills": skills} if stock_context or skills else {}
-            turn = chat.ask(question, perspective or record["perspective"] or "综合", progress=progress, **extra)
+            from src.services.chat_tools import ChatTools
+            if isinstance(getattr(chat, 'tools', None), ChatTools):
+                for event in self._intent_stream(chat, question, perspective or record['perspective'] or '综合', None, stock_context, skills):
+                    if progress and event['type'] == 'status': progress(event['text'])
+                turn = chat.turns[-1]
+            else:
+                extra = {"stock_context": stock_context, "skills": skills} if stock_context or skills else {}
+                turn = chat.ask(question, perspective or record["perspective"] or "综合", progress=progress, **extra)
             with get_db_session(self.db_path) as session:
                 r = session.get(ChatSessionRecord, session_id)
                 r.turns_json = json.dumps([asdict(t) for t in chat.turns], ensure_ascii=False)
@@ -103,8 +182,7 @@ class ChatSessionStore:
             with self._locks_guard:
                 self._cancels[session_id] = cancel
             try:
-                extra = {"stock_context": stock_context, "skills": skills} if stock_context or skills else {}
-                yield from chat.ask_stream(question, perspective or record["perspective"] or "综合", cancel=cancel, **extra)
+                yield from self._intent_stream(chat, question, perspective or record["perspective"] or "综合", cancel, stock_context, skills)
             finally:
                 with self._locks_guard:
                     if self._cancels.get(session_id) is cancel:

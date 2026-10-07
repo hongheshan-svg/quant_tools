@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ApiError } from '@/api/client'
 import { api } from '@/api/endpoints'
-import type { ChatSession, ChatSkill, ChatTurn } from '@/api/types'
+import type { ChatSession, ChatSkill, ChatStage, ChatTurn } from '@/api/types'
+import { ChatStages } from '@/components/ChatStages'
 import { Markdown } from '@/components/Markdown'
 import { Button, Card, PageHeader, Select, Spinner, Textarea, Input } from '@/components/ui'
 import { useApi } from '@/hooks/useApi'
@@ -18,11 +19,12 @@ interface Live {
   status: string
   tools: string[]
   answer: string
+  stages: ChatStage[]
 }
 
 const EXAMPLES = ['中远海控现在能买吗？止损放哪？', '今天的主线是什么，龙头是谁？', '我的持仓风险大吗？', '用龙回头的标准看看招商轮船']
 
-function TurnView({ turn }: { turn: ChatTurn }) {
+function TurnView({ turn, onChoose }: { turn: ChatTurn; onChoose: (code: string) => void }) {
   const t = useT()
   const labels = [...new Set(turn.tools.map((x) => x.label))]
   return (
@@ -34,7 +36,10 @@ function TurnView({ turn }: { turn: ChatTurn }) {
       </div>
       <div className="rounded-lg border border-line bg-panel-2 px-3 py-2">
         {turn.answer ? <Markdown text={turn.answer} /> : <p className="text-sm text-danger">{t(turn.error || '没有回答')}</p>}
+        {turn.error && turn.answer && <p role="status" className="mt-2 text-sm text-danger">{t(turn.error)}</p>}
       </div>
+      {!!turn.intent_state?.pending?.candidates?.length && <div className="flex gap-2">{turn.intent_state.pending.candidates.map((candidate) => <Button key={candidate.code} onClick={() => onChoose(candidate.code)}>{candidate.name} ({candidate.code})</Button>)}</div>}
+      <ChatStages events={turn.stage_events} />
     </div>
   )
 }
@@ -111,7 +116,7 @@ export function ChatPage() {
     const sid = current.id
     const controller = new AbortController()
     abortRef.current = controller
-    const state: Live = { status: t('思考中'), tools: [], answer: '' }
+    const state: Live = { status: t('思考中'), tools: [], answer: '', stages: [] }
     setLive({ ...state })
     let received = false
     let doneTurn: ChatTurn | null = null
@@ -122,15 +127,18 @@ export function ChatPage() {
         onEvent: (ev) => {
           received = true
           if (ev.type === 'status') state.status = ev.text
+          else if (ev.type === 'stage') state.stages = [...state.stages, ev]
           else if (ev.type === 'tool') state.tools = [...state.tools, ev.label]
+          else if (ev.type === 'intent') state.status = t(ev.requires_confirmation ? '等待证券确认' : '按任务顺序执行')
           else if (ev.type === 'delta') state.answer += ev.text
           else if (ev.type === 'error') streamError = ev.message
           else if (ev.type === 'done') doneTurn = { ...ev.turn, tools: ev.turn.tools.map((x) => ({ ...x, result: '' })) }
+          else if (ev.type !== 'tool_result') state.stages = [...state.stages, { type: 'stage', stage_id: `unknown:${state.stages.length}`, name: `未知事件 ${(ev as { type: string }).type}`, status: 'unknown', elapsed_ms: 0, reason: JSON.stringify(ev).slice(0, 300) }]
           setLive({ ...state })
         },
       }, context)
       if (doneTurn) {
-        const turn: ChatTurn = doneTurn
+        const turn: ChatTurn = { ...(doneTurn as ChatTurn), stage_events: [...((doneTurn as ChatTurn).stage_events ?? state.stages), ...state.stages.filter((event) => event.status === 'unknown')] }
         setSession((s) => (s ? { ...s, turns: [...s.turns, turn] } : s))
         void sessions.reload()
         if (turn.error && !turn.answer) {
@@ -148,6 +156,7 @@ export function ChatPage() {
         const turn: ChatTurn = {
           question: q, answer: state.answer, perspective, tools: [], error: t('已取消'),
           asked_at: new Date().toLocaleString('sv').slice(0, 16),
+          stage_events: state.stages.map((event) => event.status === 'started' ? { ...event, status: 'cancelled', reason: t('已取消') } : event),
         }
         setSession((s) => (s ? { ...s, turns: [...s.turns, turn] } : s))
         void sessions.reload()
@@ -230,7 +239,7 @@ export function ChatPage() {
                 ))}
               </div>
             )}
-            {session?.turns.map((turn, i) => <TurnView key={i} turn={turn} />)}
+            {session?.turns.map((turn, i) => <TurnView key={i} turn={turn} onChoose={(code) => void send(code)} />)}
             {pending && (
               <div className="space-y-2">
                 <div className="ml-auto w-fit max-w-[85%] rounded-lg bg-accent-strong/20 px-3 py-2 text-sm">{pending}</div>
@@ -242,6 +251,7 @@ export function ChatPage() {
                 {live?.answer ? (
                   <div className="rounded-lg border border-line bg-panel-2 px-3 py-2"><Markdown text={live.answer} /></div>
                 ) : null}
+                <ChatStages events={live?.stages} live />
                 <Spinner text={live ? live.status : progressText(ask.progress) || t('思考中…')} />
               </div>
             )}

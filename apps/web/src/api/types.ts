@@ -614,10 +614,11 @@ export interface ScreeningExplanation {
 export interface SnapshotCheck {
   mode: string
   network_used: boolean
-  strategies: { strategy: string; label: string; matched: boolean | null; score: number | null; checks: { condition: unknown; status: string; inputs: Record<string, unknown>; missing: string[] }[] }[]
+  strategies: { strategy: string; label: string; matched: boolean | null; score: number | null; checks: { condition: unknown; status: string; inputs: Record<string, unknown>; missing: string[]; predicates?: { condition: string; value: boolean | null }[] }[] }[]
 }
 
 export interface ETFRotationSettings {
+  min_years?: number
   risk_assets: string[]
   safe_asset: string
   start: string
@@ -822,9 +823,32 @@ export interface ChatTurn {
   stock_context?: { code: string } | null
   skills?: string[]
   run_log?: RunLog
+  stage_events?: ChatStage[]
+  intent_plan?: ChatIntent[]
+  intent_state?: { pending?: { candidates: { code: string; name: string }[] } | null }
+}
+
+export interface ChatStage {
+  type: 'stage'
+  stage_id: string
+  name: string
+  status: string
+  elapsed_ms: number
+  remaining_ms?: number
+  occurred_at?: string
+  reason?: string | null
+  scope?: { code: string } | null
+}
+
+export interface ChatIntent {
+  kind: string
+  question: string
+  targets: { code: string; name?: string }[]
 }
 
 export type ChatStreamEvent =
+  | ChatStage
+  | { type: 'intent'; tasks: ChatIntent[]; requires_confirmation: boolean; candidates?: { code: string; name: string }[] }
   | { type: 'status'; text: string }
   | { type: 'tool'; name: string; label: string; args: Dict }
   | { type: 'tool_result'; name: string; label: string; summary: string }
@@ -851,6 +875,8 @@ export interface ChatSession {
 // ---------- 自选股 ----------
 
 export interface WatchlistRow {
+  quote_quality?: { status: string; reason?: string; expected_date?: string }
+  state?: { status: string; label: string; next_action: 'wait' | 'retry_query' | 'analyze' | 'view_report'; reason: string; task_id?: string }
   quote_source?: string | null
   code: string
   name: string
@@ -1082,6 +1108,7 @@ export interface AlertRuleField {
 export interface AlertRuleType {
   label: string
   fields: AlertRuleField[]
+  scopes?: string[]
 }
 
 export interface AlertRule {
@@ -1095,6 +1122,7 @@ export interface AlertRule {
 export interface AlertRules {
   rules: AlertRule[]
   types: Record<string, AlertRuleType>
+  summary?: { source: string; readonly: boolean; configured: number; valid: number; invalid: number; disabled: number; effective: number; file_configured: number; environment_override: boolean }
 }
 
 export interface AlertRuleTest {

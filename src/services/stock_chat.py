@@ -206,9 +206,13 @@ class ChatTurn:
     perspective: str = "综合"
     tools: list[dict[str, Any]] = field(default_factory=list)   # [{"name", "label", "args", "result"}]
     error: str = ""
+    failure_detail: str = ''
     stock_context: dict[str, Any] | None = None
     skills: list[str] = field(default_factory=list)
     run_log: dict[str, Any] = field(default_factory=dict)
+    intent_plan: list[dict] = field(default_factory=list)
+    intent_state: dict = field(default_factory=dict)
+    stage_events: list[dict] = field(default_factory=list)
     asked_at: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M"))
 
 
@@ -244,6 +248,16 @@ class StockChatSession:
                 (self.config.get("diagnosis") or {}).get("isolate_process", False))
 
     def _call_tool(self, name: str, args: dict, turn: ChatTurn) -> str:
+        intent = self.config.get('_web_intent_kind')
+        allowed = {
+            'quote': {'resolve_stock', 'quote', 'context_pack'},
+            'market_review': {'market', 'theme', 'web_search'},
+            'sector_analysis': {'market', 'theme', 'web_search', 'news', 'resolve_stock', 'context_pack'},
+            'strategy_screening': {'screening', 'market', 'theme'},
+            'portfolio_risk': {'position', 'portfolio_risk', 'market'},
+        }.get(intent)
+        if allowed is not None and name not in allowed:
+            return '工具被拒绝：超出当前任务的只读工具范围'
         from src.utils.stock_code import resolve_identity
         context_code = (turn.stock_context or {}).get("code")
         if context_code and name not in ("market", "watchlist"):
@@ -415,6 +429,50 @@ class StockChatSession:
     def ask_stream(self, question: str, perspective: str = "综合",
                    cancel: threading.Event | None = None, *, stock_context: dict | None = None,
                    skills: list[str] | None = None) -> Iterator[dict[str, Any]]:
+        from src.services.chat_stages import StageTracker
+        tracker = StageTracker(__import__('uuid').uuid4().hex, ExecutionBudget.from_config(self.config))
+        isolated = self._should_isolate()
+        stream = self._ask_stream_raw(question, perspective, cancel, stock_context=stock_context, skills=skills)
+        current = None
+        before = len(self.turns)
+        try:
+            for event in stream:
+                if event["type"] == "stage":
+                    tracker.events.append(event)
+                    if event.get("status") == "started": tracker.active[event["stage_id"]] = time.monotonic()
+                    else: tracker.active.pop(event.get("stage_id"), None)
+                elif not isolated and event["type"] in ("status", "tool"):
+                    if event["type"] == "tool" or event.get("text") == "思考中":
+                        if current:
+                            done = tracker.finish(current)
+                            if done: yield done
+                        started = tracker.start(event.get("label") or "模型思考", stock_context)
+                        current = started["stage_id"]
+                        yield started
+                elif not isolated and event["type"] == "tool_result" and current:
+                    summary = event.get("summary", "")
+                    status = "timeout" if "超时" in summary else "budget_skipped" if "预算" in summary and "跳过" in summary else "failed" if "失败" in summary or "拒绝" in summary else "completed"
+                    done = tracker.finish(current, status, summary if status != 'completed' else None)
+                    if done: yield done
+                    current = None
+                if event["type"] == "done":
+                    error = event["turn"].get("error")
+                    if error and not tracker.events:
+                        yield tracker.start("问股", stock_context)
+                    reason = event['turn'].get('failure_detail') or error
+                    for done in tracker.close("timeout" if error and "超时" in error else "cancelled" if error == "已取消" else "failed" if error else "completed", reason):
+                        yield done
+                    event["turn"]["stage_events"] = tracker.events
+                yield event
+        finally:
+            stream.close()
+            tracker.close("cancelled", "流已关闭")
+            if len(self.turns) > before:
+                self.turns[-1].stage_events = tracker.events or self.turns[-1].stage_events
+
+    def _ask_stream_raw(self, question: str, perspective: str = "综合",
+                        cancel: threading.Event | None = None, *, stock_context: dict | None = None,
+                        skills: list[str] | None = None) -> Iterator[dict[str, Any]]:
         """流式回答：产出 status / tool / tool_result / delta / error 事件，最后一定是 done（含完整 turn）。"""
         if self._should_isolate():
             yield from self._isolated_stream(question, perspective, cancel, stock_context, skills)
@@ -461,6 +519,7 @@ class StockChatSession:
                     run_log.llm(f"问股模型第 {round_no} 轮", "", False, (time.monotonic() - started) * 1000)
                     logger.error("AI 问股调用失败: {}", redact_text(e, 300))
                     turn.error = _failure_text(e)
+                    turn.failure_detail = redact_text(e, 300)
                     yield {"type": "error", "message": turn.error}
                     break
                 run_log.llm(f"问股模型第 {round_no} 轮", "", ok, (time.monotonic() - started) * 1000)
@@ -482,6 +541,10 @@ class StockChatSession:
                 yield {"type": "status", "text": "正在查询：" + "、".join(TOOL_LABELS.get(c["name"], c["name"]) for c in calls)}
                 for call in calls:
                     if cancelled():
+                        break
+                    if not budget.remaining():
+                        turn.error = "问股超时：已达到分析总时长上限"
+                        yield {"type": "stage", "stage_id": f"{turn.message_id}:skip:{call['name']}", "name": TOOL_LABELS.get(call['name'], call['name']), "status": "budget_skipped", "elapsed_ms": 0, "reason": turn.error}
                         break
                     args = call.get("args") if isinstance(call.get("args"), dict) else {}
                     label = TOOL_LABELS.get(call["name"], call["name"])
@@ -516,6 +579,8 @@ class StockChatSession:
 
     def _user_message(self, turn: ChatTurn, final: bool) -> str:
         parts = [f"当前时间：{datetime.now():%Y-%m-%d %H:%M}", self._perspective_text(turn.perspective)]
+        if self.config.get('_web_intent_kind'):
+            parts.append('【当前任务意图】' + self.config['_web_intent_kind'] + '。只处理这个子任务，其他意图由相邻子任务处理。')
         parts.extend(self._perspective_text(normalize_perspective(skill)) for skill in turn.skills)
         if turn.context_pack:
             parts.append("【统一研究证据】" + json.dumps(turn.context_pack, ensure_ascii=False))
@@ -539,7 +604,8 @@ class StockChatSession:
         max_chars = int((self.config.get("diagnosis") or {}).get("chat_context_chars", 12000))
         question = f"【本轮问题】{turn.question}"
         scope = "【当前股票范围】" + json.dumps(turn.stock_context, ensure_ascii=False) if turn.stock_context else ""
-        essential = "\n\n".join(part for part in (scope, question) if part)
+        intent = ('当前任务意图：' + self.config['_web_intent_kind'] + '；只处理这个子任务。') if self.config.get('_web_intent_kind') else ''
+        essential = "\n\n".join(part for part in (scope, intent, question) if part)
         tokens = (self.config.get("diagnosis") or {}).get("chat_context_tokens")
         if tokens:
             from src.services.chat_context import compress_context
