@@ -2,12 +2,14 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useBlocker, UNSAFE_DataRouterContext } from 'react-router-dom'
 import { useContext } from 'react'
 import { allowDiscardDrafts, hasSettingsDrafts, markDraft } from '@/utils/settingsDrafts'
+import { useT } from '@/i18n'
 
 function fingerprint(root: HTMLDivElement) {
-  return JSON.stringify(Array.from(root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input:not([type=file]),select,textarea')).map((field) => [field.name, field.getAttribute('aria-label'), field.value, 'checked' in field && field.checked]))
+  return JSON.stringify(Array.from(root.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input:not([type=file]),select,textarea')).filter((field) => !field.hasAttribute('data-draft-ignore')).map((field) => [field.name, field.getAttribute('aria-label'), field.value, 'checked' in field && field.checked]))
 }
 
 export function SettingsDraftBoundary({ id, paths, children }: { id: string; paths: string[]; children: ReactNode }) {
+  const t = useT()
   const root = useRef<HTMLDivElement>(null)
   const baseline = useRef('')
   const submitted = useRef('')
@@ -30,7 +32,8 @@ export function SettingsDraftBoundary({ id, paths, children }: { id: string; pat
       }
     }
     const reset = (event: Event) => { if ((event as CustomEvent<string>).detail === id) { baseline.current = fingerprint(element); mark(false) } }
-    const change = () => {
+    const change = (event: Event) => {
+      if (event.target instanceof Element && event.target.closest('[data-draft-ignore]')) return
       mark(fingerprint(element) !== baseline.current)
       // React 的状态和 DOM 提交可能晚于原生 change 捕获。
       queueMicrotask(() => mark(fingerprint(element) !== baseline.current))
@@ -50,7 +53,7 @@ export function SettingsDraftBoundary({ id, paths, children }: { id: string; pat
       markDraft(id, false)
     }
   }, [id, pathKey])
-  return <div ref={root} data-draft-id={id}>{dirty && <p role="status" className="mb-2 text-sm text-warn">有未保存的设置</p>}{children}</div>
+  return <div ref={root} data-draft-id={id}>{dirty && <p role="status" className="mb-2 text-sm text-warn">{t('有未保存的设置')}</p>}{children}</div>
 }
 
 function RouterGuard() {

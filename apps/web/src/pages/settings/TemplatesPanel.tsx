@@ -91,7 +91,7 @@ export function TemplatesPanel() {
       <p className="text-sm text-muted">{t('模板使用 Jinja2 语法；没有自定义模板时使用内置格式；模板出错时自动回退内置格式')}</p>
       <Card>
         <Field label="选择模板">
-          <Select aria-label={t('选择模板')} value={name} onChange={(e) => { if (allowDiscardDrafts()) setName(e.target.value) }}>
+          <Select data-draft-ignore aria-label={t('选择模板')} value={name} onChange={(e) => { if (allowDiscardDrafts()) setName(e.target.value) }}>
             {(list.data ?? []).map((x) => (
               <option key={x.name} value={x.name}>{t(x.label)}{x.custom ? ` (${t('自定义')})` : ''}</option>
             ))}
