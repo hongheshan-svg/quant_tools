@@ -1,0 +1,113 @@
+{
+  "date": "2026-10-07",
+  "local_commit": "44936fc4bcf9ef76122dc647dc68e859079a8408",
+  "upstream_commit": "ce364e457aab288863a5707e7b3df79786ad07f2",
+  "environment": "macOS / isolated temporary SQLite / fake providers / Chromium",
+  "production_data_used": false,
+  "results": {
+    "old_stock_quote": {
+      "status": "fresh",
+      "limitations": [],
+      "data": {
+        "trade_date": "2025-11-07",
+        "close": 10.98,
+        "change_pct": 0.1,
+        "source": "audit",
+        "price_adjustment": "forward",
+        "updated_at": "2026-10-07T09:03:13"
+      },
+      "name": "审计样例"
+    },
+    "old_etf_quote": {
+      "status": "fresh",
+      "limitations": [],
+      "data": {
+        "trade_date": "2025-11-07",
+        "close": 4.0,
+        "change_pct": null
+      },
+      "name": "审计ETF"
+    },
+    "old_screening": {
+      "status": "success",
+      "date": "2025-11-07",
+      "stats": {
+        "universe": 1,
+        "pool": 1,
+        "candidates": 1,
+        "valid_features": 1,
+        "with_history": 1,
+        "financial_cache": 0,
+        "financial_coverage_pct": 0,
+        "quality_qualified": 1,
+        "volume_breakout": 0,
+        "strong_close": 0,
+        "dragon_pullback": 0,
+        "theme_follow": 0,
+        "trend_pullback": 0,
+        "oversold_rebound": 0
+      },
+      "notes": [
+        "2025-11-07 只有 1 只股票的行情，不是全市场，选股结果不完整"
+      ]
+    },
+    "real_ledger_cashflow_drawdown": {
+      "cash": 0.0,
+      "inferred_initial_cash": 100.0,
+      "drawdown": {
+        "max_drawdown": -50.0,
+        "max_drawdown_date": "2026-01-06",
+        "current_drawdown": -50.0,
+        "days": 2
+      },
+      "expected_flow_adjusted_drawdown_pct": -25
+    },
+    "missing_quote_uses_cost": {
+      "code": "600002",
+      "avg_cost": 10.0,
+      "market_price": 10.0,
+      "market_value": 100.0,
+      "price_available": null,
+      "price_stale": null,
+      "price_source": null,
+      "trade_date": null
+    },
+    "failed_run_job_return": null,
+    "failed_job_task": {
+      "status": "done",
+      "error": "",
+      "result": null
+    },
+    "internal_failure_exit": {
+      "exit_code": 0,
+      "error_reported": true
+    },
+    "once_uses_isolation": false,
+    "same_request_workers_after_timeouts": 2,
+    "cash_flow_ignored_risk_example": {
+      "implementation_nav": [
+        [
+          "2026-01-05",
+          100.0
+        ],
+        [
+          "2026-01-06",
+          50.0
+        ]
+      ],
+      "implementation_drawdown": {
+        "max_drawdown": -50.0,
+        "max_drawdown_date": "2026-01-06",
+        "current_drawdown": -50.0
+      },
+      "scenario": "initial deposit 200, buy 100, withdraw remaining cash 100 on day 2 after price declines; capital-adjusted drawdown is 25%"
+    },
+    "browser_settings_draft": {
+      "original": "0.2",
+      "draft": "0.73",
+      "after_tab_switch": "0.2",
+      "dialogs": [],
+      "lost": true
+    }
+  }
+}
