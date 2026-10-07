@@ -11,6 +11,11 @@ export const api = {
   changePassword: (current_password: string, new_password: string) =>
     http.post<{ ok: boolean }>('/settings/password', { current_password, new_password }),
   task: (id: string) => http.get<T.Task>(`/tasks/${id}`),
+  taskFlow: (id: string) => http.get<T.RunFlow>(`/tasks/${id}/flow`),
+  taskDiagnostics: (id: string) => http.get<T.RunFlow>(`/tasks/${id}/diagnostics`),
+  diagnosisFlow: (id: number) => http.get<T.RunFlow>(`/stocks/diagnoses/${id}/flow`),
+  diagnosisDiagnostics: (id: number) => http.get<T.RunFlow>(`/stocks/diagnoses/${id}/diagnostics`),
+  screeningSourceHistory: () => http.get<T.ScreeningSourceHistory>('/screening/source-history'),
   taskEventsUrl: (id: string) => `${API_BASE}/tasks/${id}/events`,
   tasks: () => http.get<T.Task[]>('/tasks'),
   sources: () => http.get<T.SourceStatus[]>('/system/sources'),

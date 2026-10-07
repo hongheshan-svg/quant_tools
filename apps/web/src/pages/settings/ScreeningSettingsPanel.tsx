@@ -25,7 +25,7 @@ function Editor({ initial }: { initial: ScreeningSettings }) {
       <p className="mb-3 text-xs text-muted">{t('权重自动归一化；缺失因子显示覆盖率，风险扣分独立于模型评分。')}</p>
       {form.profiles.map((profile, index) => <details key={profile.name} className="mb-2 rounded border border-line p-3"><summary className="cursor-pointer text-sm">{profile.label ?? profile.name}</summary><label className="mt-3 flex gap-2 text-sm"><input type="checkbox" checked={profile.enabled !== false} onChange={(e) => setForm({ ...form, profiles: form.profiles.map((p, i) => i === index ? { ...p, enabled: e.target.checked } : p) })} />{t('启用')}</label><div className="mt-3 flex flex-wrap gap-3">{Object.entries(profile.weights).map(([factor, weight]) => <label key={factor} className="w-28 text-xs text-muted">{t(LABELS[factor] ?? factor)}<Input type="number" min={0} step={0.05} value={weight} onChange={(e) => setForm({ ...form, profiles: form.profiles.map((p, i) => i === index ? { ...p, weights: { ...p.weights, [factor]: Number(e.target.value) } } : p) })} /></label>)}</div></details>)}
     </Card>
-    <Button variant="primary" loading={saving} onClick={async () => { setSaving(true); try { setForm(await api.saveScreeningSettings(form)); toast.success(t('选股设置已保存')) } catch (e) { toast.error(e instanceof Error ? e.message : String(e)) } finally { setSaving(false) } }}>{t('保存')}</Button>
+    <Button variant="primary" loading={saving} onClick={async () => { const submitted = form; setSaving(true); try { const saved = await api.saveScreeningSettings(submitted); setForm((current) => current === submitted ? saved : current); toast.success(t('选股设置已保存')) } catch (e) { toast.error(e instanceof Error ? e.message : String(e)) } finally { setSaving(false) } }}>{t('保存')}</Button>
   </div>
 }
 

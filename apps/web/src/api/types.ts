@@ -257,6 +257,9 @@ export interface DiagnosisHistoryPage {
 }
 
 export interface RunLogStep {
+  id?: string
+  started_at?: string
+  ended_at?: string
   metadata?: { source?: string; attempt?: number; cache_hit?: boolean; stale_seconds?: number; record_count?: number }
   name: string
   kind: 'data' | 'llm' | 'note' | 'provider' | 'save' | 'notify'
@@ -271,6 +274,8 @@ export interface RunLogStep {
 }
 
 export interface RunLog {
+  trace_id?: string
+  diagnostics?: RunFlow
   steps: RunLogStep[]
   total_ms: number
   model: string
@@ -632,17 +637,18 @@ export interface ETFRotationSettings {
 }
 export interface ETFRotationResult {
   status: string
+  performance_available?: boolean
   as_of: string
   limitations: string[]
   metrics: Record<string, number | null>
   benchmark_metrics: Record<string, number | null>
   annual_returns: Record<string, number | null>
   parameter_sweep: { lookback_days: number; total_return: number | null; max_drawdown: number | null }[]
-  curve: { date: string; equity: number; benchmark: number }[]
+  curve: { date: string; equity: number; benchmark: number; missing_prices?: string[] }[]
   trades: { signal_date: string; execution_date: string; to_weights: Record<string, number>; turnover: number }[]
   ranking: { code: string; momentum: number | null; eligible: boolean }[]
   current_weights: Record<string, number>
-  next_action: { signal_date: string; execution_date: string | null; weights: Record<string, number> }
+  next_action: { signal_date: string; execution_date: string | null; weights: Record<string, number>; quotes_available?: boolean; execution_confirmed?: boolean }
   price_snapshot_hash: string
   note: string
 }
@@ -692,6 +698,8 @@ export interface SignalPerformance {
 
 // ---------- 决策信号 ----------
 export interface DecisionSignal {
+  evaluation_version?: string | null
+  evaluation_current?: boolean
   id: number
   diagnosis_id: number | null
   code: string
@@ -988,7 +996,20 @@ export interface TradingSnapshot {
   orders: Order[]
 }
 
+export interface ActiveSignalSummary {
+  id: number
+  code: string
+  action: string
+  action_label: string
+  confidence: string | null
+  diagnosis_id: number | null
+  trade_date: string
+  expires_on: string | null
+  defensive: boolean
+}
+
 export interface RiskReport {
+  decision_signals?: { status: string; signals: Record<string, ActiveSignalSummary> }
   as_of: string
   account: string
   cash_known: boolean
@@ -998,7 +1019,7 @@ export interface RiskReport {
   exposure: number | null
   regime: string
   suggested_exposure: number | null
-  positions: { code: string; name: string; sector: string; weight: number; market_value: number; pnl_pct: number | null; stop_loss: number | null; stop_gap: number | null; status: string }[]
+  positions: { decision_signal?: ActiveSignalSummary | null; defensive_signal?: boolean; code: string; name: string; sector: string; weight: number; market_value: number; pnl_pct: number | null; stop_loss: number | null; stop_gap: number | null; status: string }[]
   sectors: { sector: string; weight: number }[]
   drawdown: { max_drawdown: number | null; max_drawdown_date: string; current_drawdown: number | null; days: number; quality?: { status: string; limitations: string[]; valuation_points?: number; method?: string } }
   quality?: { valuation: string; priced: number; positions: number; classification: string; classified: number; classification_source: string; currency: string }
@@ -1084,6 +1105,7 @@ export interface RealPortfolio {
 // ---------- 提醒、数据源、用量 ----------
 
 export interface AlertRow {
+  signal_context?: { status: string; signal: ActiveSignalSummary | null } | null
   id?: number
   channels?: Record<string, boolean>
   rule_id?: string
@@ -1180,8 +1202,8 @@ export interface DataCapability {
 export interface DataCenter {
   as_of: string
   read_only: boolean
-  matrix: { provider: string; provider_label: string; dataset: string; markets: string[]; asset_kinds: string[]; scenarios: string[]; priority: number; configured: boolean; configuration_origin: string; limitations: string; fetched_at: string | null; observation_timestamp: string | null }[]
-  snapshots: { dataset: string; status: string; trade_date: string | null; expected_date: string | null; fetched_at: string | null; rows_on_date: number; note: string }[]
+  matrix: { scenarios_by_asset?: Record<string, string[]>; scope: string; exchanges: string[]; adjustment: string; health_checked_at: string | null; provider: string; provider_label: string; dataset: string; markets: string[]; asset_kinds: string[]; scenarios: string[]; priority: number; configured: boolean; configuration_origin: string; limitations: string; fetched_at: string | null; observation_timestamp: string | null }[]
+  snapshots: { source: string | null; representative_code: string | null; mixed_sources: boolean; sources: { source: string; rows: number; symbols: number; first_fetched_at: string | null; last_fetched_at: string | null }[]; dataset: string; status: string; trade_date: string | null; expected_date: string | null; fetched_at: string | null; rows_on_date: number; note: string }[]
   unsupported: string[]
 }
 
@@ -1422,4 +1444,26 @@ export interface SchedulerSettings {
   watchlist_report_time: string
   self_learning_time: string
   signal_lifecycle_time: string
+}
+
+
+export interface RunFlow {
+  version: number
+  trace_id: string
+  status: string
+  truncated: boolean
+  copy_text: string
+  nodes: { id: string; lane: string; name: string; status: string; ms: number | null; started_at: string | null; ended_at: string | null; detail: string }[]
+  sources: { dataset: string; source: string; success: number; failure: number }[]
+  edges: { from: string; to: string; kind: string }[]
+}
+
+export interface ScreeningSourceHistory {
+  summary: { runs: number; recorded: number; success: number; failure: number; fallback_runs: number }
+  items: { id: number; trade_date: string; status: string; created_at: string; sources: null | {
+    run_id: string; started_at: string; finished_at: string; success: number; failure: number; dropped: number; status: string
+    fallback_datasets: string[]
+    attempts: { dataset: string; source: string; ok: boolean; error?: string; ms: number; cache_hit?: boolean; at: string }[]
+    local_reads: { dataset: string; source: string; trade_date: string; rows: number }[]
+  } }[]
 }

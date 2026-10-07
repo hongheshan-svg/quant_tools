@@ -1,6 +1,6 @@
 // 统一请求封装：带 Cookie，错误转成 ApiError；401 时广播 auth:required 让页面跳转登录
 import { t } from '@/i18n'
-import { allowDiscardDrafts } from '@/utils/settingsDrafts'
+import { allowDiscardDrafts, isSettingsWritePending, setSettingsWritePending } from '@/utils/settingsDrafts'
 
 export const API_BASE = '/api/v1'
 
@@ -22,7 +22,18 @@ function detailOf(body: unknown, fallback: string): string {
 }
 
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const mutation = init.method && init.method !== 'GET' && (path.startsWith('/settings/') || path.startsWith('/auth/'))
+  if (mutation && isSettingsWritePending()) throw new ApiError(t('设置操作正在进行，请等待完成后重试'), 409)
   if ((path === '/settings/import' || path === '/auth/logout' || (path.startsWith('/settings/') && init.method === 'DELETE')) && !allowDiscardDrafts()) throw new ApiError('已取消，未保存草稿仍保留', 0)
+  if (mutation) setSettingsWritePending(true)
+  try {
+    return await performRequest<T>(path, init)
+  } finally {
+    if (mutation) setSettingsWritePending(false)
+  }
+}
+
+async function performRequest<T>(path: string, init: RequestInit): Promise<T> {
   const settingsWrite = ((path.startsWith('/settings/') && ['PUT', 'DELETE'].includes(init.method ?? '')) || path === '/auth/password') && !path.includes('/test')
   if (settingsWrite) window.dispatchEvent(new CustomEvent('settings:save-start', { detail: path }))
   const headers = new Headers(init.headers)

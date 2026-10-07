@@ -67,7 +67,7 @@ export function SignalsPage() {
     { key: 'status', title: t('状态'), render: (r) => <Badge tone={STATUS_TONE[r.status] ?? 'default'}>{t(STATUSES[r.status] ?? r.status)}</Badge> },
     { key: 'r1', title: t('1日'), align: 'right', render: (r) => <Pct value={r.ret_1d} /> },
     { key: 'r3', title: t('3日'), align: 'right', render: (r) => <Pct value={r.ret_3d} /> },
-    { key: 'r5', title: t('5日'), align: 'right', render: (r) => <Pct value={r.ret_5d} /> },
+    { key: 'r5', title: t('5日'), align: 'right', render: (r) => <span title={r.evaluation_current === false ? t('请重新评估以验证当前版本后验') : ''}><Pct value={r.ret_5d} /></span> },
     { key: 'adv', title: t('最大不利'), align: 'right', render: (r) => <span className="num">{fmtPct(r.max_adverse_pct, 2, false)}</span> },
   ]
 

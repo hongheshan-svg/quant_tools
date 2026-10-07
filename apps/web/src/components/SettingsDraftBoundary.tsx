@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useBlocker, UNSAFE_DataRouterContext } from 'react-router-dom'
 import { useContext } from 'react'
-import { allowDiscardDrafts, hasSettingsDrafts, markDraft } from '@/utils/settingsDrafts'
+import { allowDiscardDrafts, hasSettingsDrafts, isSettingsWritePending, markDraft } from '@/utils/settingsDrafts'
 import { useT } from '@/i18n'
 
 function fingerprint(root: HTMLDivElement) {
@@ -15,6 +15,7 @@ export function SettingsDraftBoundary({ id, paths, children }: { id: string; pat
   const submitted = useRef('')
   const dirtyRef = useRef(false)
   const [dirty, setDirty] = useState(false)
+  const [busy, setBusy] = useState(isSettingsWritePending)
   const pathKey = JSON.stringify(paths)
   useEffect(() => {
     const element = root.current!
@@ -32,6 +33,7 @@ export function SettingsDraftBoundary({ id, paths, children }: { id: string; pat
       }
     }
     const reset = (event: Event) => { if ((event as CustomEvent<string>).detail === id) { baseline.current = fingerprint(element); mark(false) } }
+    const pending = () => setBusy(isSettingsWritePending())
     const change = (event: Event) => {
       if (event.target instanceof Element && event.target.closest('[data-draft-ignore]')) return
       mark(fingerprint(element) !== baseline.current)
@@ -43,6 +45,7 @@ export function SettingsDraftBoundary({ id, paths, children }: { id: string; pat
     window.addEventListener('settings:save-start', start)
     window.addEventListener('settings:saved', saved)
     window.addEventListener('settings:baseline-reset', reset)
+    window.addEventListener('settings:busy', pending)
     return () => {
       observer.disconnect()
       element.removeEventListener('input', change)
@@ -50,14 +53,15 @@ export function SettingsDraftBoundary({ id, paths, children }: { id: string; pat
       window.removeEventListener('settings:save-start', start)
       window.removeEventListener('settings:saved', saved)
       window.removeEventListener('settings:baseline-reset', reset)
+      window.removeEventListener('settings:busy', pending)
       markDraft(id, false)
     }
   }, [id, pathKey])
-  return <div ref={root} data-draft-id={id}>{dirty && <p role="status" className="mb-2 text-sm text-warn">{t('有未保存的设置')}</p>}{children}</div>
+  return <div ref={root} data-draft-id={id}>{dirty && <p role="status" className="mb-2 text-sm text-warn">{t('有未保存的设置')}</p>}{busy && <p role="status" className="mb-2 text-sm text-muted">{t('正在保存设置，请等待完成后继续编辑或导入')}</p>}<fieldset disabled={busy} aria-busy={busy} className="min-w-0">{children}</fieldset></div>
 }
 
 function RouterGuard() {
-  const blocker = useBlocker(() => hasSettingsDrafts())
+  const blocker = useBlocker(() => hasSettingsDrafts() || isSettingsWritePending())
   useEffect(() => {
     if (blocker.state === 'blocked') {
       if (allowDiscardDrafts()) blocker.proceed()
@@ -71,7 +75,7 @@ export function SettingsNavigationGuard() {
   const router = useContext(UNSAFE_DataRouterContext)
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
-      if (hasSettingsDrafts()) { event.preventDefault(); event.returnValue = '' }
+      if (hasSettingsDrafts() || isSettingsWritePending()) { event.preventDefault(); event.returnValue = '' }
     }
     window.addEventListener('beforeunload', beforeUnload)
     return () => window.removeEventListener('beforeunload', beforeUnload)

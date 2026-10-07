@@ -10,6 +10,7 @@ import { useT } from '@/i18n'
 import { progressText, useTask } from '@/hooks/useTask'
 import { fmtNum } from '@/utils/format'
 import { ETFRotationPanel } from '@/components/ETFRotationPanel'
+import { SourceRunHistory } from '@/components/SourceRunHistory'
 import { SnapshotCheckPanel } from '@/components/SnapshotCheckPanel'
 
 const rate = (v: number | null) => <Pct value={v} digits={1} signed={false} />
@@ -164,6 +165,7 @@ export function ScreeningPage() {
           </Card>
         </div>
       )}
+      <div className="mt-4"><SourceRunHistory revision={screen.running ? 1 : 2} /></div>
       <div className="mt-4"><ETFRotationPanel /></div>
       <div className="mt-4"><SnapshotCheckPanel /></div>
     </div>

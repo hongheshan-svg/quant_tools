@@ -1,3 +1,5 @@
+import { SettingsDraftBoundary } from '@/components/SettingsDraftBoundary'
+import { allowDiscardDrafts } from '@/utils/settingsDrafts'
 import { useState } from 'react'
 import { api } from '@/api/endpoints'
 import type { DataCapability, SourceStatus } from '@/api/types'
@@ -7,6 +9,14 @@ import { Badge, Button, Card, ErrorBox, PageHeader, Tabs } from '@/components/ui
 import { useApi } from '@/hooks/useApi'
 import { useT } from '@/i18n'
 import { fmtNum } from '@/utils/format'
+
+const CAP_LABELS: Record<string, string> = {
+  registered_etf_and_index: '已登记 ETF 与指数', CN: '中国市场', SH: '上交所', SZ: '深交所', BJ: '北交所', stock: '股票', etf: 'ETF', index: '指数', news: '资讯',
+  watchlist: '自选股', diagnosis: '诊断', stock_screening: '策略选股', portfolio_valuation: '持仓估值', chat: '问股',
+  etf_rotation: 'ETF 轮动', intelligence: '情报', market_review: '大盘复盘', whole_market: '全市场', symbol: '单标的',
+  search: '检索', configured_feed: '已配置订阅', local_estimate: '本地估算', forward: '前复权', none: '不复权',
+  etf_forward_index_none: 'ETF 前复权 / 指数不复权', not_applicable: '不适用', unknown: '未知',
+}
 
 const STATUS: Record<string, [string, 'down' | 'warn' | 'up']> = { ok: ['正常', 'down'], failing: ['失败', 'warn'], circuit_open: ['熔断中', 'up'] }
 const HEALTH: Record<string, [string, 'down' | 'warn' | 'up' | 'default']> = {
@@ -18,6 +28,7 @@ function Capabilities() {
   const t = useT()
   const { data, error, loading, reload } = useApi(api.capabilities)
   const center = useApi(api.dataCenter)
+  const labels = (items: string[]) => items.map((item) => t(CAP_LABELS[item] ?? item)).join('、')
   return (
     <div>
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -26,8 +37,8 @@ function Capabilities() {
       </div>
       {error && <ErrorBox message={error} onRetry={reload} />}
       {center.error && <ErrorBox message={center.error} onRetry={center.reload} />}
-      <Card title={t('本地数据质量')}><p className="mb-2 text-xs text-muted">{t('已配置和请求成功不代表数据完整；本页只读，不触发网络探测。')}</p>{center.data?.snapshots?.map((row) => <p key={row.dataset} className="text-sm">{row.dataset} · {row.status} · {t('观测日期')} {row.trade_date ?? '—'} / {row.expected_date ?? '—'} · {row.rows_on_date} {t('行')} · {t('取得时间')} {row.fetched_at ?? '—'}<span className="block text-xs text-muted">{row.note}</span></p>)}</Card>
-      <Card title={t('供应商 × 数据集 × 场景')}><div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr>{['提供方', '数据集', '标的范围', '使用场景', '优先级 / 配置来源', '观测 / 取得时间'].map((label) => <th key={label} className="p-2">{t(label)}</th>)}</tr></thead><tbody>{center.data?.matrix?.map((row) => <tr key={`${row.provider}:${row.dataset}`} className="border-t border-line"><td className="p-2">{row.provider_label}<p>{row.configured ? t('已配置') : t('未配置')}</p></td><td>{row.dataset}</td><td>{row.markets.join(',')} · {row.asset_kinds.join(',')}</td><td>{row.scenarios.join(',')}<p className="text-muted">{row.limitations}</p></td><td>{row.priority} · {row.configuration_origin}</td><td>{row.observation_timestamp ?? t('未知')} / {row.fetched_at ?? t('未知')}</td></tr>)}</tbody></table></div></Card>
+      <Card title={t('本地数据质量')}><p className="mb-2 text-xs text-muted">{t('已配置和请求成功不代表数据完整；本页只读，不触发网络探测。')}</p>{center.data?.snapshots?.map((row) => <p key={row.dataset} className="text-sm">{row.dataset} · {t(row.status)} · {t('观测日期')} {row.trade_date ?? '—'} / {row.expected_date ?? '—'} · {row.rows_on_date} {t('行')} · {t('取得时间')} {row.fetched_at ?? '—'}<span className="block text-xs text-muted">{row.note}</span><span className="block text-xs">{row.mixed_sources && `${t('混合来源')} · `}{row.sources?.map((source) => `${source.source}: ${source.symbols} ${t('标的')} / ${source.rows} ${t('行')} · ${source.first_fetched_at ?? '—'} ~ ${source.last_fetched_at ?? '—'}`).join('；')}</span></p>)}</Card>
+      <Card title={t('供应商 × 数据集 × 场景')}><div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr>{['提供方', '数据集', '标的范围', '使用场景', '优先级 / 配置来源', '数据时间 / 健康检查时间'].map((label) => <th key={label} className="p-2">{t(label)}</th>)}</tr></thead><tbody>{center.data?.matrix?.map((row) => <tr key={`${row.provider}:${row.dataset}`} className="border-t border-line"><td className="p-2">{row.provider_label}<p>{row.configured ? t('已配置') : t('未配置')}</p></td><td>{row.dataset}</td><td>{labels(row.markets)} · {labels(row.asset_kinds)}<p>{labels(row.exchanges ?? [])} · {t(CAP_LABELS[row.scope] ?? row.scope)} · {t(CAP_LABELS[row.adjustment] ?? row.adjustment)}</p></td><td>{row.scenarios_by_asset ? Object.entries(row.scenarios_by_asset).map(([kind, scenarios]) => <p key={kind}>{t(CAP_LABELS[kind] ?? kind)}：{labels(scenarios)}</p>) : labels(row.scenarios)}<p className="text-muted">{row.limitations}</p></td><td>{row.priority} · {t(row.configuration_origin)}</td><td>{row.observation_timestamp ?? t('未知')} / {row.fetched_at ?? t('未知')}<p>{t('健康检查时间')}：{row.health_checked_at ?? t('未知')}</p></td></tr>)}</tbody></table></div></Card>
       <div className="space-y-3">
         {(data ?? []).map((ds: DataCapability) => (
           <Card key={ds.dataset} title={ds.label} bodyClassName="p-0">
@@ -63,8 +74,8 @@ export function SourcesPage() {
   return (
     <div>
       <PageHeader title={t('数据源状态')} description={t('各数据源的成功、失败与熔断记录可跨重启恢复；连续失败 3 次后暂停 5 分钟再试。')} />
-      <Tabs<'status' | 'capabilities' | 'settings'> tabs={[{ key: 'status', label: t('运行状态') }, { key: 'capabilities', label: t('能力总览') }, { key: 'settings', label: t('来源与优先级') }]} value={tab} onChange={setTab} />
-      {tab === 'status' ? <StatusTable /> : tab === 'settings' ? <DataSourceSettingsPanel /> : <Capabilities />}
+      <Tabs<'status' | 'capabilities' | 'settings'> tabs={[{ key: 'status', label: t('运行状态') }, { key: 'capabilities', label: t('能力总览') }, { key: 'settings', label: t('来源与优先级') }]} value={tab} onChange={(next) => { if (allowDiscardDrafts()) setTab(next) }} />
+      {tab === 'status' ? <StatusTable /> : tab === 'settings' ? <SettingsDraftBoundary id="sources-settings" paths={['/settings/data-sources']}><DataSourceSettingsPanel /></SettingsDraftBoundary> : <Capabilities />}
     </div>
   )
 }

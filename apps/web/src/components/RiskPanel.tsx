@@ -1,4 +1,5 @@
 // 组合风险：总仓位与大盘环境、行业分布、回撤、提示
+import { Link } from 'react-router-dom'
 import type { RiskReport } from '@/api/types'
 import { useT } from '@/i18n'
 import { fmtNum } from '@/utils/format'
@@ -16,6 +17,7 @@ export function RiskPanel({ risk }: { risk: RiskReport }) {
       </div>
       {risk.quality && <p className="text-muted">{t('有效报价')} {risk.quality.priced}/{risk.quality.positions} · {t('行业分类')} {risk.quality.classified}/{risk.quality.positions} · {risk.quality.currency}</p>}
       {dd.quality && <p className="text-muted">{t('回撤质量')}：{dd.quality.status} · {dd.quality.valuation_points ?? dd.days ?? 0} {t('有效估值点')}{dd.quality.limitations.length > 0 && ` · ${dd.quality.limitations.join('、')}`}</p>}
+      {Object.values(risk.decision_signals?.signals ?? {}).filter((signal) => signal.defensive).map((signal) => <p key={signal.id} className="text-warn">{signal.code} · {t(signal.action_label)} · {signal.diagnosis_id ? <Link className="underline" to={`/history?id=${signal.diagnosis_id}`}>{t('来源报告')} #{signal.diagnosis_id}</Link> : t('来源报告已删除')} · {t('有效至')} {signal.expires_on ?? t('未知')}</p>)}
       {risk.warnings.length > 0 && (
         <ul className="space-y-0.5 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-warn">
           {risk.warnings.map((w) => <li key={w}>⚠ {w}</li>)}

@@ -1,4 +1,5 @@
 // 任务中心：显示界面发起的后台任务和进度
+import { TaskFlowDetails } from '@/components/RunFlowView'
 import { ListChecks, Loader2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { api } from '@/api/endpoints'
@@ -41,11 +42,12 @@ export function TaskCenter() {
         <div className="absolute right-0 z-40 mt-1 w-80 rounded-md border border-line bg-panel p-2 shadow-lg">
           {tasks.length === 0 && <div className="p-2 text-xs text-muted">{t('还没有后台任务')}</div>}
           {tasks.slice(0, 12).map((task) => (
-            <div key={task.id} className="flex items-center justify-between gap-2 rounded px-2 py-1.5 text-xs hover:bg-panel-2">
+            <div key={task.id} className="rounded px-2 py-1.5 text-xs hover:bg-panel-2">
               <span className="truncate">{task.label}</span>
               <span className={cn('whitespace-nowrap', task.status === 'error' ? 'text-danger' : task.status === 'done' ? 'text-down' : 'text-accent')}>
                 {t(STATUS[task.status])} {progressText(task.progress)}
               </span>
+              <TaskFlowDetails id={task.id} revision={task.revision} />
             </div>
           ))}
         </div>

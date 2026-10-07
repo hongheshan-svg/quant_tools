@@ -1,4 +1,5 @@
 // 诊断运行记录：每步的类型、成败、耗时和说明，顶部显示总耗时与模型
+import { RunFlowView } from '@/components/RunFlowView'
 import type { RunLog } from '@/api/types'
 import { Badge } from '@/components/ui'
 import { useT } from '@/i18n'
@@ -16,6 +17,7 @@ export function RunLogView({ log }: { log: RunLog | null | undefined }) {
   const failed = log.steps.filter((s) => !s.ok).length
   return (
     <div className="text-sm">
+      {log.diagnostics && <RunFlowView flow={log.diagnostics} compact />}
       <p className="mb-2 text-xs text-muted">
         {t('总耗时')} <span className="num text-text">{fmtMs(log.total_ms)}</span>
         {log.model && <> · {t('模型')} <span className="num text-text">{log.model}</span></>}

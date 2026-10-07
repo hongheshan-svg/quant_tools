@@ -3,7 +3,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useState } from 'react'
 import { SettingsDraftBoundary, SettingsNavigationGuard } from '@/components/SettingsDraftBoundary'
-import { hasSettingsDrafts } from '@/utils/settingsDrafts'
+import { hasSettingsDrafts, isSettingsWritePending } from '@/utils/settingsDrafts'
 import { http } from '@/api/client'
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
@@ -43,4 +43,26 @@ it('failed save retains draft and import/logout cancellation sends no request', 
   await expect(http.post('/settings/import', {})).rejects.toThrow('已取消')
   await expect(http.post('/auth/logout')).rejects.toThrow('已取消')
   expect(fetcher).toHaveBeenCalledTimes(1)
+})
+
+it('serializes saves and imports, disables editing and protects unload until response', async () => {
+  let finish!: (response: Response) => void
+  const fetcher = vi.fn(() => new Promise<Response>((resolve) => { finish = resolve }))
+  vi.stubGlobal('fetch', fetcher)
+  render(<><SettingsNavigationGuard /><Form /></>)
+  fireEvent.change(screen.getByLabelText('动量'), { target: { value: '0.73' } })
+  let saving!: Promise<unknown>
+  act(() => { saving = http.put('/settings/screening', { weight: 0.73 }) })
+  expect(isSettingsWritePending()).toBe(true)
+  expect(screen.getByLabelText('动量')).toBeDisabled()
+  await expect(http.post('/settings/import', {})).rejects.toThrow('设置操作正在进行')
+  await expect(http.del('/settings/templates/custom')).rejects.toThrow('设置操作正在进行')
+  expect(fetcher).toHaveBeenCalledTimes(1)
+  const event = new Event('beforeunload', { cancelable: true })
+  window.dispatchEvent(event)
+  expect(event.defaultPrevented).toBe(true)
+  await act(async () => { finish(new Response('{"ok":true}', { headers: { 'Content-Type': 'application/json' } })); await saving })
+  expect(isSettingsWritePending()).toBe(false)
+  expect(screen.getByLabelText('动量')).toBeEnabled()
+  expect(hasSettingsDrafts()).toBe(false)
 })
