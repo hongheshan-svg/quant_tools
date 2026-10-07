@@ -14,6 +14,7 @@ DEFAULTS = {
     "tickflow_kline_adjust": "forward", "request_timeout_seconds": 15, "stage_timeout_seconds": 60,
     "minimum_realtime_rows": 2500, "pytdx_servers": [],
     "isolate_collection": True, "collect_timeout_seconds": 240, "require_auxiliary_sources": False,
+    "miaoxiang_api_key": "",
 }
 ADJUSTS = {"none", "forward", "backward", "forward_additive", "backward_additive"}
 
@@ -28,7 +29,7 @@ def source_order(config: dict, dataset: str) -> list[str]:
 
 
 def source_configured(config: dict, name: str) -> bool:
-    key = {"tickflow": "tickflow_api_key", "tushare": "tushare_token"}.get(name)
+    key = {"tickflow": "tickflow_api_key", "tushare": "tushare_token", "miaoxiang": "miaoxiang_api_key"}.get(name)
     return not key or bool(str((config.get("data_sources") or {}).get(key) or "").strip())
 
 
@@ -40,7 +41,7 @@ def validate_settings(value: dict) -> dict:
             raise ValueError(f"{key} 必须是非空的数据源列表")
         if len(set(order)) != len(order):
             raise ValueError(f"{key} 不能包含重复的数据源")
-    for key in ("tushare_token", "tickflow_api_key", "tickflow_kline_adjust", "tushare_http_url"):
+    for key in ("tushare_token", "tickflow_api_key", "tickflow_kline_adjust", "tushare_http_url", "miaoxiang_api_key"):
         if not isinstance(merged[key], str):
             raise ValueError(f"{key} 必须是字符串")
     url = merged["tushare_http_url"].strip()

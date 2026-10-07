@@ -504,6 +504,9 @@ class StockDiagnosisService:
                 s.detail = f"本地日线 {bar_count} 根"
             with step("资金流") as s:
                 flow = latest_fund_flow(session, code)
+                if flow is None and (self.config.get("data_sources") or {}).get("miaoxiang_api_key"):
+                    from src.collectors.fund_flow import supplement_flow
+                    flow = supplement_flow(code, self.config)
                 flow_text, flow_ratio = describe_flow(flow), (flow.net_ratio if flow else None)
                 s.detail = flow_text or "暂无"
             quote = {}
@@ -573,7 +576,7 @@ class StockDiagnosisService:
         position = self._position(code)
         real_position = self._real_position(code)
         with step("筹码") as s:
-            chip = fetch_chip_summary(code, self.db_path)
+            chip = fetch_chip_summary(code, self.db_path, self.config) if (self.config.get("data_sources") or {}).get("miaoxiang_api_key") else fetch_chip_summary(code, self.db_path)
             s.detail = "已获取" if chip is not None else "暂无"
         try:
             with step("业绩") as s:

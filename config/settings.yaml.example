@@ -344,6 +344,7 @@ data_sources:
   tushare_token: ""       # Tushare Pro 的 token，填写后 tushare 才可用
   tushare_http_url: ""    # 留空使用官方 HTTPS；也可填写兼容 HTTP(S) 网关
   tickflow_api_key: ""    # TickFlow 可选供应商；配置后仍按列表顺序回退
+  miaoxiang_api_key: ""   # 妙想仅补充 A 股个股资金流/筹码，不参与日线或全市场行情
   tickflow_kline_adjust: forward # none/forward/backward/forward_additive/backward_additive
   request_timeout_seconds: 15   # 可选供应商请求超时，1–60 秒
   minimum_realtime_rows: 2500   # 全市场快照最低有效样本；不足时切换下个源，0 关闭门槛

@@ -10,6 +10,7 @@ import { useT } from '@/i18n'
 import { progressText, useTask } from '@/hooks/useTask'
 import { fmtNum } from '@/utils/format'
 import { ETFRotationPanel } from '@/components/ETFRotationPanel'
+import { SnapshotCheckPanel } from '@/components/SnapshotCheckPanel'
 
 const rate = (v: number | null) => <Pct value={v} digits={1} signed={false} />
 
@@ -75,7 +76,7 @@ export function ScreeningPage() {
     { key: 'fit', title: t('大盘适配'), render: (p) => (p.fits_regime ? <span className="text-down">{t('适配')}</span> : <span className="text-muted">{t('不适配')}</span>) },
     { key: 'pct', title: t('当日涨幅'), align: 'right', render: (p) => <Pct value={p.change_pct} /> },
     { key: 'next', title: t('次日涨幅'), align: 'right', render: (p) => <Pct value={p.next_change_pct} /> },
-    { key: 'reason', title: t('入选理由'), className: 'max-w-lg text-xs text-muted', render: (p) => p.reasons.join('；') },
+    { key: 'reason', title: t('入选理由'), className: 'max-w-lg text-xs text-muted', render: (p) => <div>{p.reasons.join('；')}{[p.why_selected, p.why_now].some((items) => items?.length) && <details onClick={(event) => event.stopPropagation()}><summary>{t('入选依据与近期催化')}</summary>{[...p.why_selected ?? [], ...p.why_now ?? []].map((item, index) => <p key={index} className="my-1">[{t(item.kind === 'observed' ? '观测' : item.kind === 'inferred' ? '推断' : '未知')}] {item.text} · {item.source ?? t('来源未知')} · {item.status} · {item.data_date ?? t('观测日期未知')}{item.age_days != null && ` · ${item.age_days} ${t('天前')}`} · {t('取得时间')} {item.fetched_at ?? '—'}{item.url && <a href={item.url} onClick={(event) => event.stopPropagation()} target="_blank" rel="noreferrer" className="ml-1 text-accent">{t('来源')}</a>}</p>)}</details>}</div> },
   ]
   const perfColumns: Column<StrategyPerformance>[] = [
     { key: 'label', title: t('策略'), render: (r) => t(r.label) },
@@ -164,6 +165,7 @@ export function ScreeningPage() {
         </div>
       )}
       <div className="mt-4"><ETFRotationPanel /></div>
+      <div className="mt-4"><SnapshotCheckPanel /></div>
     </div>
   )
 }

@@ -125,6 +125,19 @@ def capabilities(config: dict) -> list[dict[str, Any]]:
         _source(index, "个股资金流", "同花顺", "同花顺"),
         _source(index, "个股资金流", "东方财富", "东方财富"),
     ]})
+    result.append({"dataset": "个股资金流补充", "label": "单股票资金流补充", "sources": [
+        _source(index, "个股资金流补充", "miaoxiang", "妙想", health_name="妙想", configured=source_configured(config, "miaoxiang"), note="仅 A 股个股；不替代全市场资金流，5/10 日合计须有完整观测窗口"),
+    ]})
+    result.append({"dataset": "筹码分布", "label": "筹码分布", "sources": [
+        _source(index, "筹码分布", "eastmoney", "东方财富", health_name="东方财富"),
+        _source(index, "筹码分布", "miaoxiang", "妙想", health_name="妙想", configured=source_configured(config, "miaoxiang"), note="仅 A 股个股核心筹码指标，成本区间可能未知"),
+        _source(index, "筹码分布", "local", "本地估算", health_name="本地估算", note="估算值，不属于提供方观测"),
+    ]})
+    result.append({"dataset": "基金日线", "label": "ETF / 国内指数日线", "sources": [
+        _source(index, "基金日线", "tencent", "腾讯财经", health_name="腾讯", note="ETF 前复权；指数不复权，仅注册表支持的代码"),
+        _source(index, "基金日线", "csindex", "中证指数", health_name="中证指数", note="仅中证专属指数"),
+        _source(index, "基金日线", "cnindex", "国证指数", health_name="国证指数", note="仅国证专属指数"),
+    ]})
 
     result.append({"dataset": "股东数据", "label": "股东数据（东方财富 F10）", "sources": [
         _source(index, "股东数据", "东方财富", "东方财富 F10", note="个股诊断和问股按需获取，诊断需开启 diagnosis.shareholders"),
@@ -147,3 +160,42 @@ def capabilities(config: dict) -> list[dict[str, Any]]:
         for s in (rss_conf.get("sources") or []) if isinstance(s, dict) and s.get("enabled", True) is not False and s.get("name")
     ]})
     return result
+
+
+def data_center(config: dict) -> dict:
+    """只读能力矩阵与本地可用性；不探测供应商、不修改配置、密钥不出现在结果中。"""
+    import os
+    from datetime import datetime
+    from src.database.db import get_db_session
+    from src.database.models import StockDaily, FundDaily, StockFundFlow
+    from src.services.data_freshness import daily_quality
+    datasets = capabilities(config)
+    matrices = []
+    for dataset in datasets:
+        name = dataset["dataset"]
+        kinds = ["etf", "index"] if name == "基金日线" else ["market"] if name in {"涨停池", "涨停原因"} else ["stock"] if name not in {"联网搜索", "RSS 资讯源"} else ["stock", "etf", "index", "market"]
+        scenarios = ["watchlist", "diagnosis", "chat"]
+        if name in {"实时行情", "个股日线", "季度基本面", "涨停池", "涨停原因", "个股资金流"}:
+            scenarios += ["stock_screening"]
+        if name in {"实时行情", "个股日线", "基金日线"}: scenarios += ["portfolio_valuation"]
+        for priority, source in enumerate(dataset["sources"], 1):
+            supported = ["index"] if source["name"] in {"csindex", "cnindex"} else kinds
+            order_key = {"实时行情": "REALTIME", "个股日线": "DAILY_HISTORY"}.get(name)
+            credential_key = {"tushare": "TUSHARE_TOKEN", "tickflow": "TICKFLOW_API_KEY", "miaoxiang": "MIAOXIANG_API_KEY"}.get(source["name"])
+            env_keys = ["QUANT__DATA_SOURCES__" + key for key in (order_key, credential_key) if key]
+            origin = "environment_override" if any(key in os.environ for key in env_keys) else "file_or_default"
+            matrices.append({"provider": source["name"], "provider_label": source["label"], "dataset": name, "markets": ["CN"],
+                             "asset_kinds": supported, "scenarios": scenarios, "priority": priority,
+                             "configuration_origin": origin, "configured": source["configured"], "health": source["health"], "limitations": source["note"],
+                             "north_exchange_supported": source["name"] != "baostock" if name == "个股日线" else None,
+                             "observation_timestamp": None, "fetched_at": source["health"]["last_success"]})
+    snapshots = []
+    for model, dataset in ((StockDaily, "个股日线"), (FundDaily, "基金日线"), (StockFundFlow, "个股资金流")):
+        with get_db_session((config.get("database") or {}).get("sqlite_path", "data/quant.db")) as session:
+            row = session.query(model).order_by(model.trade_date.desc(), model.updated_at.desc()).first()
+            quality = daily_quality(row.trade_date if row else None, row.updated_at if row else None)
+            count = session.query(model).filter(model.trade_date == row.trade_date).count() if row else 0
+            snapshots.append({"dataset": dataset, **quality, "rows_on_date": count,
+                              "scope": "database_latest_date", "note": "最新日期的样本行不能证明全市场完整覆盖；配置及健康成功不能替代数据质量"})
+    return {"as_of": datetime.now().isoformat(), "read_only": True, "datasets": datasets, "matrix": matrices, "snapshots": snapshots,
+            "unsupported": ["overseas_equities", "multi_currency_portfolio", "miaoxiang_daily", "miaoxiang_whole_market_quotes"]}

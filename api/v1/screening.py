@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from api.deps import get_pipeline, get_tasks
 from api.tasks import TaskManager, business_result_error
@@ -27,6 +27,28 @@ class RotationRequest(BaseModel):
     switch_buffer_pct: float | None = Field(None, ge=0, le=100)
     cost_bps: float | None = Field(None, ge=0, lt=10000)
     refresh: bool = False
+
+
+class SnapshotRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    snapshot: dict
+    strategies: list[str] | None = Field(None, max_length=30)
+
+    @field_validator("snapshot")
+    @classmethod
+    def snapshot_is_bounded(cls, value):
+        from src.strategy.snapshot_diagnostics import validate_snapshot
+        return validate_snapshot(value)
+
+
+@router.post("/snapshot/check")
+def snapshot_check(body: SnapshotRequest, pipeline: PipelineService = Depends(get_pipeline)):
+    from src.strategy.snapshot_diagnostics import diagnose
+    from src.strategy.screener import StrategyScreener
+    try:
+        return diagnose(body.snapshot, StrategyScreener(pipeline.config), body.strategies)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
 
 
 @router.get("/rotation/settings")

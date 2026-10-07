@@ -121,6 +121,18 @@ def latest_fund_flow(session, code: str, trade_date: str | None = None) -> Stock
     return query.order_by(StockFundFlow.trade_date.desc()).first()
 
 
+def supplement_flow(code: str, config: dict) -> StockFundFlow | None:
+    """单股票补充；绝不替代全市场采集结果，保持提供方交易日，不伪造今日。"""
+    if not (config.get("data_sources") or {}).get("miaoxiang_api_key"):
+        return None
+    from src.collectors.miaoxiang import MiaoxiangClient
+    result = fetch_with_fallback("个股资金流补充", [("妙想", lambda: MiaoxiangClient(config).query(code, "flow"))], cache_key=bare_code(code), timeout_seconds=10)
+    if not result.ok:
+        return None
+    data = result.data
+    return StockFundFlow(code=bare_code(code), trade_date=data["trade_date"], net_inflow=data["net_inflow"], source="妙想", updated_at=datetime.fromisoformat(data["fetched_at"]))
+
+
 def describe(flow: StockFundFlow | None) -> str:
     """一句话描述，如 "净流入2.75亿（占成交额8.2%，同花顺）"。"""
     if flow is None or flow.net_inflow is None:

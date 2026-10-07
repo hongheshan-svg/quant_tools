@@ -63,6 +63,7 @@ function SettingsEditor({ initial, onSaved }: { initial: DataSourceSettingsRespo
       <div className="grid gap-4 md:grid-cols-2">
         <label className="space-y-1 text-xs text-muted">Tushare Token<Input type="password" autoComplete="new-password" value={value.tushare_token} onChange={(e) => patch('tushare_token', e.target.value)} /></label>
         <label className="space-y-1 text-xs text-muted">TickFlow API Key<Input type="password" autoComplete="new-password" value={value.tickflow_api_key} onChange={(e) => patch('tickflow_api_key', e.target.value)} /></label>
+        <label className="space-y-1 text-xs text-muted">Miaoxiang API Key<Input type="password" autoComplete="new-password" value={value.miaoxiang_api_key ?? ''} onChange={(e) => patch('miaoxiang_api_key', e.target.value)} /><span>{t('仅补充 A 股个股资金流与筹码，不提供全市场行情或日线。')}</span></label>
         <label className="space-y-1 text-xs text-muted">{t('Tushare 兼容网关')}<Input placeholder={t('留空使用官方 HTTPS 接口')} value={value.tushare_http_url} onChange={(e) => patch('tushare_http_url', e.target.value)} /></label>
         <label className="space-y-1 text-xs text-muted">{t('TickFlow 日线复权')}<Select value={value.tickflow_kline_adjust} onChange={(e) => patch('tickflow_kline_adjust', e.target.value)}>
           {['none', 'forward', 'backward', 'forward_additive', 'backward_additive'].map((v) => <option key={v} value={v}>{t({ none: '不复权', forward: '前复权', backward: '后复权', forward_additive: '前复权（加法）', backward_additive: '后复权（加法）' }[v] || v)}</option>)}

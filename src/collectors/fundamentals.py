@@ -104,11 +104,17 @@ def _chip_from_local(code: str, db_path: str) -> dict[str, Any] | None:
     return compute_chip_distribution(list(reversed([tuple(r) for r in rows])))
 
 
-def fetch_chip_summary(code: str, db_path: str) -> dict[str, Any] | None:
+def fetch_chip_summary(code: str, db_path: str, config: dict | None = None) -> dict[str, Any] | None:
     """最新筹码分布：获利比例 %、平均成本、90% 筹码成本区间与集中度 %。"""
+    sources = [("东方财富", lambda: _chip_from_akshare(code))]
+    if (config or {}).get("data_sources", {}).get("miaoxiang_api_key"):
+        from src.collectors.miaoxiang import MiaoxiangClient
+        sources.append(("妙想", lambda: MiaoxiangClient(config).query(code, "chips")))
+    sources.append(("本地估算", lambda: _chip_from_local(code, db_path)))
     result = fetch_with_fallback(
         "筹码分布",
-        [("东方财富", lambda: _chip_from_akshare(code)), ("本地估算", lambda: _chip_from_local(code, db_path))],
+        sources,
+        cache_key=bare_code(code),
     )
     return result.data
 
@@ -117,7 +123,8 @@ def describe_chips(chip: dict[str, Any] | None) -> str:
     if not chip:
         return ""
     return (
-        f"获利盘{chip['profit_ratio']:.0f}%，平均成本{chip['avg_cost']}，90%筹码在{chip['cost_90_low']}~{chip['cost_90_high']}"
+        (f"获利盘{chip['profit_ratio']:.0f}%" if chip.get('profit_ratio') is not None else "获利比例未知")
+        + f"，平均成本{chip['avg_cost']}，90%筹码在{chip.get('cost_90_low') or '未知'}~{chip.get('cost_90_high') or '未知'}"
         + (f"（集中度{chip['concentration_90']:.1f}%）" if chip.get("concentration_90") is not None else "")
         + f"，{chip['source']}"
     )

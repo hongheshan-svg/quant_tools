@@ -294,6 +294,8 @@ class Pick:
     llm_reason: str = ""
     context_pack: dict = field(default_factory=dict)
     post_analysis: dict = field(default_factory=dict)
+    why_selected: list[dict] = field(default_factory=list)
+    why_now: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -519,19 +521,22 @@ class StrategyScreener:
             flows = {}
             for flow in session.query(StockFundFlow).filter(StockFundFlow.trade_date == result.trade_date):
                 if not point_in_time or flow.updated_at < cutoff:
-                    flows[bare_code(flow.code)] = {"net_inflow": flow.net_inflow, "net_ratio": flow.net_ratio, "source": flow.source, "trade_date": flow.trade_date}
+                    flows[bare_code(flow.code)] = {"net_inflow": flow.net_inflow, "net_ratio": flow.net_ratio, "source": flow.source, "trade_date": flow.trade_date, "fetched_at": flow.updated_at.isoformat() if flow.updated_at else None}
         for pick in picks:
             related = [item for item in news if pick.code in item.title or (pick.name and pick.name in item.title)][:10]
             pick.event_risks = [item.title for item in related if classify_notice(item.title)[0]][:5]
             from src.services.research_artifact import build_context_pack
             pick.context_pack = build_context_pack({"code": pick.code, "name": pick.name,
                 "phase": {"trade_date": result.trade_date, "point_in_time": point_in_time}, "data_quality": {**pick.data_quality, "bar_count": by_code[pick.code].bars},
-                "quote": {"close": pick.close, "trade_date": result.trade_date, "source": pick.data_quality.get("source")},
+                "quote": {"close": pick.close, "trade_date": result.trade_date, "source": pick.data_quality.get("source"), "fetched_at": pick.data_quality.get("fetched_at")},
                 "technical": asdict(by_code[pick.code]), "fundamentals": by_code[pick.code].fundamentals,
-                "flow": flows.get(pick.code), "news_evidence": [{"id": n.id, "title": n.title, "source": n.source, "news_time": str(n.news_time or "")} for n in related]})
+                "flow": flows.get(pick.code), "news_evidence": [{"id": n.id, "title": n.title, "source": n.source, "news_time": str(n.news_time or ""), "collected_at": str(n.collected_at or ""), "url": n.url} for n in related]})
             if pick.event_risks:
                 pick.reasons.append("事件风险待复核：" + "；".join(pick.event_risks))
         picks.sort(key=lambda p: (not p.fits_regime, -p.score, p.code))
+        from src.strategy.screening_explanations import explanations
+        for pick in picks:
+            pick.why_selected, pick.why_now = explanations(pick, by_code[pick.code], result.trade_date)
         from src.strategy.screening_pipeline import factor_scores, weighted_score, apply_risk, diversify, rerank
         for p in picks:
             p.factor_scores = factor_scores(by_code[p.code])
@@ -547,6 +552,7 @@ class StrategyScreener:
                 if apply_risk(p, by_code[p.code], self.pipeline_cfg):
                     kept.append(p)
                 else:
+                    p.why_selected, p.why_now = explanations(p, by_code[p.code], result.trade_date)
                     result.excluded.append(p.to_dict())
             picks = sorted(kept, key=lambda p: (not p.fits_regime, -p.score, p.code))
             if self.pipeline_cfg.get("llm_rerank", False) and not point_in_time and allow_llm:
@@ -555,6 +561,8 @@ class StrategyScreener:
             else:
                 result.pipeline["llm_rerank"] = {"status": "skipped", "reason": "历史回测禁止使用实时模型" if point_in_time else "未启用"}
             picks = diversify(picks, self.pipeline_cfg)
+        for pick in picks:
+            pick.why_selected, pick.why_now = explanations(pick, by_code[pick.code], result.trade_date)
         return picks[: self.max_total]
 
     def _enrich_candidate_context(self, picks: list[Pick], result: ScreenResult):
@@ -578,7 +586,7 @@ class StrategyScreener:
                     previous = pick.context_pack["blocks"].get(key, {}).get("items", {}).get("evidence", {}).get("value") or []
                     values = [*previous, *values]
                     failed = (data.get("states") or {}).get(key) == "fetch_failed"
-                    status = "partial" if failed and values else "fetch_failed" if failed else "available" if values else "missing"
+                    status = "partial" if failed and values else "fetch_failed" if failed else "available"
                     block = ContextBlock(status=status, source="本地资讯/东方财富", items={"evidence": ContextItem(status=status, value=values, source="本地资讯/东方财富")})
                     pick.context_pack["blocks"][key] = block.model_dump(mode="json")
                 pick.event_risks = list(dict.fromkeys([*pick.event_risks, *[n["title"] for n in data.get("notices", []) if classify_notice(n.get("title", ""))[0]]]))[:10]

@@ -236,18 +236,20 @@ class ChatTools:
         return text + (f"；利好信号：{'、'.join(tech.reasons)}" if tech.reasons else "")
 
     def _tool_fund_flow(self, args: dict) -> str:
-        from src.collectors.fund_flow import describe, latest_fund_flow
+        from src.collectors.fund_flow import describe, latest_fund_flow, supplement_flow
 
         code, name = self._resolve(args)
         with get_db_session(self.db_path) as session:
-            text = describe(latest_fund_flow(session, code))
+            flow = latest_fund_flow(session, code)
+            text = describe(flow if flow is not None else supplement_flow(code, self.config))
         return f"{name}({code}) 资金流：{text or '暂无数据'}"
 
     def _tool_chips(self, args: dict) -> str:
         from src.collectors.fundamentals import describe_chips, fetch_chip_summary
 
         code, name = self._resolve(args)
-        return f"{name}({code}) 筹码：{describe_chips(fetch_chip_summary(code, self.db_path)) or '暂无数据'}"
+        chip = fetch_chip_summary(code, self.db_path, self.config) if (self.config.get("data_sources") or {}).get("miaoxiang_api_key") else fetch_chip_summary(code, self.db_path)
+        return f"{name}({code}) 筹码：{describe_chips(chip) or '暂无数据'}"
 
     def _tool_earnings(self, args: dict) -> str:
         from src.collectors.fundamentals import EarningsCache, describe_earnings, earnings_risk

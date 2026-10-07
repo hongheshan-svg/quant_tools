@@ -371,7 +371,7 @@ export interface Diagnosis {
 export interface ContextPack {
   pack_version: '1.0'
   subject: Record<string, string>
-  blocks: Record<string, { status: string; source?: string | null; as_of?: string | null; limitations: string[]; items: Record<string, { status: string; value: unknown; source?: string | null; as_of?: string | null }> }>
+  blocks: Record<string, { status: string; source?: string | null; as_of?: string | null; provider_timestamp?: string | null; fetched_at?: string | null; timestamp?: string | null; limitations: string[]; items: Record<string, { status: string; value: unknown; source?: string | null; as_of?: string | null; provider_timestamp?: string | null; fetched_at?: string | null; timestamp?: string | null }> }>
 }
 
 export interface ResearchArtifact {
@@ -480,6 +480,8 @@ export interface SkillConsensus {
 // ---------- 策略选股 ----------
 
 export interface ScreeningPick {
+  why_selected?: ScreeningExplanation[]
+  why_now?: ScreeningExplanation[]
   trade_date: string
   code: string
   name: string
@@ -595,6 +597,24 @@ export interface ScreenResult {
   picks: unknown[]
   stats: Dict<number>
   notes: string[]
+}
+
+export interface ScreeningExplanation {
+  text: string
+  kind: 'observed' | 'inferred' | 'unknown'
+  source_type: string
+  source?: string | null
+  status: string
+  data_date?: string | null
+  provider_timestamp?: string | null
+  fetched_at?: string | null
+  age_days?: number | null
+  url?: string | null
+}
+export interface SnapshotCheck {
+  mode: string
+  network_used: boolean
+  strategies: { strategy: string; label: string; matched: boolean | null; score: number | null; checks: { condition: unknown; status: string; inputs: Record<string, unknown>; missing: string[] }[] }[]
 }
 
 export interface ETFRotationSettings {
@@ -857,6 +877,7 @@ export interface DataSourceSettings {
   tushare_token: string
   tushare_http_url: string
   tickflow_api_key: string
+  miaoxiang_api_key?: string
   tickflow_kline_adjust: string
   request_timeout_seconds: number
   stage_timeout_seconds?: number
@@ -1126,6 +1147,14 @@ export interface DataCapability {
   dataset: string
   label: string
   sources: CapabilitySource[]
+}
+
+export interface DataCenter {
+  as_of: string
+  read_only: boolean
+  matrix: { provider: string; provider_label: string; dataset: string; markets: string[]; asset_kinds: string[]; scenarios: string[]; priority: number; configured: boolean; configuration_origin: string; limitations: string; fetched_at: string | null; observation_timestamp: string | null }[]
+  snapshots: { dataset: string; status: string; trade_date: string | null; expected_date: string | null; fetched_at: string | null; rows_on_date: number; note: string }[]
+  unsupported: string[]
 }
 
 export interface UsageRow {

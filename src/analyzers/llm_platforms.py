@@ -7,6 +7,12 @@ anthropic、gemini、ollama 走 LiteLLM 的原生通道（base_url 可留空，o
 from __future__ import annotations
 
 AI_PLATFORMS: dict[str, dict] = {
+    "requesty": {
+        "name": "Requesty（聚合平台，模型可见性依赖账户权限）",
+        "base_url": "https://router.requesty.ai/v1",
+        "models": [],
+        "default_model": "",
+    },
     "deepseek": {
         "name": "DeepSeek (深度求索)",
         "base_url": "https://api.deepseek.com",

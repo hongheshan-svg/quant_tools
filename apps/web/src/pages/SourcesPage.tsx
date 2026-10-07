@@ -17,6 +17,7 @@ const time = (v: string | null) => (v ? v.replace('T', ' ') : '--')
 function Capabilities() {
   const t = useT()
   const { data, error, loading, reload } = useApi(api.capabilities)
+  const center = useApi(api.dataCenter)
   return (
     <div>
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -24,6 +25,9 @@ function Capabilities() {
         <Button onClick={reload} loading={loading}>{t('刷新')}</Button>
       </div>
       {error && <ErrorBox message={error} onRetry={reload} />}
+      {center.error && <ErrorBox message={center.error} onRetry={center.reload} />}
+      <Card title={t('本地数据质量')}><p className="mb-2 text-xs text-muted">{t('已配置和请求成功不代表数据完整；本页只读，不触发网络探测。')}</p>{center.data?.snapshots?.map((row) => <p key={row.dataset} className="text-sm">{row.dataset} · {row.status} · {t('观测日期')} {row.trade_date ?? '—'} / {row.expected_date ?? '—'} · {row.rows_on_date} {t('行')} · {t('取得时间')} {row.fetched_at ?? '—'}<span className="block text-xs text-muted">{row.note}</span></p>)}</Card>
+      <Card title={t('供应商 × 数据集 × 场景')}><div className="overflow-x-auto"><table className="w-full text-left text-xs"><thead><tr>{['提供方', '数据集', '标的范围', '使用场景', '优先级 / 配置来源', '观测 / 取得时间'].map((label) => <th key={label} className="p-2">{t(label)}</th>)}</tr></thead><tbody>{center.data?.matrix?.map((row) => <tr key={`${row.provider}:${row.dataset}`} className="border-t border-line"><td className="p-2">{row.provider_label}<p>{row.configured ? t('已配置') : t('未配置')}</p></td><td>{row.dataset}</td><td>{row.markets.join(',')} · {row.asset_kinds.join(',')}</td><td>{row.scenarios.join(',')}<p className="text-muted">{row.limitations}</p></td><td>{row.priority} · {row.configuration_origin}</td><td>{row.observation_timestamp ?? t('未知')} / {row.fetched_at ?? t('未知')}</td></tr>)}</tbody></table></div></Card>
       <div className="space-y-3">
         {(data ?? []).map((ds: DataCapability) => (
           <Card key={ds.dataset} title={ds.label} bodyClassName="p-0">

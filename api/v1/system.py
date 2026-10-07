@@ -214,6 +214,12 @@ def data_capabilities(config: dict = Depends(get_config)) -> list[dict[str, Any]
     return capabilities(config)
 
 
+@router.get("/system/data-center")
+def data_center_overview(config: dict = Depends(get_config)) -> dict:
+    from src.services.data_capabilities import data_center
+    return data_center(config)
+
+
 class DataSourceSettingsBody(BaseModel):
     data_sources: dict[str, Any]
 

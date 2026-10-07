@@ -54,6 +54,7 @@ def quality(bars: list, f, payload: dict | None) -> dict:
     return {"score": max(0, 100 - sum(25 if "口径" in flag else 15 if "历史不足" in flag else 10 for flag in flags)),
             "flags": flags, "bars": f.bars, "source": getattr(bars[-1], "source", None) if bars else None,
             "price_adjustment": getattr(bars[-1], "price_adjustment", None) if bars else None,
+            "fetched_at": bars[-1].updated_at.isoformat() if bars and getattr(bars[-1], "updated_at", None) else None,
             "price_revision": getattr(bars[-1], "price_revision", None) if bars else None}
 
 
