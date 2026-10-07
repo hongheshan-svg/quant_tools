@@ -137,9 +137,9 @@ def run_selected_report(body: ReportSelection, tasks: TaskManager = Depends(get_
     if any(code not in allowed for code in codes):
         raise bad_request("所选股票必须在自选股中")
     return tasks.submit("watchlist_report", pipeline.watchlist_report, False, codes=codes,
-                        dedupe_key="watchlist_selected:" + ",".join(codes), label="分析所选自选股")
+                        dedupe_key="watchlist_selected:" + ",".join(codes), label="分析所选自选股", subject={"codes": codes})
 
 
 @router.post("/report")
 def run_report(push: bool = True, tasks: TaskManager = Depends(get_tasks), pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
-    return tasks.submit("watchlist_report", pipeline.watchlist_report, push, dedupe_key="watchlist_report", label="自选股决策仪表盘")
+    return tasks.submit("watchlist_report", pipeline.watchlist_report, push, dedupe_key="watchlist_report", label="自选股决策仪表盘", subject={"codes": [row['code'] for row in pipeline.watchlist_overview()]})

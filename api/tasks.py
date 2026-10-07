@@ -86,7 +86,7 @@ class TaskManager:
         except Exception as error:
             logger.warning(redact_text(f"保存任务状态失败: {error}"))
 
-    def submit(self, kind: str, fn: Callable, *args, dedupe_key: str | None = None, label: str = "",
+    def submit(self, kind: str, fn: Callable, *args, dedupe_key: str | None = None, label: str = "", subject: dict | None = None,
                result_error: Callable[[Any], str] | None = None, **kwargs) -> dict[str, Any]:
         key = dedupe_key or ""
         with self._lock:
@@ -99,6 +99,7 @@ class TaskManager:
                 "progress": None, "result": None, "error": "", "created_at": datetime.now().isoformat(timespec="seconds"),
                 "started_at": None, "finished_at": None,
                 "revision": 1, "trace_id": uuid.uuid4().hex,
+                "subject": subject,
             }
             self._tasks[task["id"]] = task
             self._persist(task)

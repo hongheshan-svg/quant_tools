@@ -221,5 +221,5 @@ def diagnosis_trend(code: str, days: int = Query(180, ge=1, le=730), pipeline: P
 def diagnose(code: str, tasks: TaskManager = Depends(get_tasks), pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
     fund = _fund(code, pipeline)
     code = fund["code"] if fund else bare_code(code)
-    return tasks.submit("diagnosis", pipeline.diagnose_stock, code, True, dedupe_key=f"diagnosis:{code}",
+    return tasks.submit("diagnosis", pipeline.diagnose_stock, code, True, dedupe_key=f"diagnosis:{code}", subject={"codes": [code]},
                         result_error=business_result_error, label=f"AI 诊断 {fund['name'] if fund else code}")

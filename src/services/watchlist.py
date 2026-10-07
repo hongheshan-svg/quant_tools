@@ -109,6 +109,10 @@ class WatchlistService:
         """自选股 + 最新行情 + 最近一次 AI 诊断，供界面和问股使用（ETF/指数的行情取自 fund_daily，诊断取自基金诊断）。"""
         from src.services.fund_diagnosis import FundDiagnosisService
         from src.services.stock_diagnosis import StockDiagnosisService
+        from src.services.data_freshness import daily_quality
+        from src.services.watchlist_status import row_status
+        from src.database.models import TaskRun
+        import json
 
         diagnosis = StockDiagnosisService(self.config)
         fund_diagnosis = FundDiagnosisService(self.config)
@@ -116,20 +120,35 @@ class WatchlistService:
         with get_db_session(self.db_path) as session:
             for r in rows:
                 if r["kind"] == "stock":
-                    bar = (session.query(StockDaily.trade_date, StockDaily.close, StockDaily.change_pct, StockDaily.source)
+                    bar = (session.query(StockDaily.trade_date, StockDaily.close, StockDaily.change_pct, StockDaily.source, StockDaily.updated_at)
                            .filter(StockDaily.code.in_(code_candidates(r["code"])), StockDaily.close > 0)
                            .order_by(StockDaily.trade_date.desc()).first())
                 else:
-                    bar = (session.query(FundDaily.trade_date, FundDaily.close, FundDaily.change_pct)
+                    bar = (session.query(FundDaily.trade_date, FundDaily.close, FundDaily.change_pct, FundDaily.source, FundDaily.updated_at)
                            .filter(FundDaily.code == r["code"], FundDaily.close > 0)
                            .order_by(FundDaily.trade_date.desc()).first())
                 r.update({"trade_date": bar[0], "close": bar[1], "change_pct": bar[2]} if bar else
                          {"trade_date": "", "close": None, "change_pct": None})
-                r["quote_source"] = bar[3] if bar and r["kind"] == "stock" else None
+                r["quote_source"] = bar[3] if bar else None
+                r['quote_quality'] = daily_quality(bar[0] if bar else None, bar[4] if bar else None)
+            tasks = []
+            for record in session.query(TaskRun).order_by(TaskRun.created_at.desc()).limit(200).all():
+                try:
+                    task = json.loads(record.payload_json)
+                    if isinstance(task, dict) and task.get('kind') in {'diagnosis', 'watchlist_report'}: tasks.append(task)
+                except (TypeError, ValueError):
+                    continue
         for r in rows:
-            latest = (diagnosis if r["kind"] == "stock" else fund_diagnosis).latest(r["code"])
+            query_error = None
+            try:
+                latest = (diagnosis if r["kind"] == "stock" else fund_diagnosis).latest(r["code"])
+                query_error = latest.get('error') if latest else None
+            except Exception:
+                latest, query_error = None, '读取报告失败，请重试查询'
             r["diagnosis"] = ({k: latest.get(k) for k in ("diagnosis_id", "action", "action_label", "score", "created_at", "one_sentence")}
                               if latest and not latest.get("error") else None)
+            task = next((task for task in tasks if r['code'] in (task.get('subject') or {}).get('codes', []) or task.get('kind') == 'diagnosis' and r['code'] in str(task.get('label') or '')), None)
+            r['state'] = row_status(r['diagnosis'], r['quote_quality'], task, query_error)
         return rows
 
     def codes(self) -> list[str]:

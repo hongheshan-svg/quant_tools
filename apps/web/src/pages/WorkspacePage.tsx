@@ -105,6 +105,7 @@ export function WorkspacePage() {
                   <div className="mt-1 flex justify-between text-xs"><span className="num text-muted">{r.code}</span><span className="num">{fmtNum(r.close)} <Pct value={r.change_pct} /></span></div>
                   <p className="mt-2 line-clamp-2 text-xs text-muted">{r.diagnosis?.one_sentence || t('等待首次分析')}</p>
                   <p className="mt-2 text-[10px] text-muted">{r.trade_date || t('行情未就绪')} · {r.quote_source || t('来源未记录')}</p>
+                  <p className="mt-1 text-xs text-accent" title={r.state?.reason}>{t(r.state?.label ?? '状态未知')} · {t(r.state?.next_action === 'wait' ? '等待完成' : r.state?.next_action === 'view_report' ? '查看报告' : r.state?.next_action === 'retry_query' ? '重试查询' : '更新分析')}</p>
                 </button>
               </div>)}
               {!filtered.length && <div className="py-8 text-center text-xs text-muted"><Star className="mx-auto mb-3 size-6" />{t('暂无匹配标的，可用上方搜索添加')}</div>}

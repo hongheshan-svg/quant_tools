@@ -41,6 +41,8 @@ export function WatchlistPage() {
   const [selectedCodes, setSelectedCodes] = useState<string[]>([])
   const imageInput = useRef<HTMLInputElement>(null)
   const run = useTask<{ done: number; total: number; pushed: boolean; error?: string }>()
+  const rowAnalysis = useTask()
+  const [analyzingCode, setAnalyzingCode] = useState('')
 
   const add = async (code: string) => {
     const r = await api.addWatch(code)
@@ -105,6 +107,17 @@ export function WatchlistPage() {
     { key: 'action', title: t('最近诊断'), render: (r) => <span className={verdictClass(r.diagnosis?.action_label)}>{t(r.diagnosis?.action_label ?? '未诊断')}</span> },
     { key: 'score', title: t('评分'), align: 'right', render: (r) => <span className="num">{r.diagnosis?.score ?? ''}</span> },
     { key: 'time', title: t('诊断时间'), render: (r) => <span className="num text-xs text-muted">{r.diagnosis?.created_at ?? ''}</span> },
+    { key: 'state', title: t('状态与下一步'), render: (r) => <div className="space-y-1 text-xs">
+      <div title={r.state?.reason}>{t(r.state?.label ?? '状态未知')}</div>
+      <div className="text-muted">{t('报价质量')}：{t(r.quote_quality?.status ?? 'unknown')}</div>
+      <Button loading={rowAnalysis.running && analyzingCode === r.code} disabled={r.state?.next_action === 'wait' || rowAnalysis.running} onClick={(event) => {
+        event.stopPropagation()
+        if (r.state?.next_action === 'retry_query') { void list.reload(); return }
+        if (r.state?.next_action === 'view_report') { navigate(`/stocks/${r.code}`); return }
+        setAnalyzingCode(r.code)
+        void rowAnalysis.run(() => api.diagnose(r.code)).then(() => list.reload()).catch(() => {}).finally(() => setAnalyzingCode(''))
+      }}>{t(r.state?.next_action === 'view_report' ? '查看报告' : r.state?.next_action === 'retry_query' ? '重试查询' : r.state?.next_action === 'wait' ? '等待完成' : '更新分析')}</Button>
+    </div> },
     { key: 'one', title: t('一句话结论'), className: 'max-w-sm text-xs text-muted', render: (r) => r.diagnosis?.one_sentence },
     {
       key: 'remove', title: '', align: 'right', render: (r) => (
