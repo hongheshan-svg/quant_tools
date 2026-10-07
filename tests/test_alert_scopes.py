@@ -60,3 +60,10 @@ def test_source_counts_and_environment_does_not_expose_values(monkeypatch):
     result = rule_sources({'alerts': {'rules': [valid, {**valid, 'enabled': False}, {'bad': 'secret'}]}})
     assert result['summary'] == {'source': 'environment', 'readonly': True, 'configured': 3, 'valid': 2, 'invalid': 1, 'disabled': 1, 'effective': 1, 'file_configured': 1, 'environment_override': True}
     assert 'secret' not in json.dumps(result)
+
+
+def test_account_stop_rule_includes_etf_and_uses_verified_price_quality(db_path, monkeypatch):
+    monkeypatch.setattr(PortfolioRiskService, 'report', lambda self: {'positions': [{'code': '510300', 'name': 'ETF', 'stop_gap': -2}]})
+    service = AlertService({'database': {'sqlite_path': db_path}})
+    result = service.test_rule({'scope': 'portfolio_holdings', 'type': 'stop_risk'})
+    assert result['triggered'] and result['evaluated'] == 1 and '510300' in result['message']

@@ -45,3 +45,42 @@ def test_missing_quotes_and_unknown_cash_are_not_zero_risk(config):
     assert report["positions"][0]["stop_gap"] is None
     assert report["drawdown"]["max_drawdown"] is None
     assert report["quality"]["priced"] == 0
+
+
+def test_cash_only_account_has_flow_adjusted_history(config):
+    real = RealPortfolioService(config)
+    real.add_cash_flow('2026-09-01', 'in', 200)
+    real.add_cash_flow('2026-09-02', 'out', 50)
+    report = PortfolioRiskService(config, account='real').report()
+    assert report['drawdown']['quality']['status'] == 'available'
+    assert report['drawdown']['current_drawdown'] == 0
+
+
+def test_etf_holding_uses_fund_quotes_and_adjusted_history_is_unavailable(config):
+    from src.database.db import get_db_session
+    from src.database.models import FundDaily
+    real = RealPortfolioService(config)
+    real.add_cash_flow('2026-09-01', 'in', 200)
+    real.add_trade('2026-09-02', '510300', '买入', 10, 10)
+    with get_db_session(real.db_path) as session:
+        for day in ['2026-09-02', '2026-09-03']:
+            session.add(FundDaily(code='510300', trade_date=day, close=10, source='fixture', price_adjustment='forward'))
+    assert real.positions()[0]['price_source'] == 'fixture'
+    report = PortfolioRiskService(config, account='real').report()
+    assert report['drawdown']['current_drawdown'] is None
+    assert 'missing_historical_price' in report['drawdown']['quality']['limitations']
+
+
+def test_intraday_prices_are_usable_without_claiming_a_completed_daily_bar(monkeypatch):
+    from src.services.portfolio_quotes import price_quality
+    monkeypatch.setattr('src.trading_calendar.is_trade_day', lambda *_: True)
+    phase = {'now': '2026-09-22 11:10', 'effective_daily_bar_date': '2026-09-21', 'is_partial_bar': True}
+    quality = price_quality('2026-09-22', '2026-09-22T11:00:00+08:00', phase)
+    assert quality['status'] == 'available' and quality['is_partial_bar']
+    assert quality['mode'] == 'intraday_quote'
+    assert price_quality('2026-09-21', '2026-09-22T11:00:00+08:00', phase)['status'] == 'stale'
+    assert price_quality('2026-09-22', '2026-09-22T10:00:00+08:00', phase)['status'] == 'stale'
+    phase['now'] = '2026-09-22 12:30'
+    assert price_quality('2026-09-22', '2026-09-22T11:30:00+08:00', phase)['status'] == 'available'
+    assert price_quality('2026-09-22', '2026-09-22T12:20:00+08:00', phase)['status'] == 'available'
+    assert price_quality('2026-09-22', '2026-09-22T13:00:00+08:00', phase)['status'] == 'stale'

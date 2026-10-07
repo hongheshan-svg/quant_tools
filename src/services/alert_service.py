@@ -292,6 +292,7 @@ class AlertService:
         if rule.get('scope') == 'portfolio_holdings':
             from src.services.portfolio_risk import PortfolioRiskService
             report = PortfolioRiskService(self.config, account=rule['account']).report()
+            if rule['type'] == 'stop_risk': return report['positions']
             return [item for item in report['positions'] if len(bare_code(item['code'])) == 6 and bare_code(item['code'])[0] in '03689']
         return []
 
@@ -420,8 +421,8 @@ class AlertService:
                 if code in seen: continue
                 seen.add(code)
                 q = quotes.get(code)
-                if not q: continue
-                name = watch.get(code) or q['name']
+                if not q and rule['type'] != 'stop_risk': continue
+                name = watch.get(code) or member.get('name') or (q or {}).get('name') or code
                 if rule['type'] == 'stop_risk':
                     gap = member.get('stop_gap')
                     outcome = (gap <= rule['threshold'], f"{rule['account']} {name}({code}) 距止损 {gap:.2f}%", gap, rule['threshold']) if gap is not None else None
@@ -476,7 +477,8 @@ class AlertService:
                 events = self._rule_events(quotes, {item['code']: item.get('name') or '' for item in members})
             finally:
                 self.rules = original
-            return {'triggered': bool(events), 'quote': None, 'members': len({item['code'] for item in members}), 'evaluated': len(quotes), 'message': '；'.join(event.message for event in events) or f'范围内 {len(members)} 个标的，有效当日报价 {len(quotes)} 个，无触发；缺少报价的标的无法评估'}
+            evaluated = sum(item.get('stop_gap') is not None for item in members) if rule['type'] == 'stop_risk' else len(quotes)
+            return {'triggered': bool(events), 'quote': None, 'members': len({item['code'] for item in members}), 'evaluated': evaluated, 'message': '；'.join(event.message for event in events) or f'范围内 {len(members)} 个标的，有效报价 {evaluated} 个，无触发；缺少报价的标的无法评估'}
         code = rule["code"]
         today = date.today().strftime("%Y-%m-%d")
         quotes = self._latest_quotes([code], today)

@@ -77,6 +77,7 @@ def ledger_nav(trades, actions, flows, anchors, closes, days, accounts):
         if reset:
             nav, samples = [], []
             unit, previous = 1.0, None
+            issues.discard('missing_historical_price')
         if previous is not None:
             before_flow = value - external
             if previous <= 0 or before_flow < 0:

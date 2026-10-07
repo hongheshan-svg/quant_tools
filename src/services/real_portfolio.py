@@ -562,10 +562,10 @@ class RealPortfolioService:
         with get_db_session(self.db_path) as session:
             for code, pos in merged.items():
                 avg = pos["cost"] / pos["quantity"]
-                row = (session.query(StockDaily).filter(StockDaily.code.in_(code_candidates(code)), StockDaily.close > 0)
-                       .order_by(StockDaily.trade_date.desc()).first())
-                from src.services.data_freshness import daily_quality
-                quality = daily_quality(row.trade_date if row else None, row.updated_at if row else None)
+                from src.services.portfolio_quotes import latest_quote
+                row = latest_quote(session, code)
+                from src.services.portfolio_quotes import price_quality
+                quality = price_quality(row.trade_date if row else None, row.updated_at if row else None)
                 price = row.close if row else avg
                 result.append({
                     "account": "real", "code": code, "name": pos["name"] or self._name(code), "quantity": pos["quantity"],

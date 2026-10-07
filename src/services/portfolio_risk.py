@@ -107,11 +107,12 @@ class PortfolioRiskService:
         total = account["total_assets"] or 0.0
         warnings: list[str] = list(snapshot.get("warnings") or [])
         cash_known = account.get("cash_known", True)
-        from src.services.data_freshness import daily_quality
+        from src.services.portfolio_quotes import price_quality
         with get_db_session(self.db_path) as session:
             for position in positions:
-                quote = session.query(StockDaily).filter(StockDaily.code.in_(code_candidates(position["code"])), StockDaily.close > 0).order_by(StockDaily.trade_date.desc()).first()
-                position["price_quality"] = daily_quality(quote.trade_date if quote else None, quote.updated_at if quote else None)
+                from src.services.portfolio_quotes import latest_quote
+                quote = latest_quote(session, position['code'])
+                position['price_quality'] = price_quality(quote.trade_date if quote else None, quote.updated_at if quote else None)
                 position["price_source"] = quote.source if quote else "cost_estimate"
                 position["price_date"] = quote.trade_date if quote else None
         priced = sum(p["price_quality"]["status"] == "available" for p in positions)
@@ -137,7 +138,7 @@ class PortfolioRiskService:
             elif stop_gap is not None and stop_gap < self.near_stop_pct:
                 status = "接近止损"
                 warnings.append(f"{p['name'] or p['code']} 距止损价仅 {stop_gap:.1f}%")
-            if valuation_ok and weight > self.single_max_pct:
+            if valuation_ok and cash_known and weight > self.single_max_pct:
                 warnings.append(f"{p['name'] or p['code']} 占总资产 {weight:.0f}%，超过单只上限 {self.single_max_pct:.0f}%")
             cost = p["avg_cost"] * p["quantity"]
             rows.append({
@@ -216,22 +217,35 @@ class PortfolioRiskService:
 
     def _drawdown(self) -> dict[str, Any]:
         fills, initial_cash = self._fills_and_initial_cash()
+        from src.services.market_phase import current_phase
+        from src.utils.timestamps import quote_now
+        cutoff = current_phase().get('effective_daily_bar_date') or quote_now().date().isoformat()
         with get_db_session(self.db_path) as session:
-            if not fills:
+            if not fills and not self._is_real:
                 return {"max_drawdown": None, "max_drawdown_date": "", "current_drawdown": None, "days": 0,
                         "quality": {"status": "unavailable", "limitations": ["insufficient_valuation_points"]}}
             start = min(f[4] for f in fills if f[4]).strftime("%Y-%m-%d") if any(f[4] for f in fills) else ""
             codes = {f[0] for f in fills}
             closes: dict[str, dict[str, float]] = defaultdict(dict)
             rows = (
-                session.query(StockDaily.code, StockDaily.trade_date, StockDaily.close)
+                session.query(StockDaily.code, StockDaily.trade_date, StockDaily.close, StockDaily.price_adjustment)
                 .filter(StockDaily.code.in_([v for c in codes for v in code_candidates(c)]), StockDaily.trade_date >= start,
-                        StockDaily.close > 0)
+                        StockDaily.trade_date <= cutoff, StockDaily.close > 0)
                 .all()
             )
-        for code, day, close in rows:
+            if self._is_real:
+                from src.database.models import FundDaily
+                rows += session.query(FundDaily.code, FundDaily.trade_date, FundDaily.close, FundDaily.price_adjustment).filter(FundDaily.code.in_(codes), FundDaily.trade_date >= start, FundDaily.trade_date <= cutoff, FundDaily.close > 0).all()
+        unknown_basis = set()
+        raw_dates = {day for _, day, _, _ in rows}
+        import math
+        for code, day, close, adjustment in rows:
+            if not math.isfinite(close): continue
+            if (self._is_real or adjustment) and adjustment not in {'none', 'unadjusted', '不复权'}:
+                unknown_basis.add((bare_code(code), day))
+                if adjustment: continue
             closes[bare_code(code)][day] = close
-        days = sorted(trading_calendar.trade_days_only({d for c in closes.values() for d in c} | {start}))
+        days = sorted(trading_calendar.trade_days_only(raw_dates | ({start} if start else set())))
         if self._is_real:
             from src.services.portfolio_nav import real_drawdown
             # 所有流水日期都参与重放，非交易日只有现金时也有有效估值。
@@ -241,7 +255,12 @@ class PortfolioRiskService:
             with get_db_session(self.db_path) as session:
                 anchor_days = {a.as_of.strftime("%Y-%m-%d") for name in self.real._names() for a in session.query(RealCash).filter(_account_filter(RealCash, name)).all()}
             days = sorted(set(days) | flow_days | anchor_days | {f[4].strftime("%Y-%m-%d") for f in fills if f[4]})
+            days = [day for day in days if day <= cutoff]
             nav, quality = real_drawdown(self.real, closes, days)
+            sample_days = {day for day, _ in nav}
+            if any(day in sample_days for _, day in unknown_basis):
+                quality['status'] = 'partial'
+                quality['limitations'].append('unknown_or_adjusted_ledger_prices')
             metrics = drawdowns(nav) if quality["status"] == "available" else {"max_drawdown": None, "max_drawdown_date": "", "current_drawdown": None}
             return {**metrics, "days": len(days), "quality": quality}
         nav = replay_nav(fills, closes, days, initial_cash)
