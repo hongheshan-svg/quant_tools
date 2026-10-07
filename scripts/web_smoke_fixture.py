@@ -43,7 +43,8 @@ daily_history.DAILY_SOURCES['tencent'] = ('tx', lambda *a: preview_bars)
 with get_db_session(config['database']['sqlite_path']) as session:
     session.add(StockInfo(code='600519', name='研究验收示例'))
     session.add(Watchlist(code='600519', name='研究验收示例'))
-    session.add(StockInfo(code='000001', name='银行验收示例'))
+    session.add(StockInfo(code='000001', name='平安银行'))
+    session.add(StockInfo(code='601318', name='中国平安'))
     session.add(Watchlist(code='000001', name='银行验收示例'))
     session.add(StockDaily(code='000001', name='银行验收示例', trade_date='2026-09-30', open=12, high=12.5, low=11.8, close=12.2, volume=500000, amount=6100000, change_pct=1.67, source='模拟行情', price_adjustment='none'))
     for index in range(95):
@@ -85,4 +86,9 @@ app = create_app(config, start_scheduler=False, static_dir=ROOT / 'apps/web/dist
 source_health.record('实时行情', '模拟腾讯', True, elapsed=.2)
 source_health.record('实时行情', '模拟失败源', False, '模拟连接超时；保留后备源', elapsed=15)
 app.state.pipeline.collect = lambda: {'all_sources_ok': False, 'missing_sources': ['market.fund_flow'], 'news': {'cailianshe': 3}, 'status': 'partial'}
+from src.services.stock_chat import StockChatSession
+class OfflineLLM:
+    def chat_stream(self, user_message, system_message='', **kwargs):
+        yield json.dumps({'answer': '隔离问股回答：已按指定范围完成只读研究。'}, ensure_ascii=False)
+app.state.chat_store._factory = lambda cfg: StockChatSession(cfg, llm=OfflineLLM())
 uvicorn.run(app, host='127.0.0.1', port=int(sys.argv[1]) if len(sys.argv) > 1 else 8766, log_level='warning')
