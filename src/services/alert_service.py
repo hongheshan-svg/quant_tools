@@ -90,6 +90,14 @@ RULE_TYPES: dict[str, dict[str, Any]] = {
         {"key": "value", "label": "阈值", "type": "number", "default": 80},
     ]},
 }
+ACCOUNT_TYPES = {'account_concentration', 'account_drawdown', 'account_prices_stale'}
+for _kind, _label, _default in [('account_concentration', '账户单标的集中度', 30), ('account_drawdown', '账户回撤', 10)]:
+    RULE_TYPES[_kind] = {'label': _label, 'scopes': ['portfolio_account'], 'fields': [{'key': 'threshold', 'label': '阈值（%）', 'type': 'number', 'default': _default}]}
+RULE_TYPES['account_prices_stale'] = {'label': '账户报价缺失或陈旧', 'scopes': ['portfolio_account'], 'fields': []}
+RULE_TYPES['stop_risk'] = {'label': '持仓止损风险', 'scopes': ['portfolio_holdings'], 'fields': [{'key': 'threshold', 'label': '距止损阈值（%）', 'type': 'number', 'default': 2}]}
+for _kind, _definition in RULE_TYPES.items():
+    _definition.setdefault('scopes', ['stock', 'watchlist', 'portfolio_holdings'])
+    TYPE_LABELS[_kind] = _definition['label']
 INT_FIELDS = {"period"}
 FIELD_ERRORS = {"price": "价格", "change_pct": "涨跌幅", "multiplier": "放量倍数", "period": "周期", "value": "RSI 阈值"}
 VALID_SEVERITIES = ("info", "warning", "critical")
@@ -111,10 +119,19 @@ def validate_rule(rule: dict) -> dict:
     kind = str(rule.get("type") or "").strip()
     if kind not in RULE_TYPES:
         raise ValueError(f"未知的规则类型 {kind or '（空）'}")
-    code = normalize_code(rule.get("code"))
-    if not (len(code) == 6 and code.isdigit()):
-        raise ValueError("股票代码必须是 6 位数字")
+    scope = str(rule.get('scope') or 'stock')
+    if scope not in RULE_TYPES[kind]['scopes']:
+        raise ValueError('该规则类型不支持所选作用范围')
+    code = normalize_code(rule.get('code')) if scope == 'stock' else ''
+    if scope == 'stock' and not (len(code) == 6 and code.isdigit()):
+        raise ValueError('股票代码必须是 6 位数字')
     out: dict[str, Any] = {"code": code, "type": kind}
+    if scope != 'stock': out['scope'] = scope
+    if scope.startswith('portfolio_'):
+        account = str(rule.get('account') or 'paper').strip()
+        if len(account) > 80 or account not in {'paper', 'real'} and not (account.startswith('real:') and account[5:].strip()):
+            raise ValueError('账户应为 paper、real 或 real:账户名')
+        out['account'] = account
     for f in RULE_TYPES[kind]["fields"]:
         key, raw = f["key"], rule.get(f["key"])
         if raw is None or (isinstance(raw, str) and not raw.strip()):
@@ -140,6 +157,8 @@ def validate_rule(rule: dict) -> dict:
             if num != int(num):
                 raise ValueError(f"{label}必须是整数")
             num = int(num)
+        elif key == 'threshold' and num > 100:
+            raise ValueError('风险阈值不能超过 100%')
         elif key == "value" and num > 100:
             raise ValueError("RSI 阈值不能超过 100")
         out[key] = num
@@ -187,7 +206,7 @@ class AlertService:
         self.big_drop_pct = float(cfg.get("big_drop_pct", -7))
         self.extra_watchlist = [bare_code(str(c)) for c in cfg.get("watchlist") or []]
         self.rules = []
-        for raw in cfg.get("rules") or []:
+        for raw in cfg.get('rules') if isinstance(cfg.get('rules'), list) else []:
             try:
                 rule = validate_rule(raw)
                 if rule["enabled"]:
@@ -247,7 +266,7 @@ class AlertService:
                 watch[bare_code(code)] = name or ""
         for pos in self._positions() if positions is None else positions:
             watch.setdefault(bare_code(pos["code"]), pos.get("name", ""))
-        for code in [*self.extra_watchlist, *(bare_code(str(r["code"])) for r in self.rules)]:
+        for code in [*self.extra_watchlist, *(bare_code(str(r["code"])) for r in self.rules if r.get('scope', 'stock') == 'stock')]:
             watch.setdefault(code, "")
         try:
             from src.services.watchlist import WatchlistService
@@ -258,7 +277,51 @@ class AlertService:
                 watch.setdefault(item["code"], item["name"])
         except Exception as e:
             logger.debug(f"读取自选股失败: {e}")
+        for rule in self.rules:
+            if rule.get('scope') == 'portfolio_holdings':
+                for item in self._scope_members(rule):
+                    watch.setdefault(item['code'], item.get('name') or '')
         return watch
+
+    def _scope_members(self, rule):
+        if rule.get('scope', 'stock') == 'stock':
+            return [{'code': rule['code']}]
+        if rule.get('scope') == 'watchlist':
+            from src.services.watchlist import WatchlistService
+            return [item for item in WatchlistService(self.config).list() if item.get('kind', 'stock') == 'stock'] + [{'code': code} for code in self.extra_watchlist if code]
+        if rule.get('scope') == 'portfolio_holdings':
+            from src.services.portfolio_risk import PortfolioRiskService
+            report = PortfolioRiskService(self.config, account=rule['account']).report()
+            return [item for item in report['positions'] if len(bare_code(item['code'])) == 6 and bare_code(item['code'])[0] in '03689']
+        return []
+
+    def _account_outcome(self, rule):
+        from src.services.portfolio_risk import PortfolioRiskService
+        report = PortfolioRiskService(self.config, account=rule['account']).report()
+        kind, threshold = rule['type'], rule.get('threshold')
+        if kind == 'account_prices_stale':
+            invalid = [item['code'] for item in report['positions'] if item['price_quality']['status'] != 'available']
+            return bool(invalid), '报价缺失或陈旧：' + '、'.join(invalid) if invalid else '持仓报价均有效', len(invalid), 0
+        if kind == 'account_concentration':
+            if report['quality']['valuation'] != 'available' or not report['cash_known']:
+                return None
+            value = max((item['weight'] for item in report['positions']), default=0)
+        else:
+            drawdown = report['drawdown']
+            if drawdown.get('quality', {}).get('status') != 'available' or drawdown.get('current_drawdown') is None:
+                return None
+            value = abs(min(0, drawdown['current_drawdown']))
+        return value >= threshold, f"{TYPE_LABELS[kind]} {value:.2f}%（阈值 {threshold:g}%）", value, threshold
+
+    def _account_events(self):
+        events = []
+        for rule in self.rules:
+            if rule.get('scope') != 'portfolio_account': continue
+            outcome = self._account_outcome(rule)
+            if outcome and outcome[0]:
+                _, message, observed, threshold = outcome
+                events.append(AlertEvent('account:' + rule['account'], rule['account'], rule['type'], rule.get('severity', 'warning'), rule['account'] + '：' + message, observed, threshold, rule['id']))
+        return events
 
     def _positions(self) -> list[dict[str, Any]]:
         """模拟盘持仓 + 实盘记账持仓（account=real）。"""
@@ -284,7 +347,7 @@ class AlertService:
             if _state_date != today:
                 _limit_state.clear()
                 _state_date = today
-        events: list[AlertEvent] = self._regime_events()
+        events: list[AlertEvent] = [*self._regime_events(), *self._account_events()]
         positions = self._positions()
         watch = self.watchlist(positions)
         if not watch:
@@ -315,7 +378,10 @@ class AlertService:
             elif q["price"] >= pos["target_price"]:
                 events.append(AlertEvent(code, name, "take_profit", "info",
                                          f"{holder} {name}({code}) 达到目标价 {pos['target_price']:.2f}，现价 {q['price']}", q["price"], pos["target_price"]))
-        events.extend(self._rule_events(quotes, watch))
+        custom = self._rule_events(quotes, watch)
+        custom_stops = {event.code for event in custom if event.alert_type == 'stop_risk'}
+        events = [event for event in events if event.code not in custom_stops or event.alert_type not in {'stop_loss', 'near_stop'}]
+        events.extend(custom)
         return events
 
     def _latest_quotes(self, codes: list[str], today: str) -> dict[str, dict[str, Any]]:
@@ -346,16 +412,24 @@ class AlertService:
 
     def _rule_events(self, quotes: dict[str, dict[str, Any]], watch: dict[str, str]) -> list[AlertEvent]:
         events = []
-        for idx, rule in enumerate(self.rules):
-            code = bare_code(str(rule["code"]))
-            q = quotes.get(code)
-            if not q:
-                continue
-            name, kind, rule_id = watch.get(code) or q["name"], rule.get("type"), rule["id"]
-            outcome = self._check_rule(rule, code, name, q)
-            if outcome and outcome[0]:
-                _, text, observed, threshold = outcome
-                events.append(AlertEvent(code, name, kind, rule.get("severity", "warning"), text, observed, threshold, rule_id))
+        for rule in self.rules:
+            if rule.get('scope') == 'portfolio_account': continue
+            seen = set()
+            for member in self._scope_members(rule):
+                code = bare_code(member['code'])
+                if code in seen: continue
+                seen.add(code)
+                q = quotes.get(code)
+                if not q: continue
+                name = watch.get(code) or q['name']
+                if rule['type'] == 'stop_risk':
+                    gap = member.get('stop_gap')
+                    outcome = (gap <= rule['threshold'], f"{rule['account']} {name}({code}) 距止损 {gap:.2f}%", gap, rule['threshold']) if gap is not None else None
+                else:
+                    outcome = self._check_rule(rule, code, name, q)
+                if outcome and outcome[0]:
+                    _, text, observed, threshold = outcome
+                    events.append(AlertEvent(code, name, rule['type'], rule.get('severity', 'warning'), text, observed, threshold, rule['id']))
         return events
 
     def _check_rule(self, rule: dict, code: str, name: str, q: dict[str, Any]) -> tuple[bool, str, float | None, float | None] | None:
@@ -390,6 +464,19 @@ class AlertService:
     def test_rule(self, rule: dict) -> dict[str, Any]:
         """试算一条规则：忽略交易时段、冷却和每天一次的限制，不写提醒记录、不推送。"""
         rule = validate_rule(rule)
+        if rule.get('scope') == 'portfolio_account':
+            outcome = self._account_outcome(rule)
+            return {'triggered': bool(outcome and outcome[0]), 'available': outcome is not None, 'message': outcome[1] if outcome else '风险数据质量不足，无法评估', 'quote': None}
+        if rule.get('scope', 'stock') != 'stock':
+            members = self._scope_members(rule)
+            quotes = self._latest_quotes([bare_code(item['code']) for item in members], date.today().strftime('%Y-%m-%d'))
+            original = self.rules
+            try:
+                self.rules = [rule]
+                events = self._rule_events(quotes, {item['code']: item.get('name') or '' for item in members})
+            finally:
+                self.rules = original
+            return {'triggered': bool(events), 'quote': None, 'members': len({item['code'] for item in members}), 'evaluated': len(quotes), 'message': '；'.join(event.message for event in events) or f'范围内 {len(members)} 个标的，有效当日报价 {len(quotes)} 个，无触发；缺少报价的标的无法评估'}
         code = rule["code"]
         today = date.today().strftime("%Y-%m-%d")
         quotes = self._latest_quotes([code], today)

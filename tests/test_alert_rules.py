@@ -280,10 +280,10 @@ def test_watchlist_report_run_with_codes(tmp_path, monkeypatch):
 
         svc.run(push=False, codes=["600519", "601919"])
         assert sorted(seen) == ["600519", "601919"]
-        for empty in ([], None):
+        for empty, expected in (([], []), (None, ['000001'])):
             seen.clear()
             svc.run(push=False, codes=empty)
-            assert seen == ["000001"]
+            assert seen == expected
     finally:
         db_module._engine.dispose()
         db_module._engine = None

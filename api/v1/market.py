@@ -187,8 +187,9 @@ def _apply_saved_config(request: Request, values: dict[str, Any]) -> None:
 def alert_rules(config: dict[str, Any] = Depends(get_config)) -> dict[str, Any]:
     """当前的自定义提醒规则和可用的规则类型（供 Web 动态渲染表单）。"""
     from src.services.alert_service import RULE_TYPES
+    from src.services.alert_rule_sources import rule_sources
 
-    return {"rules": (config.get("alerts") or {}).get("rules") or [], "types": RULE_TYPES}
+    return {**rule_sources(config), "types": RULE_TYPES}
 
 
 @router.put("/alerts/rules")
@@ -196,6 +197,10 @@ def save_alert_rules(request: Request, body: dict[str, Any] = Body(...)) -> dict
     """整体保存自定义提醒规则：逐条校验，第一条错误返回 422。"""
     from src.services.alert_service import validate_rule
     from src.settings_store import save_section
+    from src.services.alert_rule_sources import rule_sources
+
+    if rule_sources(request.app.state.pipeline.config)['summary']['readonly']:
+        raise HTTPException(status_code=422, detail='提醒规则由环境变量覆盖，请修改 QUANT__ALERTS__RULES 后重启')
 
     raw = body.get("rules")
     if not isinstance(raw, list):

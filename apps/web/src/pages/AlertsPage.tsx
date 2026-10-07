@@ -90,7 +90,7 @@ function RulesPanel() {
 
   useEffect(() => {
     // 规则里只有代码，名称按代码搜索补上（失败就只显示代码）
-    for (const code of new Set(rules.map((r) => r.code))) {
+    for (const code of new Set(rules.map((r) => r.code).filter(Boolean))) {
       if (names[code] !== undefined) continue
       setNames((n) => ({ ...n, [code]: '' }))
       api.searchStocks(code, 1).then((found) => {
@@ -115,6 +115,7 @@ function RulesPanel() {
       const r = await api.saveAlertRules(rules)
       setRules(r.rules)
       setDirty(false)
+      void reload()
       toast.success(t('提醒规则已保存'))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
@@ -135,7 +136,7 @@ function RulesPanel() {
   }
 
   const columns: Column<AlertRule>[] = [
-    { key: 'stock', title: t('股票'), render: (r) => <>{names[r.code] || '-'} <span className="num text-xs text-muted">{r.code}</span></> },
+    { key: 'stock', title: t('作用范围'), render: (r) => <>{r.scope && r.scope !== 'stock' ? <span>{t(({ watchlist: '动态自选集合', portfolio_holdings: '指定账户持仓', portfolio_account: '账户风险' } as Record<string, string>)[String(r.scope)] ?? String(r.scope))} {r.account}</span> : <>{names[r.code] || '-'} <span className="num text-xs text-muted">{r.code}</span></>}</> },
     { key: 'type', title: t('类型'), render: (r) => t(types[r.type]?.label ?? r.type) },
     { key: 'cond', title: t('条件'), render: (r) => describeRule(r, types) },
     {
@@ -143,7 +144,7 @@ function RulesPanel() {
       title: t('启用'),
       render: (r) => {
         const i = rules.indexOf(r)
-        return <input type="checkbox" aria-label={t('启用')} checked={r.enabled !== false} onChange={(e) => update(rules.map((x, j) => (j === i ? { ...x, enabled: e.target.checked } : x)))} />
+        return <input type="checkbox" aria-label={t('启用')} disabled={data.summary?.readonly} checked={r.enabled !== false} onChange={(e) => update(rules.map((x, j) => (j === i ? { ...x, enabled: e.target.checked } : x)))} />
       },
     },
     { key: 'note', title: t('备注'), render: (r) => <span className="text-xs text-muted">{r.note || '-'}</span> },
@@ -156,8 +157,8 @@ function RulesPanel() {
           <div className="space-y-1">
             <div className="flex gap-1">
               <Button loading={testing === i} onClick={() => test(i)}>{t('测试')}</Button>
-              <Button onClick={() => setEditing({ index: i, rule: r })}>{t('编辑')}</Button>
-              <Button variant="danger" onClick={() => update(rules.filter((_, j) => j !== i))}>{t('删除')}</Button>
+              <Button disabled={data.summary?.readonly} onClick={() => setEditing({ index: i, rule: r })}>{t('编辑')}</Button>
+              <Button disabled={data.summary?.readonly} variant="danger" onClick={() => update(rules.filter((_, j) => j !== i))}>{t('删除')}</Button>
             </div>
             {results[i] && <div className="max-w-xs text-xs text-muted">{results[i]}</div>}
           </div>
@@ -168,12 +169,17 @@ function RulesPanel() {
 
   return (
     <>
+      {data.summary && <Card className="mb-3" bodyClassName="text-xs text-muted space-y-1">
+        <p>{t('规则来源')}：{t(data.summary.source)} · {t('生效')} {data.summary.effective} / {data.summary.configured} · {t('停用')} {data.summary.disabled} · {t('无效')} {data.summary.invalid} · {t('文件规则')} {data.summary.file_configured}</p>
+        <p>{t('自动止损、大跌和大盘提醒独立于自定义规则；同一持仓触发自定义止损时只保留自定义提醒。')}</p>
+        {data.summary.readonly && <p>{t('环境变量覆盖生效；请修改 QUANT__ALERTS__RULES 后重启。')}</p>}
+      </Card>}
       <Card
         title={t('自定义提醒规则')}
         actions={
           <div className="flex gap-2">
-            <Button onClick={() => setEditing({ index: -1, rule: null })}>{t('新增规则')}</Button>
-            <Button variant="primary" loading={saving} disabled={!dirty} onClick={save}>{t('保存')}</Button>
+            <Button disabled={data.summary?.readonly} onClick={() => setEditing({ index: -1, rule: null })}>{t('新增规则')}</Button>
+            <Button variant="primary" loading={saving} disabled={!dirty || data.summary?.readonly} onClick={save}>{t('保存')}</Button>
           </div>
         }
         bodyClassName="p-0"

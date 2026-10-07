@@ -40,12 +40,16 @@ export function AlertRuleEditor({ open, initial, initialName, types, onClose, on
   const [values, setValues] = useState<Record<string, string | number>>({})
   const [note, setNote] = useState('')
   const [error, setError] = useState('')
+  const [scope, setScope] = useState('stock')
+  const [account, setAccount] = useState('paper')
 
   useEffect(() => {
     if (!open) return
     const first = initial?.type ?? typeKeys[0] ?? ''
     setStock(initial ? { code: initial.code, name: initialName ?? '' } : null)
     setType(first)
+    setScope(String(initial?.scope ?? 'stock'))
+    setAccount(String(initial?.account ?? 'paper'))
     setValues(initial ? Object.fromEntries(types[first]?.fields.map((f) => [f.key, initial[f.key] as string | number]).filter(([, v]) => v !== undefined) ?? []) : defaultsOf(types[first]))
     setNote(initial?.note ?? '')
     setError('')
@@ -56,16 +60,18 @@ export function AlertRuleEditor({ open, initial, initialName, types, onClose, on
   const def = types[type]
   const changeType = (next: string) => {
     setType(next)
+    const allowed = types[next]?.scopes ?? ['stock']
+    if (!allowed.includes(scope)) setScope(allowed[0])
     setValues(defaultsOf(types[next]))
   }
   const submit = () => {
-    if (!stock) return setError(t('请先选择股票'))
+    if (scope === 'stock' && !stock) return setError(t('请先选择股票'))
     for (const f of def?.fields ?? []) {
       if (f.type === 'number' && !(Number(values[f.key]) > 0)) return setError(t('{label}必须大于 0', { label: t(f.label) }))
     }
-    const rule: AlertRule = { code: stock.code, type, enabled: initial?.enabled ?? true, note: note.trim() }
+    const rule: AlertRule = { code: scope === 'stock' ? stock!.code : '', type, scope, account, id: initial?.id, severity: initial?.severity, enabled: initial?.enabled ?? true, note: note.trim() }
     for (const f of def?.fields ?? []) rule[f.key] = f.type === 'number' ? Number(values[f.key]) : values[f.key]
-    onSubmit(rule, stock.name)
+    onSubmit(rule, scope === 'stock' ? stock!.name : '')
   }
 
   return (
@@ -81,7 +87,11 @@ export function AlertRuleEditor({ open, initial, initialName, types, onClose, on
       }
     >
       <div className="space-y-3">
-        <Field label={t('股票')}>
+        <Field label={t('作用范围')}><Select value={scope} onChange={(event) => setScope(event.target.value)} aria-label={t('作用范围')}>
+          {(def?.scopes ?? ['stock']).map((value) => <option key={value} value={value}>{t(({ stock: '单只股票', watchlist: '动态自选集合', portfolio_holdings: '指定账户持仓', portfolio_account: '账户风险' } as Record<string, string>)[value] ?? value)}</option>)}
+        </Select></Field>
+        {scope.startsWith('portfolio_') && <Field label={t('账户范围')}><Input value={account} onChange={(event) => setAccount(event.target.value)} aria-label={t('账户范围')} placeholder="paper / real / real:账户名" maxLength={80} /><p className="mt-1 text-xs text-muted">{t('paper 为模拟盘，real 为全部实盘账户，real:名称 为指定实盘账户')}</p></Field>}
+        {scope === 'stock' && <Field label={t('股票')}>
           {stock ? (
             <div className="flex items-center justify-between rounded-md border border-line px-2.5 py-1.5 text-sm">
               <span>{stock.name} <span className="num text-xs text-muted">{stock.code}</span></span>
@@ -90,7 +100,7 @@ export function AlertRuleEditor({ open, initial, initialName, types, onClose, on
           ) : (
             <StockSearch onSelect={setStock} autoFocus />
           )}
-        </Field>
+        </Field>}
         <Field label={t('规则类型')}>
           <Select value={type} onChange={(e) => changeType(e.target.value)} className="w-full" aria-label={t('规则类型')}>
             {typeKeys.map((k) => <option key={k} value={k}>{t(types[k].label)}</option>)}
