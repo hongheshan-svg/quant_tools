@@ -22,7 +22,7 @@ function Capabilities() {
     <div>
       <div className="mb-3 flex items-center justify-between gap-3">
         <p className="text-sm text-muted">{t('各数据集按回退顺序列出数据源；健康记录可跨服务重启恢复，未运行过为「未知」。')}</p>
-        <Button onClick={reload} loading={loading}>{t('刷新')}</Button>
+        <Button onClick={() => { void reload(); void center.reload() }} loading={loading || center.loading}>{t('刷新')}</Button>
       </div>
       {error && <ErrorBox message={error} onRetry={reload} />}
       {center.error && <ErrorBox message={center.error} onRetry={center.reload} />}
