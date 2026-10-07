@@ -42,7 +42,7 @@ ETF 回测只用于研究，不接入自动实盘下单。历史不满默认 8 �
 | 检查 | 结果 |
 | --- | --- |
 | `.venv/bin/python -m pytest -q -p no:cacheprovider tests/` | 2001 条通过；4 条第三方弃用提示 |
-| `cd apps/web && npm run lint && npm test && npm run build` | lint/build 通过，184 条测试通过 |
+| `cd apps/web && npm run lint && npm test && npm run build` | lint/build 通过，185 条测试通过 |
 | `cd apps/desktop && npm test` | 24 条测试通过 |
 | `ruff check --select E9,F63,F7,F82 src api scripts main.py server.py` | 通过 |
 | `python scripts/check_alignment_assets.py` | 默认策略、ETF 配置与上游 MIT 许可证资源通过 |
