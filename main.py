@@ -56,6 +56,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(description="A股舆情驱动量化交易系统")
     parser.add_argument("--once", action="store_true", help="执行一遍收盘后的任务后退出（GitHub Actions、Docker 定时任务用）")
+    parser.add_argument("--scheduled", action="store_true", help="--once 作为定时计划运行，共享数据库认领每日任务；人工补跑不要加此参数")
     parser.add_argument("--steps", help=f"--once 时只执行这些步骤，逗号分隔：{','.join(ONCE_STEPS)}")
     parser.add_argument("--stocks", help="只对这些股票执行 AI 诊断并推送决策仪表盘后退出，逗号分隔，代码、名称、拼音首字母均可，支持 ETF 和指数，如 600519,贵州茅台,510300,沪深300；不受交易日限制")
     parser.add_argument("--no-notify", action="store_true", help="不推送任何消息（对 --once、--stocks 和常驻调度都生效）")
@@ -188,8 +189,8 @@ def main():
 
         steps = [s.strip() for s in args.steps.split(",") if s.strip()] if args.steps else None
         try:
-            results = run_once(config, steps)
-        except ValueError as e:
+            results = run_once(config, steps, scheduled=True) if args.scheduled else run_once(config, steps)
+        except (ValueError, RuntimeError) as e:
             logger.error(str(e))
             sys.exit(2)
         for r in results:

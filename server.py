@@ -149,6 +149,7 @@ def main() -> None:
     pre.add_argument("--workdir")
     pre.add_argument("--self-check", action="store_true")
     pre.add_argument("--run-job")
+    pre.add_argument("--job-config")
     known, _ = pre.parse_known_args()
     if known.self_check:
         sys.exit(self_check())
@@ -162,7 +163,7 @@ def main() -> None:
         if bundle_dir():
             use_system_browser_dir()
 
-        sys.exit(run_job_entry(known.run_job))
+        sys.exit(run_job_entry(known.run_job, known.job_config))
 
     import uvicorn
 

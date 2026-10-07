@@ -11,6 +11,10 @@ import signal
 import subprocess
 import sys
 import time
+import json
+import tempfile
+from contextvars import ContextVar
+from zoneinfo import ZoneInfo
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -19,6 +23,11 @@ from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from loguru import logger
+
+_job_skipped = ContextVar("scheduled_job_skipped", default=False)
+_job_reported = ContextVar("scheduled_job_reported", default=False)
+_isolated_status = ContextVar("isolated_job_status", default="completed")
+JOB_SKIPPED_EXIT = 20
 
 
 def _skip_non_trade_day(config: dict, job_name: str) -> bool:
@@ -30,11 +39,13 @@ def _skip_non_trade_day(config: dict, job_name: str) -> bool:
     if trading_calendar.is_trade_day():
         return False
     logger.info(f"今日非交易日，跳过: {job_name}")
+    _job_skipped.set(True)
     return True
 
 
 def _report_error(config: dict, source: str, error: Exception) -> None:
     """任务出错时推送系统错误通知（限频；推送失败不影响任务）。"""
+    _job_reported.set(True)
     try:
         from src.services.system_alerts import report_error
 
@@ -237,6 +248,7 @@ def _run_daily_analysis(config: dict):
     except Exception as e:
         logger.error(f"每日分析任务异常: {e}")
         _report_error(config, "每日综合分析", e)
+        raise
 
     # 5. 全市场策略选股（结果供 AI 涨停预测参考，并统计各策略的次日表现）
     screening = config.get("screening", {})
@@ -251,11 +263,13 @@ def _run_daily_analysis(config: dict):
             except Exception as e:
                 logger.error(f"策略回测任务异常: {e}")
                 _report_error(config, "策略回测", e)
+                raise
         try:
             StrategyScreener(config).run()
         except Exception as e:
             logger.error(f"策略选股任务异常: {e}")
             _report_error(config, "策略选股", e)
+            raise
 
 
 def _run_strategy_backtest_if_due(config: dict, interval_days: int) -> bool:
@@ -283,6 +297,7 @@ def _run_signal_generation(config: dict):
     except Exception as e:
         logger.error(f"信号生成任务异常: {e}")
         _report_error(config, "每日信号生成", e)
+        raise
         return
 
     # AI 研判：给 Top 评分股写入 买入/观望/回避，观望和回避的信号不会生成订单
@@ -294,6 +309,7 @@ def _run_signal_generation(config: dict):
         except Exception as e:
             logger.error(f"AI 研判任务异常: {e}")
             _report_error(config, "AI 研判", e)
+            raise
 
     # 信号 → 待确认订单（开启 trading.auto_confirm 时直接在模拟盘成交）
     try:
@@ -305,6 +321,7 @@ def _run_signal_generation(config: dict):
     except Exception as e:
         logger.error(f"交易执行任务异常: {e}")
         _report_error(config, "交易执行", e)
+        raise
 
 
 def _run_daily_report(config: dict):
@@ -319,6 +336,7 @@ def _run_daily_report(config: dict):
         except Exception as e:
             logger.error(f"大盘复盘任务异常: {e}")
             _report_error(config, "大盘复盘", e)
+            raise
     if not config.get("notifier", {}).get("daily_report_enabled", True):
         return
     from src.services.daily_report import DailyReportService
@@ -328,6 +346,7 @@ def _run_daily_report(config: dict):
     except Exception as e:
         logger.error(f"每日报告推送异常: {e}")
         _report_error(config, "每日报告推送", e)
+        raise
 
 
 def _run_watchlist_report(config: dict):
@@ -339,10 +358,13 @@ def _run_watchlist_report(config: dict):
     from src.services.watchlist_report import WatchlistReportService
 
     try:
-        WatchlistReportService(config).run()
+        result = WatchlistReportService(config).run(codes=config.get("_scheduled_stock_codes"))
+        if result.get("error") or result.get("failed"):
+            raise RuntimeError(result.get("error") or f"自选股报告未完成：{len(result['failed'])} 只诊断失败")
     except Exception as e:
         logger.error(f"自选股决策仪表盘任务异常: {e}")
         _report_error(config, "自选股决策仪表盘", e)
+        raise
 
 
 def _run_alert_digest(config: dict):
@@ -356,6 +378,7 @@ def _run_alert_digest(config: dict):
     except Exception as e:
         logger.error(f"盘中提醒日报异常: {e}")
         _report_error(config, "盘中提醒日报", e)
+        raise
 
 
 def _run_self_learning(config: dict):
@@ -372,6 +395,7 @@ def _run_self_learning(config: dict):
     except Exception as e:
         logger.error(f"自学习任务异常: {e}")
         _report_error(config, "每日自学习", e)
+        raise
 
 
 def _run_signal_lifecycle(config: dict):
@@ -387,6 +411,7 @@ def _run_signal_lifecycle(config: dict):
     except Exception as e:
         logger.error(f"决策信号评估异常: {e}")
         _report_error(config, "决策信号评估", e)
+        raise
     try:
         from src.services.skill_consult import SkillOpinionService
 
@@ -395,6 +420,7 @@ def _run_signal_lifecycle(config: dict):
     except Exception as e:
         logger.error(f"策略观点评估异常: {e}")
         _report_error(config, "策略观点评估", e)
+        raise
 
 
 # 定时任务清单：任务 id -> (中文名, 任务函数)；build_scheduler 注册、Web 定时任务面板和「立即运行」共用
@@ -462,6 +488,20 @@ def run_isolated(job_id: str, config: dict, command: list[str] | None = None) ->
         kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | getattr(subprocess, "CREATE_NO_WINDOW", 0)
     else:
         kwargs["start_new_session"] = True   # 自成进程组，超时可以整组终止
+    snapshot_path = None
+    if command is None:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".json", delete=False) as snapshot:
+            json.dump(config, snapshot, ensure_ascii=False)
+            snapshot_path = snapshot.name
+        cmd = [*cmd, "--job-config", snapshot_path]
+    try:
+        return _wait_isolated(cmd, kwargs, name, config, timeout_minutes, started)
+    finally:
+        if snapshot_path:
+            Path(snapshot_path).unlink(missing_ok=True)
+
+
+def _wait_isolated(cmd, kwargs, name, config, timeout_minutes, started):
     proc = subprocess.Popen(cmd, **kwargs)
     logger.info(f"[定时任务] {name} 在独立进程中运行（pid {proc.pid}，最长 {timeout_minutes:g} 分钟）")
     try:
@@ -472,7 +512,8 @@ def run_isolated(job_id: str, config: dict, command: list[str] | None = None) ->
         _report_error(config, name, TimeoutError(f"超过 {timeout_minutes:g} 分钟未完成，已终止（可调大 scheduler.job_timeout_minutes）"))
         return False
     elapsed = time.monotonic() - started
-    if code == 0:
+    if code in (0, JOB_SKIPPED_EXIT):
+        _isolated_status.set("skipped" if code == JOB_SKIPPED_EXIT else "completed")
         logger.info(f"[定时任务] {name} 完成，用时 {elapsed:.0f} 秒")
         return True
     if code != JOB_FAILED_EXIT:
@@ -481,32 +522,65 @@ def run_isolated(job_id: str, config: dict, command: list[str] | None = None) ->
     return False
 
 
-def run_job(job_id: str, config: dict) -> None:
+def run_job(job_id: str, config: dict) -> dict:
     """定时任务和「立即运行」的统一入口：每日任务按配置在独立进程中运行，其余在本进程运行"""
     if job_id in ISOLATED_JOBS and (config.get("scheduler") or {}).get("isolate_daily_jobs", True):
-        run_isolated(job_id, config)
+        _isolated_status.set("completed")
+        if not run_isolated(job_id, config):
+            raise RuntimeError(f"{JOBS[job_id][0]}失败或超时，请查看任务日志")
+        return {"status": _isolated_status.get(), "job_id": job_id}
     else:
-        JOBS[job_id][1](config)
+        token = _job_skipped.set(False)
+        try:
+            result = JOBS[job_id][1](config)
+            if isinstance(result, dict) and result.get("error"):
+                raise RuntimeError(result["error"])
+            return {"status": "skipped" if _job_skipped.get() else "completed", "job_id": job_id, "result": result}
+        finally:
+            _job_skipped.reset(token)
 
 
-def run_job_entry(job_id: str) -> int:
+def run_job_entry(job_id: str, config_path: str | None = None) -> int:
     """子进程入口（server.py --run-job）：按当前目录的配置运行一个任务后退出"""
     from main import setup_logging
     from src.config_loader import load_config
 
-    config = load_config()
+    config = json.loads(Path(config_path).read_text()) if config_path else load_config()
     setup_logging(config)
     if job_id not in JOBS:
         logger.error(f"未知的定时任务: {job_id}")
         return JOB_FAILED_EXIT
     name, fn = JOBS[job_id]
+    _job_reported.set(False)
+    _job_skipped.set(False)
     try:
-        fn(config)
+        result = fn(config)
+        if isinstance(result, dict) and result.get("error"):
+            raise RuntimeError(result["error"])
     except Exception as e:
         logger.exception(f"[定时任务] {name} 出错: {e}")
-        _report_error(config, name, e)
+        if not _job_reported.get():
+            _report_error(config, name, e)
         return JOB_FAILED_EXIT
-    return 0
+    return JOB_SKIPPED_EXIT if _job_skipped.get() else 0
+
+
+def run_scheduled_job(job_id: str, config: dict, scheduled_for: datetime | None = None) -> dict:
+    """仅定时入口认领计划；立即运行与人工 --once 保留补跑语义。"""
+    from src.services.scheduled_job_claim import claim
+    keys = {"daily_analysis": "daily_analysis_time", "signal_generation": "daily_signal_time",
+            "daily_report": "daily_report_time", "watchlist_report": "watchlist_report_time",
+            "self_learning": "self_learning_time", "signal_lifecycle": "signal_lifecycle_time"}
+    defaults = {"daily_analysis": "15:30", "signal_generation": "16:00", "daily_report": "16:10",
+                "watchlist_report": "16:30", "self_learning": "16:20", "signal_lifecycle": "16:25"}
+    if scheduled_for is None:
+        at = (config.get("alerts") or {}).get("digest_time", "15:10") if job_id == "alert_digest" else (config.get("scheduler") or {}).get(keys[job_id], defaults[job_id])
+        hour, minute = map(int, at.split(":"))
+        scheduled_for = datetime.now(ZoneInfo("Asia/Shanghai")).replace(hour=hour, minute=minute, second=0, microsecond=0)
+    acquired, snapshot = claim(job_id, config, scheduled_for)
+    if not acquired:
+        return {"status": "skipped", "reason": "scheduled_occurrence_already_claimed", "job_id": job_id}
+    return run_job(job_id, snapshot)
 
 
 _WEEKDAYS = {"mon-fri": "工作日", "*": "每天"}
@@ -614,8 +688,8 @@ def build_scheduler(config: dict, scheduler=None):
     analysis_time = sched_cfg.get("daily_analysis_time", "15:30")
     hour, minute = analysis_time.split(":")
     scheduler.add_job(
-        run_job,
-        trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
+        run_scheduled_job,
+        trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri", timezone=ZoneInfo("Asia/Shanghai")),
         args=["daily_analysis", config],
         id="daily_analysis",
         name=JOBS["daily_analysis"][0],
@@ -625,8 +699,8 @@ def build_scheduler(config: dict, scheduler=None):
     signal_time = sched_cfg.get("daily_signal_time", "16:00")
     hour, minute = signal_time.split(":")
     scheduler.add_job(
-        run_job,
-        trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
+        run_scheduled_job,
+        trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri", timezone=ZoneInfo("Asia/Shanghai")),
         args=["signal_generation", config],
         id="signal_generation",
         name=JOBS["signal_generation"][0],
@@ -636,8 +710,8 @@ def build_scheduler(config: dict, scheduler=None):
     report_time = sched_cfg.get("daily_report_time", "16:10")
     hour, minute = report_time.split(":")
     scheduler.add_job(
-        run_job,
-        trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
+        run_scheduled_job,
+        trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri", timezone=ZoneInfo("Asia/Shanghai")),
         args=["daily_report", config],
         id="daily_report",
         name=JOBS["daily_report"][0],
@@ -647,8 +721,8 @@ def build_scheduler(config: dict, scheduler=None):
     watchlist_time = sched_cfg.get("watchlist_report_time", "16:30")
     hour, minute = watchlist_time.split(":")
     scheduler.add_job(
-        run_job,
-        trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
+        run_scheduled_job,
+        trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri", timezone=ZoneInfo("Asia/Shanghai")),
         args=["watchlist_report", config],
         id="watchlist_report",
         name=JOBS["watchlist_report"][0],
@@ -658,8 +732,8 @@ def build_scheduler(config: dict, scheduler=None):
     learn_time = sched_cfg.get("self_learning_time", "16:20")
     hour, minute = learn_time.split(":")
     scheduler.add_job(
-        run_job,
-        trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
+        run_scheduled_job,
+        trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri", timezone=ZoneInfo("Asia/Shanghai")),
         args=["self_learning", config],
         id="self_learning",
         name=JOBS["self_learning"][0],
@@ -668,8 +742,8 @@ def build_scheduler(config: dict, scheduler=None):
     # 决策信号评估（16:25，自学习之后）
     hour, minute = str(sched_cfg.get("signal_lifecycle_time") or "16:25").split(":")
     scheduler.add_job(
-        run_job,
-        trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
+        run_scheduled_job,
+        trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri", timezone=ZoneInfo("Asia/Shanghai")),
         args=["signal_lifecycle", config],
         id="signal_lifecycle",
         name=JOBS["signal_lifecycle"][0],
@@ -680,8 +754,8 @@ def build_scheduler(config: dict, scheduler=None):
     if alerts_cfg.get("daily_digest", False):
         hour, minute = str(alerts_cfg.get("digest_time") or "15:10").split(":")
         scheduler.add_job(
-            run_job,
-            trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri"),
+            run_scheduled_job,
+            trigger=CronTrigger(hour=int(hour), minute=int(minute), day_of_week="mon-fri", timezone=ZoneInfo("Asia/Shanghai")),
             args=["alert_digest", config],
             id="alert_digest",
             name=JOBS["alert_digest"][0],
@@ -715,7 +789,7 @@ def refresh_scheduler(scheduler, config: dict) -> None:
             scheduler.reschedule_job(job_id, trigger=new)
             if paused:
                 scheduler.pause_job(job_id)
-        scheduler.modify_job(job_id, args=wanted.args, name=wanted.name)
+        scheduler.modify_job(job_id, func=wanted.func, args=wanted.args, name=wanted.name)
 
 
 # 一次性运行（GitHub Actions、Docker 或系统定时任务在收盘后调用）：按定时任务的先后顺序执行
@@ -730,7 +804,7 @@ ONCE_STEPS: dict[str, tuple[str, tuple]] = {
 }
 
 
-def run_once(config: dict, steps: list[str] | None = None) -> list[dict]:
+def run_once(config: dict, steps: list[str] | None = None, *, scheduled: bool = False) -> list[dict]:
     """依次执行各步骤一次，返回每步用时。非交易日时行情和分析类步骤照常跳过。"""
     import time
 
@@ -746,7 +820,11 @@ def run_once(config: dict, steps: list[str] | None = None) -> list[dict]:
         logger.info(f"===== [{key}] {label} =====")
         started = time.monotonic()
         for job in jobs:
-            job(config)
+            job_id = next((jid for jid, (_, fn) in JOBS.items() if fn is job), None)
+            if job_id in ISOLATED_JOBS:
+                (run_scheduled_job if scheduled else run_job)(job_id, config)
+            else:
+                job(config)
         results.append({"step": key, "label": label, "seconds": round(time.monotonic() - started, 1)})
     return results
 

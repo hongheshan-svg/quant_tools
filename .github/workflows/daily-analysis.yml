@@ -151,6 +151,7 @@ jobs:
           NO_NOTIFY: ${{ inputs.no_notify && 'true' || '' }}
         run: |
           args=()
+          [ "$GITHUB_EVENT_NAME" = schedule ] && args+=(--scheduled)
           [ -n "$NO_NOTIFY" ] && args+=(--no-notify)
           if [ -n "$STOCKS" ]; then
             python main.py --stocks "$STOCKS" "${args[@]}"

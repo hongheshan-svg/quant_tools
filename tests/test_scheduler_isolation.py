@@ -84,13 +84,13 @@ def test_run_job_entry(monkeypatch, reports):
     assert sched.run_job_entry("nope") == sched.JOB_FAILED_EXIT
 
 
-def test_daily_jobs_registered_through_run_job():
+def test_daily_jobs_registered_through_scheduled_claim():
     from apscheduler.schedulers.background import BackgroundScheduler
 
     scheduler = sched.build_scheduler({"alerts": {"daily_digest": True}}, BackgroundScheduler())
     jobs = {j.id: j for j in scheduler.get_jobs()}
     for job_id in sched.ISOLATED_JOBS:
-        assert jobs[job_id].func is sched.run_job and jobs[job_id].args[0] == job_id, job_id
+        assert jobs[job_id].func is sched.run_scheduled_job and jobs[job_id].args[0] == job_id, job_id
     assert jobs["stock_data"].func is sched._run_stock_data_collection
 
 

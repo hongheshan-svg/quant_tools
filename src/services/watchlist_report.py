@@ -180,7 +180,7 @@ class WatchlistReportService:
             now: datetime | None = None, codes: list[str] | None = None) -> dict[str, Any]:
         """codes 不为空时诊断这些股票（命令行 --stocks），否则诊断自选股。"""
         now = now or datetime.now()
-        if codes:
+        if codes is not None:
             stocks = self._stocks_of(codes)
         else:
             stocks = WatchlistService(self.config).list()
