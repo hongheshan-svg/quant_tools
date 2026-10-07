@@ -1,0 +1,237 @@
+{
+  "signal_reads_future_bar": {
+    "as_of": "2026-09-14T16:00:00",
+    "legacy": {
+      "status": "hit_target",
+      "status_reason": "2026-09-15 最高价 12.0 达到目标 11.0",
+      "ret_1d": 20.0
+    },
+    "legacy_is_hit": true,
+    "shared_1d": {
+      "horizon": 1,
+      "engine_version": "daily-return-v2:neutral=0.5",
+      "status": "pending",
+      "reason": "insufficient_daily_bars",
+      "base_date": "2026-09-14",
+      "end_date": null,
+      "return_pct": null,
+      "hit": null,
+      "neutral_band_pct": 0.5,
+      "data_quality": {
+        "source": "local_daily",
+        "available_bars": 0,
+        "required_bars": 1,
+        "base_source": "audit_fixture",
+        "base_revision": null,
+        "price_adjustment": "none",
+        "end_revision": null,
+        "calendar_verified": true
+      }
+    },
+    "statistics_hit_rate": 100.0
+  },
+  "signal_compresses_missing_day": {
+    "as_of": "2026-09-16T16:00:00",
+    "legacy": {
+      "status": "active",
+      "status_reason": null,
+      "ret_1d": 20.0
+    },
+    "legacy_is_hit": true,
+    "shared_1d": {
+      "horizon": 1,
+      "engine_version": "daily-return-v2:neutral=0.5",
+      "status": "unable",
+      "reason": "missing_trading_day",
+      "base_date": "2026-09-14",
+      "end_date": null,
+      "return_pct": null,
+      "hit": null,
+      "neutral_band_pct": 0.5,
+      "data_quality": {
+        "source": "local_daily",
+        "available_bars": 1,
+        "required_bars": 1,
+        "base_source": "audit_fixture",
+        "base_revision": null,
+        "price_adjustment": "none",
+        "end_revision": null,
+        "calendar_verified": true
+      }
+    },
+    "statistics_hit_rate": 100.0
+  },
+  "signal_ignores_price_basis": {
+    "as_of": "2026-09-15T16:00:00",
+    "legacy": {
+      "status": "active",
+      "status_reason": null,
+      "ret_1d": -50.0
+    },
+    "legacy_is_hit": false,
+    "shared_1d": {
+      "horizon": 1,
+      "engine_version": "daily-return-v2:neutral=0.5",
+      "status": "unable",
+      "reason": "incomparable_price_basis",
+      "base_date": "2026-09-14",
+      "end_date": null,
+      "return_pct": null,
+      "hit": null,
+      "neutral_band_pct": 0.5,
+      "data_quality": {
+        "source": "local_daily",
+        "available_bars": 0,
+        "required_bars": 1,
+        "base_source": "audit_fixture",
+        "base_revision": null,
+        "price_adjustment": "none",
+        "end_revision": null,
+        "calendar_verified": true
+      }
+    },
+    "statistics_hit_rate": 0.0
+  },
+  "intraday_outcome_frozen": {
+    "intraday": {
+      "status": "evaluated",
+      "reason": "",
+      "return_pct": 20.0,
+      "end_date": "2026-09-15",
+      "hit": true
+    },
+    "after_close": {
+      "status": "evaluated",
+      "reason": "",
+      "return_pct": 20.0,
+      "end_date": "2026-09-15",
+      "hit": true
+    },
+    "final_close": 9,
+    "expected_final_return_pct": -10
+  },
+  "orphan_samples_single": {
+    "deleted": true,
+    "after_delete": {
+      "reports": 0,
+      "samples": 1,
+      "outcomes": 4
+    },
+    "statistics": {
+      "volume_breakout": {
+        "samples": 1,
+        "hits": 1,
+        "rets": [
+          50.0
+        ]
+      }
+    },
+    "late_insert_count": 1
+  },
+  "orphan_samples_batch": {
+    "deleted": 1,
+    "after_delete": {
+      "reports": 0,
+      "samples": 1,
+      "outcomes": 4
+    },
+    "statistics": {
+      "volume_breakout": {
+        "samples": 1,
+        "hits": 1,
+        "rets": [
+          50.0
+        ]
+      }
+    },
+    "late_insert_count": 1
+  },
+  "mediator_reversal_accepted": {
+    "baseline_consensus": {
+      "status": "ready",
+      "stance": "中性",
+      "score": 50.0,
+      "agreement": "分歧",
+      "valid_count": 2,
+      "support": [
+        "volume_breakout"
+      ],
+      "opposition": [
+        "bull_trend"
+      ],
+      "neutral": []
+    },
+    "baseline_cap": "低",
+    "after_consensus": {
+      "status": "ready",
+      "stance": "看多",
+      "score": 95.0,
+      "agreement": "一致",
+      "valid_count": 2,
+      "support": [
+        "volume_breakout",
+        "bull_trend"
+      ],
+      "opposition": [],
+      "neutral": []
+    },
+    "after_cap": null,
+    "original": [
+      {
+        "skill": "volume_breakout",
+        "display_name": "volume_breakout",
+        "stance": "看多",
+        "score": 80,
+        "confidence": "中",
+        "reason": "离线合成证据",
+        "weight": 1.0
+      },
+      {
+        "skill": "bull_trend",
+        "display_name": "bull_trend",
+        "stance": "看空",
+        "score": 20,
+        "confidence": "中",
+        "reason": "离线合成证据",
+        "weight": 1.0
+      }
+    ],
+    "revised": [
+      {
+        "skill": "volume_breakout",
+        "display_name": "volume_breakout",
+        "stance": "看多",
+        "score": 95,
+        "confidence": "高",
+        "reason": "离线合成证据",
+        "weight": 1.0
+      },
+      {
+        "skill": "bull_trend",
+        "display_name": "bull_trend",
+        "stance": "看多",
+        "score": 95,
+        "confidence": "高",
+        "reason": "离线合成证据",
+        "weight": 1.0
+      }
+    ],
+    "status": "completed"
+  },
+  "history_run_log_loses_save": {
+    "live": [
+      "决策",
+      "报告保存"
+    ],
+    "history_top_level": [
+      "决策"
+    ],
+    "history_result_json": [
+      "决策",
+      "报告保存"
+    ]
+  },
+  "run_log_sink_is_not_fail_open": {
+    "propagated_error": "audit sink unavailable"
+  }
+}
