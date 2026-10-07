@@ -79,7 +79,7 @@ Return only JSON:
 {{"stance": "看多/中性/看空", "score": "integer from 0 to 100", "confidence": "高/中/低", "reason": "Evidence-based explanation in English, at most 80 words"}}
 Emit score as a number. Keep stance and confidence enums verbatim.
 """
-DELIBERATION_PROMPT_EN = """Review strategy disagreements using only supplied evidence. Preserve every original skill identifier; do not add or remove strategies.
+DELIBERATION_PROMPT_EN = """Review strategy disagreements using only supplied evidence. Maintain the previous stance or weaken it to neutral; never reverse direction, raise confidence, increase distance from score 50, or undo a prior conservative revision. Revisions are advisory previews only. Preserve every original skill identifier; do not add or remove strategies.
 Return only {"opinions":[{"skill":"original identifier","stance":"看多/看空/中性","score":70,"confidence":"高/中/低","reason":"Specific evidence for a revision or for retaining the original opinion, in English"}]}.
 Score must be a number from 0 to 100. Keep enum values unchanged. Write all reasons in English.
 """

@@ -165,6 +165,9 @@ def db(tmp_path):
     path = str(tmp_path / "skill.db")
     _reset_db_engine()
     init_db(path)
+    from src.database.models import StockDiagnosis
+    with get_db_session(path) as session:
+        session.add_all([StockDiagnosis(id=i, code='600519', trade_date='2026-09-21') for i in (1, 7)])
     trading_calendar._set_days(set(CAL))
     yield path
     trading_calendar._set_days(set())

@@ -150,8 +150,15 @@ class FundDiagnosisService(StockDiagnosisService):
         from src.services.research_artifact import build_research_artifact
         result["structured_report"] = build_research_artifact(result)
         diagnosis_id = self._save(result)
+        run_log._append("报告保存", True, 0, f"报告 #{diagnosis_id}", "save")
         self._record_signal(result, diagnosis_id)
         result["diagnosis_id"] = diagnosis_id
+        result["run_log"] = run_log.to_dict()
+        with get_db_session(self.db_path) as session:
+            saved = session.get(StockDiagnosis, diagnosis_id)
+            if saved is not None:
+                saved.result_json = json.dumps(result, ensure_ascii=False)
+                saved.run_log = json.dumps(result["run_log"], ensure_ascii=False)
         return result
 
     def latest(self, code: str, max_age_minutes: int | None = None) -> dict[str, Any] | None:

@@ -11,7 +11,7 @@ from src.database.db import get_db_session
 from src.database.models import FundDaily, ResearchOutcome, StockDaily
 from src.utils.stock_code import code_candidates, diagnosis_code
 
-ENGINE_VERSION = "daily-return-v2"
+ENGINE_VERSION = "daily-return-v3"
 HORIZONS = (1, 3, 5, 10)
 
 
@@ -29,7 +29,9 @@ class OutcomeEngine:
         return value is not None and math.isfinite(float(value)) and float(value) > 0
 
     def price_path(self, session, code: str, trade_date: str, now: datetime) -> tuple:
-        self._price_quality, self._path_failure = {}, ""
+        from src.services.data_freshness import completed_bar_date, incomplete_bar
+        cutoff = completed_bar_date(now)
+        self._price_quality, self._path_failure, self.validated_bars = {}, "", []
         canonical = diagnosis_code(code)
         models = (FundDaily,) if canonical.startswith(("sh", "sz", "bj")) else (StockDaily, FundDaily)
         for model in models:
@@ -39,8 +41,10 @@ class OutcomeEngine:
             base = max(bases, key=row_priority) if bases else None
             if not base or not self._positive(base.close):
                 continue
+            if incomplete_bar(trade_date, base.updated_at, cutoff):
+                return None, [], 'incomplete_base_bar'
             rows = session.query(model).filter(model.code.in_(aliases), model.trade_date > trade_date,
-                                                                     model.trade_date <= now.strftime("%Y-%m-%d")).order_by(model.trade_date).limit(100).all()
+                                                                     model.trade_date <= cutoff).order_by(model.trade_date).limit(100).all()
             valid_dates = set(trading_calendar.trade_days_only([r.trade_date for r in rows]))
             # 每个交易日只有一个规范收盘价，不能把多个历史别名当成多个交易日。
             closes = {}
@@ -52,10 +56,19 @@ class OutcomeEngine:
                         selected[day] = row
             previous = base
             for day, row in sorted(selected.items()):
+                expected = trading_calendar.next_trade_day(datetime.strptime(previous.trade_date, '%Y-%m-%d').date()).isoformat()
+                if day != expected:
+                    self._path_failure = 'missing_trading_day'
+                    break
+                if incomplete_bar(day, row.updated_at, cutoff):
+                    self._path_failure = 'incomplete_daily_bar'
+                    break
                 if not prices_comparable(previous, row):
                     self._path_failure = "incomparable_price_basis"
                     break
                 closes[day] = float(row.close)
+                self.validated_bars.append({'date': day, 'close': float(row.close), 'open': row.open,
+                                            'high': row.high, 'low': row.low})
                 previous = row
             self._price_quality = {"base_source": getattr(base, "source", None),
                                    "base_revision": getattr(base, "price_revision", None),
@@ -66,7 +79,8 @@ class OutcomeEngine:
 
     def evaluate(self, session, owner_type: str, owner_id: int, code: str, trade_date: str,
                  direction: int, *, now: datetime | None = None, horizons=HORIZONS) -> list[ResearchOutcome]:
-        now = now or datetime.now()
+        from src.utils.timestamps import quote_now
+        now = now or quote_now()
         saved = session.query(ResearchOutcome).filter_by(owner_type=owner_type, owner_id=owner_id, engine_version=self.version).all()
         if all(any(r.horizon == h and r.status == "evaluated" for r in saved) for h in horizons):
             return [r for r in saved if r.horizon in horizons]
@@ -87,8 +101,11 @@ class OutcomeEngine:
             row.data_quality_json = json.dumps({"source": "local_daily", "available_bars": len(bars), "required_bars": horizon,
                 **getattr(self, "_price_quality", {}), "calendar_verified": trading_calendar.has_calendar_coverage(trade_date, end)})
             row.status, row.reason = ("unable", reason) if reason else ("pending", "insufficient_daily_bars")
+            row.end_date = row.end_price = row.return_pct = row.hit = None
+            if reason in {'missing_base_price', 'incomplete_base_bar'}:
+                row.status = 'pending'
             if len(bars) < horizon and self._path_failure:
-                row.status, row.reason = "unable", self._path_failure
+                row.status, row.reason = ('pending' if self._path_failure == 'incomplete_daily_bar' else 'unable'), self._path_failure
             if base and len(bars) >= horizon:
                 # 不允许跳过缺失交易日拼凑 horizon；日历不完整时明确留下限制。
                 expected = trade_date

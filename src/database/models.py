@@ -222,6 +222,7 @@ class MarketReview(Base):
 class AlertRecord(Base):
     """盘中提醒记录"""
     __tablename__ = "alert_record"
+    signal_context_json = Column(Text, comment="触发当时的低敏决策信号摘要及查询质量")
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     code = Column(String(10), nullable=False, comment="股票代码（6位）")
@@ -438,6 +439,7 @@ class DecisionSignal(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     diagnosis_id = Column(Integer, comment="来源诊断 stock_diagnosis.id")
+    evaluation_version = Column(String(100), comment="后验兼容字段所使用的统一引擎版本")
     code = Column(String(10), nullable=False, comment="规范代码（个股6位、指数带前缀）")
     name = Column(String(20), comment="名称")
     action = Column(String(10), comment="操作建议 buy/add/reduce/sell/avoid")

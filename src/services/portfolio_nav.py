@@ -23,6 +23,9 @@ def ledger_nav(trades, actions, flows, anchors, closes, days, accounts):
         events[f.flow_date].append(("23:59:59", 3, "flow", f))
     previous, unit = None, 1.0
     nav, samples = [], []
+    # 事件不能因调用方遗漏某个报价日而消失；仍严格限制在请求截止日内。
+    if days:
+        days = sorted(set(days) | {day for day in events if day <= max(days)})
     for day in days:
         external = 0.0
         reset = False

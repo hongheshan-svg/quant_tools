@@ -217,6 +217,9 @@ class SkillOpinionService:
         with get_db_session(self.db_path) as session:
             from sqlalchemy import text
             session.execute(text("BEGIN IMMEDIATE"))  # 跨进程串行领取独立样本，避免先查后写的重复插入
+            from src.database.models import StockDiagnosis
+            if diagnosis_id is None or session.get(StockDiagnosis, diagnosis_id) is None:
+                return 0
             for o in opinions:
                 if not valid_opinion(o):
                     continue
@@ -245,7 +248,8 @@ class SkillOpinionService:
 
     def evaluate(self, now: datetime | None = None) -> dict[str, int]:
         """保存多观察窗口后验；5 日结果投影到旧字段，中性只在新结果层评价。"""
-        now = now or datetime.now()
+        from src.utils.timestamps import quote_now
+        now = now or quote_now()
         count = 0
         from src.services.outcome_engine import OutcomeEngine
         engine = OutcomeEngine(self.config)
@@ -254,10 +258,9 @@ class SkillOpinionService:
             for row in rows:
                 direction = 1 if row.stance == "看多" else -1 if row.stance == "看空" else 0
                 outcomes = engine.evaluate(session, "skill", row.id, row.code, row.trade_date, direction, now=now)
-                if row.ret_5d is not None:
-                    continue
                 fifth = next((o for o in outcomes if o.horizon == 5 and o.status == "evaluated"), None)
                 if fifth is None:
+                    row.ret_5d = row.hit = row.evaluated_at = None
                     continue
                 row.ret_5d = round(fifth.return_pct, 2)
                 row.hit = fifth.hit if direction else None
@@ -274,7 +277,13 @@ class SkillOpinionService:
             version = OutcomeEngine(self.config).version
             evaluated = {r.owner_id: (r.hit, r.return_pct) for r in session.query(ResearchOutcome).filter_by(
                 owner_type="skill", horizon=5, engine_version=version, status="evaluated").all()}
-            rows = session.query(SkillOpinion).filter(SkillOpinion.created_at >= since, SkillOpinion.hit.isnot(None)).order_by(SkillOpinion.created_at, SkillOpinion.id).all()
+            from sqlalchemy import select
+            from src.database.models import StockDiagnosis
+            rows = session.query(SkillOpinion).filter(
+                SkillOpinion.created_at >= since, SkillOpinion.hit.isnot(None),
+                # 无父 ID 的老版独立样本保持兼容；有引用但父记录已丢失的样本不得参与学习。
+                SkillOpinion.diagnosis_id.is_(None) | SkillOpinion.diagnosis_id.in_(select(StockDiagnosis.id)),
+            ).order_by(SkillOpinion.created_at, SkillOpinion.id).all()
             values = []
             versions = {}
             for row in rows:

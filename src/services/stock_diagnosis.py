@@ -293,6 +293,7 @@ class StockDiagnosisService:
             saved = session.get(StockDiagnosis, diagnosis_id)
             if saved is not None:
                 saved.result_json = json.dumps(result, ensure_ascii=False)
+                saved.run_log = json.dumps(result["run_log"], ensure_ascii=False)
         return result
 
     def _profile(self, profile: str | None = None) -> str:
@@ -805,8 +806,9 @@ class StockDiagnosisService:
             "calibration_bullish": {"n": bullish_history.get("n", 0), "accuracy": bullish_history.get("accuracy")} if bullish_history else None,
             "previous": ({k: previous.get(k) for k in ("action", "score", "created_at", "action_label")}
                          if previous and not previous.get("error") else None),
-            "phase": {k: phase_ctx.get(k) for k in ("phase", "label", "now", "effective_daily_bar_date")} if phase_ctx else None,
+            "phase": {k: phase_ctx.get(k) for k in ("phase", "label", "now", "effective_daily_bar_date", "is_partial_bar")} if phase_ctx else None,
             "quote_trade_date": (context["quote"] or {}).get("trade_date", ""),
+            "quote_fetched_at": (context['quote'] or {}).get('updated_at') or (context['quote'] or {}).get('fetched_at'),
             "phase_decision": raw.get("phase_decision") if isinstance(raw.get("phase_decision"), dict) else {},
             "invalidation": str(raw.get("invalidation") or "")[:MAX_INVALIDATION_LEN].strip(),
             "stop_loss": plan_raw.get("stop_loss"),

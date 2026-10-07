@@ -1,6 +1,6 @@
 """日线时效契约：观测日期和取得时刻分开，历史查询不冒充实时行情。"""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from src import trading_calendar
@@ -46,6 +46,11 @@ def daily_quality(trade_date: str | None, fetched_at=None, *, phase: dict | None
         if not allow_partial or not phase.get("is_partial_bar"):
             reasons.append("incomplete_daily_bar")
     stamp = result["fetched_at"]
+    if stamp and phase.get('now'):
+        acquired = local_time(datetime.fromisoformat(stamp))
+        moment = local_time(datetime.fromisoformat(phase['now']))
+        if acquired > moment + timedelta(minutes=1):
+            reasons.append('future_fetched_at')
     if stamp and not result["is_partial_bar"] and str(trade_date) == expected:
         acquired = datetime.fromisoformat(stamp)
         if acquired.tzinfo:
@@ -58,3 +63,24 @@ def daily_quality(trade_date: str | None, fetched_at=None, *, phase: dict | None
     elif result["is_partial_bar"]:
         result.update(status="partial", limitations=["incomplete_daily_bar"])
     return result
+
+
+def local_time(value: datetime) -> datetime:
+    """行情及评估时钟统一为上海时间；旧的无时区时间按上海时间读取。"""
+    return value.astimezone(ZoneInfo('Asia/Shanghai')).replace(tzinfo=None) if value.tzinfo else value
+
+
+def completed_bar_date(now: datetime) -> str:
+    """评估只能使用已收盘交易日，盘中/非交易日退到上一交易日。"""
+    now = local_time(now)
+    if trading_calendar.is_trade_day(now) and (now.hour, now.minute) >= (15, 0):
+        return now.date().isoformat()
+    return market_phase.prev_trade_day(now).isoformat()
+
+
+def incomplete_bar(trade_date: str, fetched_at, cutoff: str) -> bool:
+    """已知盘中取得的日线即使跨日仍不完整；历史回补晚于行情日是正常情况。"""
+    stamp = iso_timestamp(fetched_at)
+    acquired = local_time(datetime.fromisoformat(stamp)) if stamp else None
+    return trade_date > cutoff or bool(acquired and acquired.date().isoformat() == trade_date
+                                      and (acquired.hour, acquired.minute) < (15, 0))

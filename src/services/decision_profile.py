@@ -182,7 +182,8 @@ def decide_with_phase(inputs: dict, profile: str, lang: str = "zh") -> tuple[str
     phase_decision: dict = {}
     if phase_ctx:
         action, confidence, phase_decision, phase_notes = market_phase.phase_guardrails(
-            action, confidence, inputs.get("phase_decision"), phase_ctx, inputs.get("quote_trade_date") or "", lang)
+            action, confidence, inputs.get("phase_decision"), phase_ctx, inputs.get("quote_trade_date") or "", lang,
+            fetched_at=inputs.get('quote_fetched_at'))
         guardrails.extend(phase_notes)
 
     # 风格专属规则放在安全护栏之后，只作用于仍然看多的建议

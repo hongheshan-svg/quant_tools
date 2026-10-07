@@ -14,7 +14,7 @@ account="real" 时改为实盘记账（RealPortfolioService）的持仓和流水
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from loguru import logger
@@ -162,12 +162,25 @@ class PortfolioRiskService:
         if classified < len(rows):
             warnings.append(f"行业分类覆盖 {classified}/{len(rows)}；分类来源为历史涨停所属行业，行业风险仅覆盖已分类部分")
 
+        from src.services.decision_signals import DecisionSignalService
+        from src.utils.stock_code import diagnosis_code
+        signal_summary = DecisionSignalService(self.config).active_summary([r['code'] for r in rows])
+        if signal_summary['status'] == 'unknown':
+            warnings.append('持仓决策信号查询失败，相关风险未知')
+        for row in rows:
+            signal = signal_summary['signals'].get(diagnosis_code(row['code']))
+            row['decision_signal'] = signal
+            row['defensive_signal'] = bool(signal and signal['defensive'])
+            if row['defensive_signal']:
+                warnings.append(f"{row['name'] or row['code']} 存在有效防御信号：{signal['action_label']}（诊断 #{signal['diagnosis_id'] or '已删除'}，有效至 {signal['expires_on'] or '未指定'}）")
+
         return {
             "as_of": datetime.now().strftime("%Y-%m-%d %H:%M"), "account": self.account, "cash_known": cash_known,
             "realized_pnl": account.get("realized_pnl"),
             "total_assets": round(total, 2), "cash": round(account["cash"], 2), "exposure": round(exposure, 1) if valuation_ok and cash_known else None,
             "regime": regime, "suggested_exposure": suggested,
             "positions": rows, "sectors": sector_rows, "drawdown": self._drawdown(), "warnings": warnings,
+            "decision_signals": signal_summary,
             "quality": {"valuation": "available" if valuation_ok else "partial", "priced": priced, "positions": len(rows),
                         "classification": "available" if classified == len(rows) else "partial", "classified": classified,
                         "classification_source": "latest_limit_up_sector", "currency": "CNY"},
@@ -250,13 +263,24 @@ class PortfolioRiskService:
             from src.services.portfolio_nav import real_drawdown
             # 所有流水日期都参与重放，非交易日只有现金时也有有效估值。
             flow_days = {f.flow_date for a in self.real._names() for f in self.real._flows(a)}
+            action_days = {a.ex_date for a in self.real._ordered_actions()}
             from src.database.models import RealCash
             from src.services.real_portfolio import _account_filter
             with get_db_session(self.db_path) as session:
                 anchor_days = {a.as_of.strftime("%Y-%m-%d") for name in self.real._names() for a in session.query(RealCash).filter(_account_filter(RealCash, name)).all()}
-            days = sorted(set(days) | flow_days | anchor_days | {f[4].strftime("%Y-%m-%d") for f in fills if f[4]})
+            days = sorted(set(days) | flow_days | action_days | anchor_days | {f[4].strftime("%Y-%m-%d") for f in fills if f[4]})
             days = [day for day in days if day <= cutoff]
+            calendar_known = True
+            if days and codes:
+                first = datetime.fromisoformat(days[0])
+                count = (datetime.fromisoformat(cutoff) - first).days
+                calendar_known = trading_calendar.has_calendar_coverage(days[0], cutoff)
+                days = sorted(set(days) | {day for i in range(count + 1)
+                    if trading_calendar.is_trade_day(day := (first + timedelta(days=i)).date().isoformat())})
             nav, quality = real_drawdown(self.real, closes, days)
+            if not calendar_known:
+                quality['status'] = 'partial' if nav else 'unavailable'
+                quality['limitations'].append('calendar_unverified')
             sample_days = {day for day, _ in nav}
             if any(day in sample_days for _, day in unknown_basis):
                 quality['status'] = 'partial'

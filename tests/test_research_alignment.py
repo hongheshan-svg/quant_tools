@@ -140,7 +140,7 @@ def test_outcome_neutral_band_versions_and_completed_results_immutable(env):
     with get_db_session(config["database"]["sqlite_path"]) as session:
         session.add(StockDaily(code="600519", trade_date="2026-09-28", close=10.03))
     with get_db_session(config["database"]["sqlite_path"]) as session:
-        result = engine.evaluate(session, "diagnosis", 101, "600519", "2026-09-25", 0, now=datetime(2026, 9, 28), horizons=(1,))[0]
+        result = engine.evaluate(session, "diagnosis", 101, "600519", "2026-09-25", 0, now=datetime(2026, 9, 28, 16), horizons=(1,))[0]
         assert result.status == "evaluated" and result.hit is True
         session.query(StockDaily).filter_by(code="600519", trade_date="2026-09-28").update({"close": 20})
     with get_db_session(config["database"]["sqlite_path"]) as session:
@@ -314,6 +314,10 @@ def test_versioned_skill_weights_do_not_reuse_different_evaluation_version(env):
     _, _, config = env
     from src.database.models import ResearchOutcome
     service = SkillOpinionService(config)
+    from src.database.models import StockDiagnosis
+    with get_db_session(config['database']['sqlite_path']) as session:
+        if session.get(StockDiagnosis, 1) is None:
+            session.add(StockDiagnosis(id=1, code='600519', trade_date='2026-09-25'))
     service.record(1, "600519", "贵州茅台", "2026-09-25", [{"skill": "volume_breakout", "stance": "看多", "score": 70, "confidence": "高"}])
     with get_db_session(config["database"]["sqlite_path"]) as session:
         opinion = session.query(SkillOpinion).first()

@@ -266,7 +266,7 @@ def _evaluated(db_path, code, n, ret, action="buy", adverse=-2.0):
     for i in range(n):
         _add_signal(db_path, code=code, action=action, trade_date=f"2026-09-{1 + i:02d}", status="expired",
                     ret_1d=ret, ret_3d=ret, ret_5d=ret, max_adverse_pct=adverse, max_favorable_pct=3.0,
-                    evaluated_at=datetime(2026, 9, 25))
+                    evaluated_at=datetime(2026, 9, 25), evaluation_version="daily-return-v3:neutral=0.5")
 
 
 def test_review_insufficient_samples(svc, db_path):

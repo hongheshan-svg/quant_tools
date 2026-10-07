@@ -19,13 +19,12 @@ from src import trading_calendar
 from src.analyzers.decision import ACTION_LABELS, BULLISH_ACTIONS
 from src.config_loader import load_config
 from src.database.db import get_db_session
-from src.database.models import FundDaily, StockDaily, StockDiagnosis
+from src.database.models import StockDiagnosis
 from src.services.stock_diagnosis import BEARISH_ACTIONS
-from src.utils.stock_code import diagnosis_code, code_candidates
+from src.utils.stock_code import diagnosis_code
 
 HORIZONS = (1, 3, 5)
 SCORE_BANDS = ((70, "70 分以上"), (50, "50~69 分"), (0, "50 分以下"))
-FORWARD_CALENDAR_DAYS = 15
 
 
 def direction_of(action: str) -> int:
@@ -78,27 +77,15 @@ class DiagnosisOutcomeService:
 
     def _evaluate_one(self, session, r: dict[str, Any]) -> dict[str, Any]:
         code, trade_date = diagnosis_code(r["code"]), r["trade_date"]
-        cands = code_candidates(code)
-        model = FundDaily if code.startswith(("sh", "sz", "bj")) else StockDaily
-        base = (
-            session.query(model.close).filter(model.code.in_(cands), model.trade_date == trade_date)
-            .limit(1).scalar()
-        )
-        if base is None and model is StockDaily:
-            model = FundDaily
-            base = session.query(model.close).filter(model.code == code, model.trade_date == trade_date).limit(1).scalar()
-        end = (datetime.strptime(trade_date, "%Y-%m-%d") + timedelta(days=FORWARD_CALENDAR_DAYS)).strftime("%Y-%m-%d")
-        by_date = {
-            b.trade_date: b for b in session.query(model.trade_date, model.high, model.low, model.close)
-            .filter(model.code.in_(cands), model.trade_date > trade_date, model.trade_date <= end,
-                    model.close > 0).all()
-        }
-        bars = [by_date[d] for d in sorted(trading_calendar.trade_days_only(by_date))[:max(HORIZONS)]]
         action = r.get("action", "")
         direction = direction_of(action)
         from src.services.outcome_engine import OutcomeEngine
         engine = OutcomeEngine(self.config)
         outcomes = {o.horizon: o for o in engine.evaluate(session, "diagnosis", r["diagnosis_id"], code, trade_date, direction)}
+        from src.utils.timestamps import quote_now
+        from types import SimpleNamespace
+        base, _, _ = engine.price_path(session, code, trade_date, quote_now())
+        bars = [SimpleNamespace(**bar) for bar in engine.validated_bars[:max(HORIZONS)]]
         detail: dict[str, Any] = {
             "trade_date": trade_date, "created_at": r.get("created_at", ""), "code": code, "name": r.get("name", ""),
             "action": action, "action_label": r.get("action_label") or ACTION_LABELS.get(action, action),

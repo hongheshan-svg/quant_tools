@@ -56,7 +56,7 @@ def test_live_old_database_does_not_overwrite_success_or_invoke_models(config, m
 def test_whole_stock_database_and_etf_are_not_fresh(config, monkeypatch):  # noqa: F811
     monkeypatch.setattr("src.services.market_phase.current_phase", lambda *a: phase())
     with get_db_session(config["database"]["sqlite_path"]) as session:
-        session.add(FundDaily(code="510300", name="测试ETF", close=4, trade_date="2025-11-07"))
+        session.add(FundDaily(code="510300", name="测试ETF", close=4, trade_date="2025-11-07", updated_at=datetime(2025, 11, 7, 16)))
     profile = object.__new__(StockProfileService)
     profile.db_path = config["database"]["sqlite_path"]
     assert profile._quote("600001", "stock")["status"] == "partial"

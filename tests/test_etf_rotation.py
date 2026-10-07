@@ -61,6 +61,7 @@ def test_missing_execution_quote_never_uses_forward_fill_to_trade():
 
 def test_service_frozen_pool_cutoff_and_finite_json(config, monkeypatch):
     monkeypatch.setattr("src.trading_calendar.load", lambda *a, **k: True)
+    monkeypatch.setattr("src.trading_calendar.has_calendar_coverage", lambda *a: True)
     frame = prices()
     with get_db_session(config["database"]["sqlite_path"]) as session:
         session.add_all(FundDaily(code=code, trade_date=day.date().isoformat(), close=value, price_adjustment="forward", source="fixture") for code in frame.columns for day, value in frame[code].items())

@@ -129,7 +129,7 @@ class DataQueryService:
                 "score": r.score,
                 "created_at": r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "",
                 "result": {**detail, "diagnosis_id": r.id} if detail else detail,
-                "run_log": self._parse_run_log(r.run_log) or detail.get("run_log") or None,
+                "run_log": detail.get("run_log") or self._parse_run_log(r.run_log) or None,
             }
 
     @staticmethod
@@ -184,20 +184,31 @@ class DataQueryService:
 
     def delete_diagnosis(self, diagnosis_id: int) -> bool:
         """删除一条诊断记录；不存在返回 False。"""
-        with get_db_session(self.db_path) as session:
-            r = session.get(StockDiagnosis, diagnosis_id)
-            if r is None:
-                return False
-            session.delete(r)
-        return True
+        return bool(self.delete_diagnoses(ids=[diagnosis_id]))
 
     def delete_diagnoses(self, ids: list[int] | None = None, code: str | None = None) -> int:
         """只能按显式 ID 集合或单一标的清理；禁止空条件删除全部历史。"""
         if bool(ids) == bool(code):
             raise ValueError("必须且只能指定诊断 ID 列表或股票代码")
+        from sqlalchemy import text, select
+        from src.database.models import SkillOpinion, ResearchOutcome, DecisionSignal
         with get_db_session(self.db_path) as session:
+            # 与样本写入使用同一 SQLite 写锁；删除和晚到插入不能交错留下孤儿。
+            session.execute(text("BEGIN IMMEDIATE"))
             query = session.query(StockDiagnosis)
             query = query.filter(StockDiagnosis.id.in_(set(ids))) if ids else query.filter(StockDiagnosis.code == diagnosis_code(code))
+            report_ids = [r.id for r in query.all()]
+            if not report_ids:
+                return 0
+            samples = select(SkillOpinion.id).where(SkillOpinion.diagnosis_id.in_(report_ids))
+            session.query(ResearchOutcome).filter(
+                ((ResearchOutcome.owner_type == 'skill') & ResearchOutcome.owner_id.in_(samples))
+                | ((ResearchOutcome.owner_type == 'diagnosis') & ResearchOutcome.owner_id.in_(report_ids))
+            ).delete(synchronize_session=False)
+            session.query(SkillOpinion).filter(SkillOpinion.diagnosis_id.in_(report_ids)).delete(synchronize_session=False)
+            # 决策信号是独立的生命周期记录；保留快照与反馈，解除已删除报告引用。
+            session.query(DecisionSignal).filter(DecisionSignal.diagnosis_id.in_(report_ids)).update(
+                {DecisionSignal.diagnosis_id: None}, synchronize_session=False)
             return query.delete(synchronize_session=False)
 
     def get_dashboard_snapshot(self, for_date: str | None = None) -> dict:

@@ -80,8 +80,10 @@ def build_context_pack(context: dict, run_log=None) -> dict[str, Any]:
             status = "partial" if value else "fetch_failed"
         elif key == "chips" and source == "本地估算":
             status = "estimated"
-        elif key in ("quote", "daily", "technical", "chips") and as_of and (context.get("phase") or {}).get("effective_daily_bar_date") and as_of < str(context["phase"]["effective_daily_bar_date"]):
-            status = "stale"
+        elif key in ("quote", "daily", "technical", "chips") and not missing:
+            from src.services.data_freshness import daily_quality
+            freshness = daily_quality(as_of, times['fetched_at'], phase=context.get('phase') or {}, allow_partial=key == 'quote')
+            status = freshness['status']
         values = value if isinstance(value, dict) else {"evidence" if isinstance(value, list) else "summary": value}
         pack.blocks[key] = ContextBlock(status=status, source=source, as_of=as_of, **times,
                                        items={k: ContextItem(status="missing" if not has_evidence(v) else status, value=v, source=source, as_of=as_of,

@@ -201,7 +201,7 @@ def test_stale_quote_downgrades():
     action, conf, pd_, notes = _guard("2026-09-28 16:00", pd_={}, quote="2026-09-24")
     assert action == "watch" and conf == "中"
     assert "行情停留在 2026-09-24（最近完整交易日 2026-09-28）" in pd_["data_limitations"]
-    assert any("行情数据停留在 2026-09-24，晚于最近完整交易日 2026-09-28，无法确认买点，降级为观望" in n for n in notes)
+    assert any("行情数据停留在 2026-09-24，未满足最近完整交易日 2026-09-28 的时效要求，无法确认买点，降级为观望" in n for n in notes)
     assert _guard("2026-09-28 16:00", action="add", pd_={}, quote="2026-09-24")[0] == "watch"
 
 
@@ -224,9 +224,11 @@ def test_stale_skipped_when_effective_date_empty():
         assert (action, conf, notes) == ("buy", "高", []) and pd_["data_limitations"] == []
 
 
-def test_not_stale_when_quote_equal_or_newer():
+def test_premarket_rejects_today_bar_but_accepts_last_close():
     assert _guard("2026-09-28 08:30", pd_={}, quote="2026-09-25")[3] == []
-    assert _guard("2026-09-28 08:30", pd_={}, quote="2026-09-28")[3] == []
+    result = _guard("2026-09-28 08:30", pd_={}, quote="2026-09-28")
+    assert result[0] == "watch" and result[3]
+    assert "incomplete_daily_bar" in result[2]["data_limitations"]
 
 
 @pytest.mark.parametrize("bad", [None, "文字", 5, [], ["x"]])

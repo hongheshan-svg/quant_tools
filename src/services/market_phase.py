@@ -125,7 +125,7 @@ def phase_prompt_section(ctx: dict, quote_trade_date: str) -> str:
     elif phase == "non_trading":
         parts.append(f"今天不是交易日，只能基于上一完整交易日（{eff}）和已知事件分析，不得编造今日走势")
     if _is_stale(ctx, quote_trade_date):
-        parts.append(f"行情停留在 {quote_trade_date}，晚于最近完整交易日 {eff}，数据可能过时")
+        parts.append(f"行情停留在 {quote_trade_date}，早于最近完整交易日 {eff}，数据可能过时")
     return "【市场阶段】" + "；".join(parts)
 
 
@@ -160,7 +160,7 @@ def _has_immediate_trade_en(text: str) -> bool:
 
 
 def phase_guardrails(action: str, confidence: str, phase_decision: Any, ctx: dict,
-                     quote_trade_date: str, lang: str = "zh") -> tuple[str, str, dict, list[str]]:
+                     quote_trade_date: str, lang: str = "zh", *, fetched_at=None) -> tuple[str, str, dict, list[str]]:
     """阶段护栏：返回（action, confidence, 规范化的 phase_decision, 护栏说明）。"""
     raw = phase_decision if isinstance(phase_decision, dict) else {}
     phase = ctx.get("phase", "")
@@ -188,15 +188,18 @@ def phase_guardrails(action: str, confidence: str, phase_decision: Any, ctx: dic
     if phase in PARTIAL_BAR_PHASES and _is_today(ctx, quote_trade_date):
         limits.append(tr(lang, "今日 K 线尚未走完，涨跌幅、成交额为盘中数据",
                          "Today's daily bar is incomplete; change % and turnover are intraday figures"))
-    if _is_stale(ctx, quote_trade_date):
-        eff = ctx["effective_daily_bar_date"]
+    from src.services.data_freshness import daily_quality
+    freshness = daily_quality(quote_trade_date, fetched_at, phase=ctx, allow_partial=True)
+    if freshness['status'] in {'stale', 'missing'}:
+        eff = ctx.get("effective_daily_bar_date") or '未知'
+        limits.extend(freshness['limitations'])
         limits.append(tr(lang, f"行情停留在 {quote_trade_date}（最近完整交易日 {eff}）",
                          f"Quotes are stuck at {quote_trade_date} (latest complete trading day {eff})"))
         if confidence == "高":
             confidence = "中"
         if action in BULLISH_ACTIONS:
             action = "watch"
-            notes.append(tr(lang, f"行情数据停留在 {quote_trade_date}，晚于最近完整交易日 {eff}，无法确认买点，降级为观望",
-                            f"Quote data is stuck at {quote_trade_date}, later than the latest complete trading day {eff}; "
+            notes.append(tr(lang, f"行情数据停留在 {quote_trade_date}，未满足最近完整交易日 {eff} 的时效要求，无法确认买点，降级为观望",
+                            f"Quote data is stuck at {quote_trade_date}, not valid for the latest complete trading day {eff}; "
                             "entry cannot be confirmed, downgraded to Watch"))
     return action, confidence, decision, notes

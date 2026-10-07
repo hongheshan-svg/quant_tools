@@ -114,6 +114,7 @@ def test_manual_trades_cash_anchor_and_oversell(config):
 
 
 def test_real_account_risk_and_alerts(config, tmp_path, monkeypatch):
+    monkeypatch.setattr("src.utils.timestamps.quote_now", lambda: datetime(2026, 9, 28, 16))
     service = RealPortfolioService(config)
     service.import_file(_write(tmp_path, EXPORT))
     monkeypatch.setattr(PortfolioRiskService, "_regime_limit", lambda self: ("防守", 30.0))
@@ -121,7 +122,8 @@ def test_real_account_risk_and_alerts(config, tmp_path, monkeypatch):
     report = PortfolioRiskService(config, account="real").report()
     assert report["account"] == "real" and report["cash_known"] is False
     assert not any("总仓位" in w for w in report["warnings"])               # 没设置可用资金时不比较总仓位
-    assert report["drawdown"]["days"] == 4
+    assert report["drawdown"]["days"] == 6  # 保留 25、28 日整日缺价，不再删掉缺口
+    assert report["drawdown"]["current_drawdown"] is None
 
     service.set_cash(100_000.0, as_of=datetime(2026, 9, 25, 9, 0))
     report = PortfolioRiskService(config, account="real").report()

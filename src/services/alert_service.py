@@ -191,6 +191,7 @@ class AlertEvent:
     observed: float | None = None
     threshold: float | None = None
     rule_id: str = ""
+    signal_context: dict | None = None
 
     @property
     def key(self) -> str:
@@ -231,7 +232,9 @@ class AlertService:
         self._sync_rules()
         can_push = bool(enabled_channels(self.config, "alert"))
         fresh, to_push = [], []
-        for ev in self.evaluate():
+        events = self.evaluate()
+        self._attach_signals(events, now)
+        for ev in events:
             cooldown = timedelta(days=1) if ev.alert_type in DAILY_ONCE_TYPES else None
             reason = self._claim_event(ev, now, cooldown or _noise.cooldown)
             if reason == "冷却中":
@@ -256,6 +259,22 @@ class AlertService:
         return {"alerts": len(fresh), "pushed": len(to_push) if pushed else 0}
 
     # ---------- 检查 ----------
+
+    def _attach_signals(self, events: list[AlertEvent], now: datetime) -> None:
+        from src.services.decision_signals import DecisionSignalService
+        from src.utils.stock_code import diagnosis_code, StockCodeError
+        summary = DecisionSignalService(self.config).active_summary([e.code for e in events], now)
+        for event in events:
+            try:
+                code = diagnosis_code(event.code)
+            except StockCodeError:
+                continue
+            signal = summary['signals'].get(code)
+            event.signal_context = {'status': summary['status'], 'signal': signal}
+            if summary['status'] == 'unknown':
+                event.message += '；关联决策信号查询失败，状态未知'
+            elif signal:
+                event.message += f"；关联 AI 信号：{signal['action_label']}（诊断 #{signal['diagnosis_id'] or '已删除'}，有效至 {signal['expires_on'] or '未指定'}）"
 
     def watchlist(self, positions: list[dict[str, Any]] | None = None) -> dict[str, str]:
         """{代码: 名称}：今日信号、模拟盘持仓、配置中的关注股票和规则股票。"""
@@ -646,6 +665,7 @@ class AlertService:
                     suppressed_reason=reason or ("" if pushed else "推送失败"), triggered_at=now,
                     event_key=f"{now:%Y-%m-%d}|{ev.code}|{ev.alert_type}|{ev.rule_id}", rule_id=ev.rule_id,
                     channel_results_json=json.dumps(channel_results if not reason else {}, ensure_ascii=False),
+                    signal_context_json=json.dumps(ev.signal_context, ensure_ascii=False) if ev.signal_context else None,
                 ))
 
     def digest(self, day: str | None = None, push: bool = True) -> dict[str, Any]:
@@ -708,6 +728,7 @@ class AlertService:
                 {"id": r.id, "time": r.triggered_at.strftime("%Y-%m-%d %H:%M"), "code": r.code, "name": r.name,
                  "type": TYPE_LABELS.get(r.alert_type, r.alert_type), "severity": r.severity, "message": r.message,
                  "event_key": r.event_key, "rule_id": r.rule_id, "channels": json.loads(r.channel_results_json or "{}"),
+                 "signal_context": json.loads(r.signal_context_json or 'null'),
                  "notified": r.notified, "reason": r.suppressed_reason or ""}
                 for r in rows
             ]
