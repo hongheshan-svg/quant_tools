@@ -71,6 +71,9 @@ def pyinstaller_args() -> list[str]:
         "--add-data", f"{ROOT / 'config' / 'stock_pool.yaml'}{sep}config",
         "--add-data", f"{ROOT / 'config' / 'screening_rules.yaml.example'}{sep}config",
         "--add-data", f"{ROOT / 'config' / 'scoring_profiles.yaml.example'}{sep}config",
+        "--add-data", f"{ROOT / 'docs' / 'licenses'}{sep}docs/licenses",
+        # 快照逐条件检查读取内置规则的 AST；冻结包也需要与字节码一致的源码。
+        "--add-data", f"{ROOT / 'src' / 'strategy' / 'screener.py'}{sep}src/strategy",
         "--add-data", f"{web_dist}{sep}web",
         # 内置问股策略（strategy_skills.BUILTIN_DIR = Path(__file__).parent / "skills"）
         "--add-data", f"{ROOT / 'src' / 'services' / 'skills'}{sep}src/services/skills",

@@ -111,6 +111,17 @@ def diagnose(snapshot, screener, strategies=None):
         try: outcome = strategy.rule(f, strategy.params)
         except (TypeError, ZeroDivisionError): outcome = None
         missing_core = [name for name in ("close", "change_pct", "amount") if values.get(name) is None]
+        if definition and definition.get("weights"):
+            from src.strategy.screening_pipeline import factor_scores, weighted_score
+            threshold = definition.get("min_score", 50)
+            factors, score, coverage = {}, None, None
+            if not missing_core:
+                factors = factor_scores(f)
+                score, coverage = weighted_score(factors, definition["weights"])
+            checks.append({"condition": f"weighted_score >= {threshold}",
+                           "status": "missing" if score is None else "passed" if score >= threshold else "failed",
+                           "inputs": {"weighted_score": score, "min_score": threshold, "factor_coverage": coverage,
+                                      **{name: factors.get(name) for name in definition["weights"]}}, "missing": missing_core})
         missing_check = any(check["status"] == "missing" for check in checks)
         result.append({"strategy": strategy.name, "label": strategy.label, "checks": checks, "matched": None if missing_core or missing_check else bool(outcome), "score": outcome[0] if outcome else None, "reason": outcome[1] if outcome else None, "missing_core": missing_core})
     return {"mode": "supplied_snapshot", "network_used": False, "snapshot": values, "strategies": result}

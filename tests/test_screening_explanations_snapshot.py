@@ -40,3 +40,19 @@ def test_live_and_stored_history_keep_explanation_contract(config):
     result = screener.run()
     assert result.picks and result.picks[0].why_selected
     assert screener.latest()[0]["why_selected"] == result.picks[0].why_selected
+
+
+def test_snapshot_explains_profile_score_rejection(config):
+    from src.strategy.screener import Strategy
+    from src.strategy.screening_pipeline import profile_rule
+    screener = StrategyScreener(config)
+    definition = {"name": "score_gate", "conditions": [], "weights": {"liquidity": 1}, "min_score": 90}
+    screener.profiles = [definition]
+    screener.strategies = [Strategy("score_gate", "评分门槛", "", (), {}, lambda f, p: profile_rule(f, definition))]
+    strategy = diagnose({"close": 10, "change_pct": 4, "amount": 2e8}, screener)["strategies"][0]
+    assert strategy["matched"] is False
+    check = strategy["checks"][-1]
+    assert check["status"] == "failed" and check["condition"] == "weighted_score >= 90"
+    assert check["inputs"]["weighted_score"] < 90 and check["inputs"]["factor_coverage"] == 1
+    strategy = diagnose({"close": 10, "change_pct": 4}, screener)["strategies"][0]
+    assert strategy["matched"] is None and strategy["checks"][-1]["missing"] == ["amount"]

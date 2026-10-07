@@ -40,6 +40,7 @@ COPY main.py server.py ./
 COPY api/ ./api/
 COPY src/ ./src/
 COPY scripts/ ./scripts/
+COPY docs/licenses/ ./docs/licenses/
 # 默认配置放在镜像内的 defaults 目录，启动时复制进（可能挂载了的）config 目录
 COPY config/settings.yaml.example config/stock_pool.yaml config/screening_rules.yaml.example config/scoring_profiles.yaml.example ./defaults/config/
 COPY --from=web /web/dist ./apps/web/dist

@@ -10,6 +10,7 @@
 """
 
 import argparse
+import json
 import shutil
 import socket
 import subprocess
@@ -22,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_EXE = ROOT / "dist" / "backend" / "quant_server" / ("quant_server.exe" if sys.platform == "win32" else "quant_server")
 # 依次请求：健康检查 → 首页（行情采集器、AKShare）→ 大模型设置（平台预设）→ 问股策略（内置 YAML）→ 报告模板（内置 Jinja2）
-PATHS = ["/api/v1/health", "/api/v1/dashboard", "/api/v1/settings/llm", "/api/v1/chat/skills", "/api/v1/settings/templates", "/"]
+PATHS = ["/api/v1/health", "/api/v1/dashboard", "/api/v1/settings/llm", "/api/v1/chat/skills", "/api/v1/settings/templates", "/api/v1/screening/rotation/settings", "/api/v1/system/data-center", "/api/v1/alerts/rules", "/"]
 STARTUP_TIMEOUT = 180
 
 
@@ -95,6 +96,15 @@ def main() -> int:
                 print(f"{path} -> {status}")
                 if status != 200:
                     failures.append(path)
+            try:
+                request = urllib.request.Request(base + '/api/v1/screening/snapshot/check', data=json.dumps({'snapshot': {'close': 10, 'amount': 200000000, 'change_pct': 4}}).encode(), headers={'Content-Type': 'application/json'})
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    snapshot = json.load(response)
+                assert snapshot['network_used'] is False and snapshot['strategies'], 'Snapshot diagnostics unavailable'
+                print('/api/v1/screening/snapshot/check -> 200')
+            except Exception as error:
+                print(f'Snapshot diagnostics failed: {error}')
+                failures.append('snapshot')
             ok = not failures
     finally:
         proc.terminate()
