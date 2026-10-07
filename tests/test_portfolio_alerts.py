@@ -191,6 +191,7 @@ def test_portfolio_risk_report(db_path, monkeypatch):
         session.add(TradeFill(order_id="o1", code="600001", side="buy", price=10.0, quantity=4500,
                               filled_at=datetime.strptime(DAYS[-3], "%Y-%m-%d").replace(hour=10)))
     _add_series(db_path, "600001", [10.0, 11.0, 10.0])
+    _add_series(db_path, "000002", [10.0, 10.0, 10.0])
     monkeypatch.setattr(PortfolioRiskService, "_regime_limit", lambda self: ("防守", 30.0))
 
     report = PortfolioRiskService({"database": {"sqlite_path": db_path}}, execution=_FakeExecution()).report()
@@ -205,6 +206,7 @@ def test_portfolio_risk_report(db_path, monkeypatch):
         "重仓股 距止损价仅 2.0%",
         "重仓股 占总资产 45%，超过单只上限 30%",
         "破位股 已跌破止损价 10.20",
+        "行业分类覆盖 1/2；分类来源为历史涨停所属行业，行业风险仅覆盖已分类部分",
     ]
     # 净值：10.0 买入后 100000 → 104500 → 100000，最大回撤 -4.3% 发生在最后一天
     assert report["drawdown"]["days"] == 3 and report["drawdown"]["max_drawdown"] == pytest.approx(-4.3, abs=0.01)

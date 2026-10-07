@@ -379,7 +379,7 @@ export interface ResearchArtifact {
   schema_version: 'research-artifact-v1'
   subject: { stock_code: string; stock_name?: string; market?: string }
   thesis: { summary: string; direction: string; score?: number | null; confidence?: number | null; reasons: string[]; risks: string[] }
-  evidence: { id: string; source_type: string; title: string; summary?: string | null; source?: string | null; as_of?: string | null; freshness: string; quality_level: string }[]
+  evidence: { id: string; source_type: string; title: string; summary?: string | null; source?: string | null; as_of?: string | null; provider_timestamp?: string | null; fetched_at?: string | null; timestamp?: string | null; freshness: string; quality_level: string }[]
   invalidation_conditions: { id: string; category: string; description: string }[]
   next_actions: { action: string; label: string; reason?: string; due_at?: string | null }[]
 }
@@ -919,12 +919,13 @@ export interface RiskReport {
   realized_pnl: number | null
   total_assets: number
   cash: number
-  exposure: number
+  exposure: number | null
   regime: string
   suggested_exposure: number | null
   positions: { code: string; name: string; sector: string; weight: number; market_value: number; pnl_pct: number | null; stop_loss: number | null; stop_gap: number | null; status: string }[]
   sectors: { sector: string; weight: number }[]
-  drawdown: { max_drawdown: number; max_drawdown_date: string; current_drawdown: number; days: number }
+  drawdown: { max_drawdown: number | null; max_drawdown_date: string; current_drawdown: number | null; days: number; quality?: { status: string; limitations: string[]; valuation_points?: number; method?: string } }
+  quality?: { valuation: string; priced: number; positions: number; classification: string; classified: number; classification_source: string; currency: string }
   warnings: string[]
 }
 

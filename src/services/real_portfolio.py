@@ -562,8 +562,11 @@ class RealPortfolioService:
         with get_db_session(self.db_path) as session:
             for code, pos in merged.items():
                 avg = pos["cost"] / pos["quantity"]
-                price = (session.query(StockDaily.close).filter(StockDaily.code.in_(code_candidates(code)), StockDaily.close > 0)
-                         .order_by(StockDaily.trade_date.desc()).limit(1).scalar()) or avg
+                row = (session.query(StockDaily).filter(StockDaily.code.in_(code_candidates(code)), StockDaily.close > 0)
+                       .order_by(StockDaily.trade_date.desc()).first())
+                from src.services.data_freshness import daily_quality
+                quality = daily_quality(row.trade_date if row else None, row.updated_at if row else None)
+                price = row.close if row else avg
                 result.append({
                     "account": "real", "code": code, "name": pos["name"] or self._name(code), "quantity": pos["quantity"],
                     "available_quantity": pos["quantity"], "avg_cost": round(avg, 4), "market_price": price,
@@ -571,6 +574,9 @@ class RealPortfolioService:
                     "stop_loss": pos["stop_loss"] or round(avg * (1 + self.stop_loss_pct), 2),
                     "target_price": pos["target_price"] or round(avg * (1 + self.take_profit_pct), 2),
                     "first_date": pos["first_date"], "accounts": pos["accounts"],
+                    "price_available": row is not None, "price_stale": quality["status"] != "available",
+                    "price_source": row.source if row else "cost_estimate", "price_date": row.trade_date if row else None,
+                    "price_quality": quality, "valuation_is_estimate": row is None,
                 })
         return sorted(result, key=lambda p: -p["market_value"])
 

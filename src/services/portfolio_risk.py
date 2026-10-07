@@ -8,7 +8,7 @@
 - 回撤：按成交记录和每日收盘价重放账户净值，给出最大回撤和当前回撤
 account="real:<账户名>" 只看该实盘账户。
 account="real" 时改为实盘记账（RealPortfolioService）的持仓和流水；实盘没有设置可用资金时不比较总仓位，
-回撤按「现在没有现金」反推期初资金计算。
+回撤按出入金、现金锚点、费用与公司行为重放单位净值，缺少历史时显示不可用。
 """
 
 from __future__ import annotations
@@ -107,10 +107,21 @@ class PortfolioRiskService:
         total = account["total_assets"] or 0.0
         warnings: list[str] = list(snapshot.get("warnings") or [])
         cash_known = account.get("cash_known", True)
+        from src.services.data_freshness import daily_quality
+        with get_db_session(self.db_path) as session:
+            for position in positions:
+                quote = session.query(StockDaily).filter(StockDaily.code.in_(code_candidates(position["code"])), StockDaily.close > 0).order_by(StockDaily.trade_date.desc()).first()
+                position["price_quality"] = daily_quality(quote.trade_date if quote else None, quote.updated_at if quote else None)
+                position["price_source"] = quote.source if quote else "cost_estimate"
+                position["price_date"] = quote.trade_date if quote else None
+        priced = sum(p["price_quality"]["status"] == "available" for p in positions)
+        valuation_ok = priced == len(positions)
+        if not valuation_ok:
+            warnings.append(f"持仓报价有效覆盖 {priced}/{len(positions)}；缺失或陈旧报价使估值、仓位与止损判断不可用")
 
         exposure = account["market_value"] / total * 100 if total else 0.0
         regime, suggested = self._regime_limit()
-        if cash_known and suggested is not None and exposure > suggested + 1e-6:
+        if valuation_ok and cash_known and suggested is not None and exposure > suggested + 1e-6:
             warnings.append(f"总仓位 {exposure:.0f}% 高于大盘「{regime}」环境建议的 {suggested:.0f}%")
 
         sectors = self._sectors([p["code"] for p in positions])
@@ -118,7 +129,7 @@ class PortfolioRiskService:
         for p in positions:
             weight = p["market_value"] / total * 100 if total else 0.0
             price, stop = p["market_price"], p.get("stop_loss") or 0.0
-            stop_gap = (price / stop - 1) * 100 if stop and price else None
+            stop_gap = (price / stop - 1) * 100 if stop and price and p["price_quality"]["status"] == "available" else None
             status = ""
             if stop_gap is not None and stop_gap <= 0:
                 status = "已跌破止损"
@@ -126,7 +137,7 @@ class PortfolioRiskService:
             elif stop_gap is not None and stop_gap < self.near_stop_pct:
                 status = "接近止损"
                 warnings.append(f"{p['name'] or p['code']} 距止损价仅 {stop_gap:.1f}%")
-            if weight > self.single_max_pct:
+            if valuation_ok and weight > self.single_max_pct:
                 warnings.append(f"{p['name'] or p['code']} 占总资产 {weight:.0f}%，超过单只上限 {self.single_max_pct:.0f}%")
             cost = p["avg_cost"] * p["quantity"]
             rows.append({
@@ -134,6 +145,8 @@ class PortfolioRiskService:
                 "weight": round(weight, 1), "market_value": round(p["market_value"], 2),
                 "pnl_pct": round(p["unrealized_pnl"] / cost * 100, 2) if cost else None,
                 "stop_loss": stop or None, "stop_gap": round(stop_gap, 2) if stop_gap is not None else None, "status": status,
+                "price_quality": p["price_quality"], "price_source": p["price_source"], "price_date": p["price_date"],
+                "weight_available": valuation_ok and cash_known,
             })
         rows.sort(key=lambda r: -r["weight"])
 
@@ -142,15 +155,21 @@ class PortfolioRiskService:
             by_sector[r["sector"]] += r["weight"]
         sector_rows = [{"sector": k, "weight": round(v, 1)} for k, v in sorted(by_sector.items(), key=lambda kv: -kv[1])]
         for s in sector_rows:
-            if s["sector"] != UNKNOWN_SECTOR and s["weight"] > self.sector_max_pct:
+            if valuation_ok and cash_known and s["sector"] != UNKNOWN_SECTOR and s["weight"] > self.sector_max_pct:
                 warnings.append(f"行业「{s['sector']}」合计占 {s['weight']:.0f}%，超过上限 {self.sector_max_pct:.0f}%")
+        classified = sum(r["sector"] != UNKNOWN_SECTOR for r in rows)
+        if classified < len(rows):
+            warnings.append(f"行业分类覆盖 {classified}/{len(rows)}；分类来源为历史涨停所属行业，行业风险仅覆盖已分类部分")
 
         return {
             "as_of": datetime.now().strftime("%Y-%m-%d %H:%M"), "account": self.account, "cash_known": cash_known,
             "realized_pnl": account.get("realized_pnl"),
-            "total_assets": round(total, 2), "cash": round(account["cash"], 2), "exposure": round(exposure, 1),
+            "total_assets": round(total, 2), "cash": round(account["cash"], 2), "exposure": round(exposure, 1) if valuation_ok and cash_known else None,
             "regime": regime, "suggested_exposure": suggested,
             "positions": rows, "sectors": sector_rows, "drawdown": self._drawdown(), "warnings": warnings,
+            "quality": {"valuation": "available" if valuation_ok else "partial", "priced": priced, "positions": len(rows),
+                        "classification": "available" if classified == len(rows) else "partial", "classified": classified,
+                        "classification_source": "latest_limit_up_sector", "currency": "CNY"},
         }
 
     def _regime_limit(self) -> tuple[str, float | None]:
@@ -182,9 +201,7 @@ class PortfolioRiskService:
     def _fills_and_initial_cash(self) -> tuple[list[tuple], float]:
         if self._is_real:
             fills = self.real.fills()
-            # 期初资金 = 现在的可用资金 + 全部买入 - 全部卖出（没有设置可用资金时按现在没有现金计算）
-            flow = sum(price * qty * (1 if side == "buy" else -1) for _, side, price, qty, _ in fills)
-            return fills, (self.real.cash() or 0.0) + flow
+            return fills, 0.0
         broker = getattr(self.execution, "broker", None)
         initial_cash = float(getattr(broker, "_initial_cash", 0) or (self.config.get("trading") or {}).get("paper_initial_cash", 1_000_000))
         with get_db_session(self.db_path) as session:
@@ -201,7 +218,8 @@ class PortfolioRiskService:
         fills, initial_cash = self._fills_and_initial_cash()
         with get_db_session(self.db_path) as session:
             if not fills:
-                return {"max_drawdown": 0.0, "max_drawdown_date": "", "current_drawdown": 0.0, "days": 0}
+                return {"max_drawdown": None, "max_drawdown_date": "", "current_drawdown": None, "days": 0,
+                        "quality": {"status": "unavailable", "limitations": ["insufficient_valuation_points"]}}
             start = min(f[4] for f in fills if f[4]).strftime("%Y-%m-%d") if any(f[4] for f in fills) else ""
             codes = {f[0] for f in fills}
             closes: dict[str, dict[str, float]] = defaultdict(dict)
@@ -214,5 +232,26 @@ class PortfolioRiskService:
         for code, day, close in rows:
             closes[bare_code(code)][day] = close
         days = sorted(trading_calendar.trade_days_only({d for c in closes.values() for d in c} | {start}))
+        if self._is_real:
+            from src.services.portfolio_nav import real_drawdown
+            # 所有流水日期都参与重放，非交易日只有现金时也有有效估值。
+            flow_days = {f.flow_date for a in self.real._names() for f in self.real._flows(a)}
+            from src.database.models import RealCash
+            from src.services.real_portfolio import _account_filter
+            with get_db_session(self.db_path) as session:
+                anchor_days = {a.as_of.strftime("%Y-%m-%d") for name in self.real._names() for a in session.query(RealCash).filter(_account_filter(RealCash, name)).all()}
+            days = sorted(set(days) | flow_days | anchor_days | {f[4].strftime("%Y-%m-%d") for f in fills if f[4]})
+            nav, quality = real_drawdown(self.real, closes, days)
+            metrics = drawdowns(nav) if quality["status"] == "available" else {"max_drawdown": None, "max_drawdown_date": "", "current_drawdown": None}
+            return {**metrics, "days": len(days), "quality": quality}
         nav = replay_nav(fills, closes, days, initial_cash)
-        return {**drawdowns(nav), "days": len(nav)}
+        missing = False
+        for day in days:
+            held = defaultdict(int)
+            for code, side, _, qty, filled_at in fills:
+                if filled_at and filled_at.strftime("%Y-%m-%d") <= day:
+                    held[code] += qty * (1 if side == "buy" else -1)
+            missing |= any(qty and not closes.get(code, {}).get(day) for code, qty in held.items())
+        quality = {"status": "available" if len(nav) >= 2 and not missing else "partial", "valuation_points": len(nav), "limitations": ["missing_historical_price"] if missing else ["insufficient_valuation_points"] if len(nav) < 2 else []}
+        metrics = drawdowns(nav) if quality["status"] == "available" else {"max_drawdown": None, "max_drawdown_date": "", "current_drawdown": None}
+        return {**metrics, "days": len(nav), "quality": quality}

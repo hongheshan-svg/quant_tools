@@ -153,7 +153,7 @@ export function ResearchOverview({ code, reportArtifact, reportId }: { code: str
         <Card title={t('下一步')}><ul className="space-y-1">{artifact.next_actions.map((a) => <li key={a.action}>{a.label}：{a.reason} {a.due_at}</li>)}</ul></Card>
       </div>
       <details><summary className="cursor-pointer text-accent">{t('证据与来源')}（{artifact.evidence.length}）</summary>
-        <ul className="mt-2 space-y-3">{artifact.evidence.map((e) => <li key={e.id} className="rounded-lg border border-border p-3"><p className="mb-1 font-medium">{e.title}</p><Badge>{e.source || e.source_type}</Badge> <span className="text-xs text-muted">{e.as_of || t('时间未知')} · {t(e.freshness === 'stale' ? '已陈旧' : e.freshness === 'fresh' ? '可用' : '时间未确认')}</span><p className="mt-1 whitespace-pre-wrap text-sm">{e.summary}</p></li>)}</ul>
+        <ul className="mt-2 space-y-3">{artifact.evidence.map((e) => <li key={e.id} className="rounded-lg border border-border p-3"><p className="mb-1 font-medium">{e.title}</p><Badge>{e.source || e.source_type}</Badge> <span className="text-xs text-muted">{e.as_of || t('时间未知')} · {t(e.freshness === 'stale' ? '已陈旧' : e.freshness === 'fresh' ? '可用' : '时间未确认')}</span><p className="mt-1 text-xs text-muted">{t('观测时间')}：{e.provider_timestamp || t('时间未知')} · {t('取得时间')}：{e.fetched_at || t('时间未知')}</p><p className="mt-1 whitespace-pre-wrap text-sm">{e.summary}</p></li>)}</ul>
       </details>
     </> : <p className="text-muted">{t('暂无诊断，先生成 AI 诊断')}</p>}
     <Card title={t('持仓与盯盘')}>
