@@ -39,7 +39,7 @@ def deliberate(result: dict, original: list[dict], llm, context: dict, config: d
     from src.utils.redaction import redact_text
     from src.services.diagnosis_prompts import DELIBERATION_PROMPT_EN
     system = (DELIBERATION_PROMPT_EN if lang == "en" else
-              '只根据证据审议分歧。保留每个 skill；返回 {"opinions":[{"skill":"...","stance":"看多/看空/中性","score":0到100,"confidence":"高/中/低","reason":"具体证据或维持原意见的原因"}]}。不得添加策略。')
+              '只根据证据审议分歧。只能维持原方向或弱化为中性，不得提高信心、增加偏离50分的程度或撤销上一轮弱化。保留每个 skill；返回 {"opinions":[{"skill":"...","stance":"看多/看空/中性","score":0到100,"confidence":"高/中/低","reason":"具体证据或维持原意见的原因"}]}。不得添加策略。')
     expires = time.monotonic() + min(config.get("timeout_seconds", 30), max(0, budget.remaining() - 30) if budget else 30)
     current, rounds = original, []
     for round_no in range(1, min(3, int(config.get("max_rounds", 2))) + 1):
@@ -52,6 +52,15 @@ def deliberate(result: dict, original: list[dict], llm, context: dict, config: d
             skills = {o.get("skill") for o in original}
             if not isinstance(revised, list) or len(revised) != len(original) or any(not valid_opinion(o) or not o.get("reason") for o in revised) or {o.get("skill") for o in revised} != skills:
                 raise ValueError("审议响应不完整或观点无效")
+            prior = {o['skill']: o for o in current}
+            confidence_rank = {'低': 0, '中': 1, '高': 2}
+            for opinion in revised:
+                previous = prior[opinion['skill']]
+                if (opinion['stance'] not in {previous['stance'], '中性'}
+                        or confidence_rank[opinion.get('confidence', '中')] > confidence_rank[previous.get('confidence', '中')]
+                        or abs(opinion['score'] - 50) > abs(previous['score'] - 50)
+                        or opinion['stance'] == '中性' and not 40 <= opinion['score'] <= 60):
+                    raise ValueError("审议修订必须维持或弱化观点，不能反转方向或提高信心")
             current = revised
             rounds.append({"round": round_no, "opinions": revised})
             if not synthesize(current)["conflicts"]:
@@ -61,8 +70,10 @@ def deliberate(result: dict, original: list[dict], llm, context: dict, config: d
             break
     review = synthesize(current)
     original_conflicts = result["conflicts"]
-    result.update({"original_opinions": original, "revised_opinions": current, "consensus": review["consensus"],
-                   "original_conflicts": original_conflicts, "conflicts": review["conflicts"], "confidence_cap": "低" if review["conflicts"] else None})
+    result.update({"original_opinions": original, "revised_opinions": current,
+                   "original_conflicts": original_conflicts,
+                   "revision_projection": {"mode": "preview_only", "consensus": review['consensus'],
+                                           "conflicts": review['conflicts'], "final_signal_overridden": False}})
     result["deliberation"].update({"mode": "llm", "rounds": len(rounds), "round_history": rounds,
         "status": "completed" if rounds else "fallback", "resolution_status": "unresolved" if review["conflicts"] else "resolved",
         "minority_view_preserved": bool(result["minority"]), "original_conflicts": original_conflicts})

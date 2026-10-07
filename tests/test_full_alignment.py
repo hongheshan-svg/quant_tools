@@ -208,7 +208,25 @@ def test_llm_deliberation_resolves_conflict_preserving_originals():
         return {'opinions': revised}
     result = synthesize(original, llm=SimpleNamespace(chat_json=answer), config={'enabled': True, 'max_rounds': 3})
     assert len(calls) == 1 and result['original_opinions'] == original and result['revised_opinions'] == revised
-    assert result['deliberation']['resolution_status'] == 'resolved' and result['original_conflicts'] and not result['conflicts']
+    assert result['deliberation']['resolution_status'] == 'resolved' and result['original_conflicts']
+    assert result['conflicts'] and result['confidence_cap'] == '低'
+    assert not result['revision_projection']['conflicts']
+    assert result['revision_projection']['final_signal_overridden'] is False
+
+
+@pytest.mark.parametrize('change', [
+    {'stance': '看多', 'score': 95, 'confidence': '高'},
+    {'stance': '看空', 'score': 20, 'confidence': '高'},
+    {'stance': '看空', 'score': 0, 'confidence': '中'},
+])
+def test_mediator_cannot_reverse_or_strengthen_opinion(change):
+    original = [{'skill': 'bull', 'score': 80, 'stance': '看多', 'confidence': '中', 'reason': '增长'},
+                {'skill': 'bear', 'score': 20, 'stance': '看空', 'confidence': '中', 'reason': '风险'}]
+    revised = [original[0], {**original[1], **change}]
+    baseline = synthesize(original)
+    result = synthesize(original, llm=SimpleNamespace(chat_json=lambda *a, **kw: {'opinions': revised}), config={'enabled': True})
+    assert result['deliberation']['status'] == 'fallback'
+    assert result['consensus'] == baseline['consensus'] and result['confidence_cap'] == '低'
 
 
 def test_benchmark_missing_is_not_zero_and_complete_uses_fixed_horizon(config, monkeypatch):
