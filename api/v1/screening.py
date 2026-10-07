@@ -26,6 +26,7 @@ class RotationRequest(BaseModel):
     rebalance: str | None = Field(None, pattern="^(weekly|monthly)$")
     switch_buffer_pct: float | None = Field(None, ge=0, le=100)
     cost_bps: float | None = Field(None, ge=0, lt=10000)
+    min_years: float | None = Field(None, ge=1, le=50)
     refresh: bool = False
 
 

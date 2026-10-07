@@ -43,5 +43,5 @@ function Editor({ initial }: { initial: ETFRotationSettings }) {
 export function ETFRotationPanel() {
   const t = useT()
   const settings = useApi(api.etfRotationSettings)
-  return <Card title={t('ETF 双动量轮动')}>{settings.error ? <ErrorBox message={settings.error} onRetry={settings.reload} /> : settings.data ? <Editor initial={settings.data} /> : <Spinner />}</Card>
+  return <Card title={t('ETF 双动量轮动')}>{settings.error ? <ErrorBox message={settings.error} onRetry={settings.reload} /> : settings.data ? Array.isArray(settings.data.risk_assets) ? <Editor initial={settings.data} /> : <ErrorBox message={t('轮动配置格式无效')} onRetry={settings.reload} /> : <Spinner />}</Card>
 }

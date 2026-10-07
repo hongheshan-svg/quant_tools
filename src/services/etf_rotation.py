@@ -5,6 +5,7 @@ from datetime import date, datetime
 import hashlib
 import math
 import re
+from copy import deepcopy
 
 import pandas as pd
 
@@ -12,6 +13,10 @@ from src import trading_calendar
 from src.database.db import get_db_session
 from src.database.models import FundDaily
 from src.strategy.etf_rotation import RotationParams, run_backtest, compute_metrics, annual_returns, parameter_sweep, latest_ranking, is_rebalance_day, select_holdings, holdings_to_weights
+
+DEFAULT_SETTINGS = {'risk_assets': ['510300', '510500', '159915', '518880', '511010'], 'safe_asset': '511880',
+                    'lookback_days': 60, 'rebalance': 'weekly', 'top_n': 1, 'switch_buffer_pct': 2.0,
+                    'cost_bps': 10.0, 'start': '2018-01-01', 'end': '', 'min_years': 8, 'refresh': False}
 
 
 def finite(value):
@@ -24,7 +29,7 @@ class ETFRotationService:
         self.db_path = (config.get("database") or {}).get("sqlite_path", "data/quant.db")
 
     def settings(self):
-        return dict(self.config.get("etf_rotation") or {})
+        return deepcopy({**DEFAULT_SETTINGS, **(self.config.get('etf_rotation') or {})})
 
     def _refresh(self, code, start, end):
         from src.collectors.source_chain import fetch_with_fallback
@@ -45,7 +50,8 @@ class ETFRotationService:
                 if row is None:
                     row = FundDaily(code=code, trade_date=bar["trade_date"])
                     session.add(row)
-                row.close, row.source, row.price_adjustment, row.updated_at = bar["close"], bar["source"], "forward", datetime.now()
+                from src.utils.timestamps import quote_now
+                row.close, row.source, row.price_adjustment, row.updated_at = bar['close'], bar['source'], 'forward', quote_now()
 
     def run(self, overrides=None):
         cfg = {**self.settings(), **(overrides or {})}
@@ -57,7 +63,7 @@ class ETFRotationService:
         start, end = cfg.get("start", "2018-01-01"), cfg.get("end") or date.today().isoformat()
         date.fromisoformat(start)
         date.fromisoformat(end)
-        if start > end or end > date.today().isoformat():
+        if start < '1990-01-01' or start > end or end > date.today().isoformat():
             raise ValueError("回测起止日期无效或结束日期在未来")
         from src.services.market_phase import current_phase
         expected = current_phase().get("effective_daily_bar_date")
@@ -71,7 +77,10 @@ class ETFRotationService:
         if not trading_calendar.has_calendar_coverage(start, end):
             limitations.append("calendar_uses_weekday_fallback")
         if cfg.get("refresh"):
+            from src.services.execution_budget import ExecutionBudget
+            budget = ExecutionBudget.from_config(self.config)
             for code in codes:
+                budget.check('ETF 历史数据更新')
                 self._refresh(code, start, end)
         with get_db_session(self.db_path) as session:
             records = session.query(FundDaily.code, FundDaily.trade_date, FundDaily.close, FundDaily.source).filter(FundDaily.code.in_(codes), FundDaily.trade_date >= start, FundDaily.trade_date <= end, FundDaily.price_adjustment == "forward").all()

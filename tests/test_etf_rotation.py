@@ -10,11 +10,26 @@ from src.services.etf_rotation import ETFRotationService
 from src.database.db import get_db_session
 from src.database.models import FundDaily
 from tests.test_real_portfolio import config  # noqa: F401
+from tests.test_api import env  # noqa: F401
 
 
 def prices():
     dates = pd.bdate_range("2025-01-01", periods=180)
     return pd.DataFrame({"510300": 10 * np.cumprod(np.full(180, 1.003)), "510500": 10 * np.cumprod(np.full(180, .997)), "511880": np.ones(180)}, index=dates)
+
+
+def test_missing_rotation_settings_have_complete_safe_defaults():
+    settings = ETFRotationService({}).settings()
+    assert settings['risk_assets'] and settings['start'] and settings['refresh'] is False
+    settings['risk_assets'].clear()
+    assert ETFRotationService({}).settings()['risk_assets']
+
+
+def test_rotation_settings_roundtrip_is_accepted_without_network(env):
+    client, _, _ = env
+    settings = client.get('/api/v1/screening/rotation/settings').json()
+    response = client.post('/api/v1/screening/rotation/run', json=settings)
+    assert response.status_code == 200 and response.json()['id']
 
 
 def test_fixed_slots_absolute_momentum_and_switch_buffer():
