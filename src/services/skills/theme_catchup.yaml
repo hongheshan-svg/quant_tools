@@ -13,3 +13,7 @@ instructions: |
   - 出场条件：龙头断板或板块转弱立即兑现；止损：跌破启动日低点或 -5%。
   - 回避：主线已进入退潮、该股已连续大涨（乖离率过高，technical 提示）、只有单日消息无板块共振。
   - 对结论的影响：主线阶段和龙头强度是前提；前提不成立直接给观望或看空。
+instructions_en: |
+  Require an emerging, accelerating or expanding theme with a strong leader, never a cooling/retreating theme. Look for a recognizable, relatively small, low-position peer lagging the leader with no recent excessive rally.
+  Enter when the leader pauses or disagrees while the peer strengthens on volume ratio above 1.5, closes above MA5/MA10 and shows major inflows. Exit immediately when the leader streak breaks or the sector weakens. Stop below the launch-day low or at a 5% loss.
+  Avoid retreating themes, already extended peers and isolated one-day news without sector resonance. Theme stage and leader strength are prerequisites; if either is absent, watch or bearish.

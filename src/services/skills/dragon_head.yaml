@@ -14,3 +14,7 @@ instructions: |
   - 出场条件：龙头断板且次日无法修复、跟风股集体补跌、板块转入退潮时离场；止损：跌破分歧日低点或 -6%。
   - 回避：不是龙头的跟风股按龙头标准衡量会得到低分；大盘冰点/防守；已经加速到高位无量能承接。
   - 对结论的影响：是否龙头是硬性前提，不是龙头直接说明并降为观望。
+instructions_en: |
+  Leadership is mandatory. Check the theme role, earliest or strongest limit-up seals, highest consecutive limit-ups, influence on sector peers, recognizable catalysts and sufficient traded value and turnover.
+  Enter a leader strengthening after its first disagreement: reseal, turnover limit-up, or low-volume pullback holding MA5/MA10. Early-theme first/second limit-ups with sustained major inflows are preferable.
+  Exit when a broken streak cannot recover the next day, followers fall together or the sector retreats. Stop below the disagreement-day low or at a 6% loss. Avoid followers, frozen/defensive markets and unsupported high-level acceleration. If leadership is absent, explicitly downgrade to watch.

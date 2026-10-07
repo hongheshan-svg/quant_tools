@@ -14,3 +14,7 @@ instructions: |
   - 出场条件：业绩增速明显放缓、估值明显透支、跌破 MA60；止损：跌破 MA60 或 -10%。
   - 回避：业绩下滑或增长靠一次性收益、高估值且趋势走弱、公告有重大风险。
   - 对结论的影响：基本面和趋势必须同时满足才看多；只有基本面无趋势，给「等待」并说明触发条件。
+instructions_en: |
+  Apply a medium-term growth-quality framework, not an ultra-short-term setup. Check sustained revenue/profit growth in earnings guidance or preliminary results, PE/PB versus growth (high PEG suggests overpricing), shareholder reductions, investigations or goodwill impairment, and chip concentration/profitability.
+  Require price above MA60, rising averages and medium-term major inflows. Accumulate in 2-3 batches near MA20/MA60 when fundamentals and trend agree. Exit on slowing growth, excessive valuation or a break below MA60; stop below MA60 or at a 10% loss.
+  Avoid declining or one-off-driven earnings, expensive weakening trends and major announcement risks. Good fundamentals without trend confirmation mean wait with explicit triggers.

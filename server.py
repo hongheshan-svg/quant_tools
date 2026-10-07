@@ -117,6 +117,7 @@ def self_check() -> int:
         from src.services.strategy_skills import BUILTIN_DIR, load_skills
 
         assert len(list(BUILTIN_DIR.glob("*.yaml"))) >= 19 and len(load_skills()) >= 19
+        assert all(s.instructions_en for s in load_skills() if s.source == "builtin")
 
     def report_templates() -> None:
         from jinja2.sandbox import ImmutableSandboxedEnvironment

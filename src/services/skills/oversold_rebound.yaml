@@ -13,3 +13,7 @@ instructions: |
   - 出场条件：反弹到 MA10/MA20 或前期下跌平台分批兑现，博弈性质不宜久持；止损：跌破企稳低点 -4%~-5%。
   - 回避：基本面恶化导致的下跌（不是错杀）、下跌趋势中无量反抽、大盘冰点持续杀跌。
   - 对结论的影响：只能给「博弈」性质的结论，仓位建议不超过轻仓；有严重公告风险直接看空。
+instructions_en: |
+  Seek a decline above 20% over 10 days or RSI6 below 20, strongly negative price deviation and high-volume stabilization. Verify earnings/news for unresolved loss guidance, investigations, shareholder reductions or delisting risk; assess trapped chips.
+  Enter only a small speculative position after a long lower wick, bullish engulfing or similar confirmed stabilization; returning major inflows help. Take profits in batches at MA10/MA20 or the former breakdown platform; do not treat the rebound as a long hold. Stop 4%-5% below the stabilization low.
+  Avoid fundamentally justified declines, low-volume bounces in a downtrend and persistent frozen-market selling. Clearly label the trade speculative and light; severe announcement risk means bearish.

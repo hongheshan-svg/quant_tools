@@ -14,3 +14,10 @@ instructions: |
   5. 持仓相关问题再用 position 查成本和止损位。
   结论必须给出：看多/观望/看空、买点区间、止损位（一般 -5%~-8% 或跌破关键均线）、目标位和建议仓位；
   技术、资金、题材三者方向不一致时降为观望并说明分歧。
+instructions_en: |
+  Apply an integrated framework without assuming a single setup.
+  1. Assess the market first: avoid new positions in a frozen market and limit allocation in a defensive regime.
+  2. Check quote, daily bars and technicals for moving-average structure, MACD, RSI, price deviation and volume ratio.
+  3. Check whether major fund flows agree with price direction; use chip profitability and cost ranges to assess selling pressure.
+  4. Check theme leadership, news and earnings. Investigations, material reductions of holdings and delisting risks veto buys.
+  5. For held positions, inspect cost and stop-loss. Give direction, entry range, stop-loss (usually 5%-8% or a key average), target and allocation. If technicals, flows and theme disagree, watch and explain the conflict.

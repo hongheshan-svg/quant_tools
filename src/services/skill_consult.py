@@ -22,7 +22,8 @@ from src import trading_calendar
 from src.config_loader import load_config
 from src.database.db import get_db_session
 from src.database.models import SkillOpinion, StockDaily
-from src.services.report_language import language_directive
+from src.services.report_language import display, language_directive
+from src.services.diagnosis_prompts import CONSULT_PROMPT_EN
 from src.services.strategy_skills import DEFAULT_SKILL, Skill, get_skill, load_skills
 from src.services.opinion_validity import valid_opinion, valid_score, valid_weight
 from src.services.execution_budget import ExecutionBudget
@@ -136,8 +137,11 @@ def consult(llm, context_text: str, skills: list[Skill], weights: dict[str, floa
 
     def ask(skill: Skill) -> dict[str, Any] | None:
         try:
+            prompt = CONSULT_PROMPT_EN if lang == "en" else CONSULT_PROMPT
+            instructions = (skill.instructions_en or skill.instructions) if lang == "en" else skill.instructions
             raw = llm.chat_json(user_message=context_text,
-                                system_message=CONSULT_PROMPT.format(display_name=skill.display_name, instructions=skill.instructions) + directive)
+                                system_message=prompt.format(display_name=skill.name if lang == "en" else skill.display_name,
+                                                             instructions=instructions) + directive)
             return _normalize(skill, raw, float(weights.get(skill.name, 1.0)))
         except Exception as e:
             logger.warning(f"策略会诊失败 [{skill.display_name}]: {e}")
@@ -174,7 +178,18 @@ def consensus(opinions: list[dict[str, Any]]) -> dict[str, Any]:
             "neutral": [o.get("skill", "") for o in opinions if o["stance"] == "中性"]}
 
 
-def section_text(opinions: list[dict[str, Any]], cons: dict[str, Any]) -> str:
+def section_text(opinions: list[dict[str, Any]], cons: dict[str, Any], lang: str = "zh") -> str:
+    if lang == "en":
+        lines = ["[Strategy consultation]"]
+        for o in opinions:
+            lines.append(f"- {o['skill']}: {display(lang, o['stance'])}, score {o['score']}, "
+                         f"confidence {display(lang, o['confidence'])}, weight {o['weight']:.2f}; {o['reason'] or 'none'}")
+        if cons.get("status") == "insufficient":
+            lines.append("Fewer than two valid strategy opinions: no consensus. Use the single opinion only as a reference and reduce confidence.")
+        elif cons:
+            lines.append(f"Consensus: {display(lang, cons['stance'])}, score {cons['score']}. " +
+                         ("Strategies disagree: explain the evidence you accept; do not give high confidence." if cons["agreement"] == "分歧" else "Strategies agree."))
+        return "\n".join(lines)
     lines = ["【策略会诊】"]
     for o in opinions:
         lines.append(f"- {o['display_name']}：{o['stance']} {o['score']}分（信心{o['confidence']}，权重{o['weight']:.2f}）；{o['reason'] or '无'}")

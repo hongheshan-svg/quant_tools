@@ -13,3 +13,7 @@ instructions: |
   - 出场条件：再创新高附近分批止盈；止损：放量跌破 MA20 或回调低点，一般 -6% 以内。
   - 回避：主线已退潮、回调过程中放量下跌、公告有重大利空（news）、大盘冰点。
   - 对结论的影响：龙头身份、缩量企稳、主线延续三者同时满足才看多；缺主线延续降为观望。
+instructions_en: |
+  Confirm former leadership with at least three consecutive limit-ups or repeated limits. Prefer an 8%-25% pullback; more than 35% undermines leadership. Require low-volume stabilization near MA10/MA20 and the original theme still active.
+  Enter on a bullish high-volume candle or renewed limit-up after stabilization; renewed major inflows strengthen the case. Take profits near new highs; stop on a high-volume break below MA20 or the pullback low, generally within 6%.
+  Avoid retreating themes, high-volume declines during the pullback, major negative announcements and frozen markets. Leadership, low-volume stabilization and theme continuity must all hold; without continuity, watch.

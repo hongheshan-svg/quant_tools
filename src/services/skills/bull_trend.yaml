@@ -13,3 +13,7 @@ instructions: |
   - 出场条件：收盘跌破 MA20 减仓，跌破 MA60 或均线拐头向下离场；止损：买点下方 MA20 -2%。
   - 回避：均线纠缠（趋势不明）、放量滞涨的高位、公告有严重风险、大盘冰点。
   - 对结论的影响：趋势结构完整给看多并给出持有/加仓/止盈的规则；已过热的降级为持有观望，不建议追涨。
+instructions_en: |
+  Require rising MA5>MA10>MA20>MA60, price tracking MA10/MA20, rising highs and lows, MACD above zero and moderate volume expansion. A 15%-20% deviation above MA20 signals overheating; do not chase.
+  Enter on support at MA10/MA20 or a high-volume breakout above the previous high; sustained major inflows strengthen the case. Reduce on a close below MA20, exit below MA60 or when averages turn down; stop at MA20 minus 2% below entry.
+  Avoid tangled averages, high-volume stagnation, severe announcement risk and frozen markets. A sound trend supports hold/add/profit-taking rules; overheating calls for holding or watching.

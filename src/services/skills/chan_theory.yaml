@@ -15,3 +15,7 @@ instructions: |
   - 说明：数据只有日线级别时，明确只能判断日线级别的结构，无法验证更小级别的区间套。
   - 对结论的影响：有清晰买点且背驰/回踩确认时才看多；结构模糊（震荡在中枢里）时给观望；
     需列出判断依据和关键价位，并提示缠论主观性较强。
+instructions_en: |
+  Apply Chan analysis to at most 60 daily bars with technical confirmation. Identify strokes, segments and a central overlap zone involving at least three strokes; state its approximate ZG/ZD bounds and whether price is inside, above or below it.
+  The first buy is bearish-trend exhaustion with a price low but weaker MACD area/strength; the second is a retest without a new low; the third is a breakout retest holding above the central zone. Sell points are symmetric.
+  Enter confirmed second/third buys; stop at the central-zone edge or stroke low; reduce on top divergence or a return inside the zone. Daily data cannot validate smaller-timeframe nesting. Only clear, confirmed setups support a bullish view; otherwise watch and disclose subjectivity.

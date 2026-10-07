@@ -35,11 +35,12 @@ class Skill:
     market_regimes: tuple[str, ...] = ()
     priority: int = 100
     source: str = "builtin"
+    instructions_en: str = ""
 
     def to_dict(self) -> dict:
         return {"name": self.name, "display_name": self.display_name, "description": self.description,
                 "category": self.category, "aliases": list(self.aliases), "market_regimes": list(self.market_regimes),
-                "source": self.source, "instructions": self.instructions}
+                "source": self.source, "instructions": self.instructions, "instructions_en": self.instructions_en}
 
 
 _cache: dict[tuple, tuple[tuple, list[Skill]]] = {}
@@ -83,6 +84,7 @@ def _parse_file(path: Path, source: str) -> Skill | None:
         category=category if category in CATEGORIES else "framework",
         aliases=_as_tuple(data.get("aliases")), instructions=str(data["instructions"]).strip(),
         market_regimes=_as_tuple(data.get("market_regimes")), priority=priority, source=source,
+        instructions_en=str(data.get("instructions_en") or "").strip(),
     )
 
 

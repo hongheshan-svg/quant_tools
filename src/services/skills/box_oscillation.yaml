@@ -13,3 +13,7 @@ instructions: |
   - 出场条件：接近上沿分批兑现；止损：收盘跌破下沿 -3% 视为箱体失效，无条件离场。
   - 回避：箱体不清晰、价格在箱体中部（盈亏比差）、大盘冰点导致向下破位概率高。
   - 对结论的影响：中部给观望；下沿给低吸并给出止损；说明当前在箱体中的相对位置和盈亏比。
+instructions_en: |
+  Use 30-60 daily bars to identify a box with at least two touches of both boundaries and amplitude above 10%. State the bounds, current relative position and reward-to-risk ratio; inspect RSI and volume, normally lighter at the floor and heavier at the ceiling.
+  Buy a low-volume stabilization near the floor or a confirmed ceiling breakout with volume ratio at least 1.5. Sell in batches near the ceiling. A close 3% below the floor invalidates the box and requires exit.
+  Avoid unclear boxes, poor reward-to-risk at the midpoint, and frozen-market downside breaks. At the midpoint watch; at the floor specify the stop.

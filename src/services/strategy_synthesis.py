@@ -4,7 +4,7 @@ from src.services.opinion_validity import valid_opinion
 from src.services.skill_consult import consensus
 
 
-def synthesize(opinions: list[dict], *, llm=None, context_pack: dict | None = None, config: dict | None = None, budget=None) -> dict:
+def synthesize(opinions: list[dict], *, llm=None, context_pack: dict | None = None, config: dict | None = None, budget=None, lang: str = "zh") -> dict:
     valid = [op for op in opinions if valid_opinion(op)]
     summary = consensus(valid)
     if len(valid) < 2:
@@ -29,14 +29,17 @@ def synthesize(opinions: list[dict], *, llm=None, context_pack: dict | None = No
                                             "revision": "unchanged", "reason": o.get("reason", "")} for o in valid] if conflicts else []}}
     if not conflicts or llm is None or not (config or {}).get("enabled", False):
         return result
-    return deliberate(result, valid, llm, context_pack or {}, config, budget)
+    return deliberate(result, valid, llm, context_pack or {}, config, budget, lang)
 
 
-def deliberate(result: dict, original: list[dict], llm, context: dict, config: dict, budget=None) -> dict:
+def deliberate(result: dict, original: list[dict], llm, context: dict, config: dict, budget=None, lang: str = "zh") -> dict:
     import json
     import time
     from src.collectors.request_budget import bounded_call
     from src.utils.redaction import redact_text
+    from src.services.diagnosis_prompts import DELIBERATION_PROMPT_EN
+    system = (DELIBERATION_PROMPT_EN if lang == "en" else
+              '只根据证据审议分歧。保留每个 skill；返回 {"opinions":[{"skill":"...","stance":"看多/看空/中性","score":0到100,"confidence":"高/中/低","reason":"具体证据或维持原意见的原因"}]}。不得添加策略。')
     expires = time.monotonic() + min(config.get("timeout_seconds", 30), max(0, budget.remaining() - 30) if budget else 30)
     current, rounds = original, []
     for round_no in range(1, min(3, int(config.get("max_rounds", 2))) + 1):
@@ -44,7 +47,7 @@ def deliberate(result: dict, original: list[dict], llm, context: dict, config: d
             break
         try:
             prompt = json.dumps({"context_pack": context, "original_opinions": original, "current_opinions": current, "conflicts": result["conflicts"]}, ensure_ascii=False)
-            response = bounded_call(lambda: llm.chat_json(prompt, system_message='只根据证据审议分歧。保留每个 skill；返回 {"opinions":[{"skill":"...","stance":"看多/看空/中性","score":0到100,"confidence":"高/中/低","reason":"具体证据或维持原意见的原因"}]}。不得添加策略。', max_tokens=1800), expires - time.monotonic())
+            response = bounded_call(lambda: llm.chat_json(prompt, system_message=system, max_tokens=1800), expires - time.monotonic())
             revised = response.get("opinions") if isinstance(response, dict) else None
             skills = {o.get("skill") for o in original}
             if not isinstance(revised, list) or len(revised) != len(original) or any(not valid_opinion(o) or not o.get("reason") for o in revised) or {o.get("skill") for o in revised} != skills:

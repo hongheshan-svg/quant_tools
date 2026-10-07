@@ -19,6 +19,9 @@ from src.services.report_language import language_directive
 from src.services.opinion_validity import valid_opinion, valid_score
 from src.utils.redaction import redact_text
 from src.services.execution_budget import ExecutionBudget
+from src.services.diagnosis_prompts import (
+    ANALYST_PROMPT_EN, ANALYST_ROLES_EN, SECTIONS_EN,
+)
 
 ANALYSTS: dict[str, tuple[str, str, tuple[str, ...]]] = {
     "technical": ("技术面分析员", "走势、技术指标、筹码、资金流和涨停质量",
@@ -44,7 +47,7 @@ DECISION_ADDENDUM = """
 你是决策员：上面的数据之后附有各分析员的观点。综合全部数据和分析员观点给出最终结论；
 分析员有分歧时要说明你采信哪一方以及原因，分歧大时信心不要给「高」。"""
 
-_SECTION = re.compile(r"^【(.+?)】")
+_SECTION = re.compile(r"^(?:【(.+?)】|\[([^\]]+)\])")
 
 
 def split_sections(text: str) -> dict[str, str]:
@@ -53,8 +56,10 @@ def split_sections(text: str) -> dict[str, str]:
     for line in (text or "").splitlines():
         match = _SECTION.match(line)
         if match:
-            sections[match.group(1)] = line
-        elif line.startswith("股票："):
+            key = match.group(1) or match.group(2)
+            key = next((zh for zh, en in SECTIONS_EN.items() if en == key), key)
+            sections[key] = line
+        elif line.startswith(("股票：", "标的：")):
             sections["股票"] = line
     return sections
 
@@ -88,9 +93,18 @@ def run_analysts(llm, context_text: str, mode: str, lang: str = "zh", *,
 
     def ask(role_key: str) -> dict[str, Any]:
         label, focus, keys = ANALYSTS[role_key]
-        data = "\n".join(sections[k] for k in keys if k in sections)
+        keys = (*keys, "市场阶段", "数据完整度")
+        if role_key in ("technical", "intel"):
+            keys = (*keys, "对应主线")
+        data = "\n".join(sections[k] for k in dict.fromkeys(keys) if k in sections)
         try:
-            return _normalize(role_key, llm.chat_json(user_message=data, system_message=ANALYST_PROMPT.format(role=label, focus=focus) + directive))
+            prompt = ANALYST_PROMPT
+            if lang == "en":
+                label_en, focus = ANALYST_ROLES_EN[role_key]
+                prompt = ANALYST_PROMPT_EN.format(role=label_en, focus=focus)
+            else:
+                prompt = prompt.format(role=label, focus=focus)
+            return _normalize(role_key, llm.chat_json(user_message=data, system_message=prompt + directive))
         except Exception as e:
             logger.warning(f"{label}调用失败: {e}")
             return {"role": role_key, "label": label, "error": redact_text(e, 100)}
@@ -103,7 +117,7 @@ def run_analysts(llm, context_text: str, mode: str, lang: str = "zh", *,
         return list(pool.map(ask, roles))
 
 
-def disagreement(opinions: list[dict[str, Any]]) -> str:
+def disagreement(opinions: list[dict[str, Any]], lang: str = "zh") -> str:
     valid = [o for o in opinions if valid_opinion(o, "view")]
     if len(valid) < 2:
         return ""
@@ -111,13 +125,33 @@ def disagreement(opinions: list[dict[str, Any]]) -> str:
     scores = [o["score"] for o in valid]
     parts = []
     if "看多" in views and "看空" in views:
-        parts.append("、".join(f"{o['label'][:-3]}{o['view']}" for o in valid))
+        if lang == "en":
+            from src.services.report_language import display
+            parts.append("; ".join(f"{ANALYST_ROLES_EN.get(o.get('role'), ('analyst', ''))[0]}: {display(lang, o['view'])}" for o in valid))
+        else:
+            parts.append("、".join(f"{o['label'][:-3]}{o['view']}" for o in valid))
     if max(scores) - min(scores) >= DISAGREEMENT_SCORE_GAP:
-        parts.append(f"评分相差 {max(scores) - min(scores)} 分")
-    return "；".join(parts)
+        parts.append(f"Score gap: {max(scores) - min(scores)} points" if lang == "en" else f"评分相差 {max(scores) - min(scores)} 分")
+    return ("; " if lang == "en" else "；").join(parts)
 
 
-def opinions_text(opinions: list[dict[str, Any]], conflict: str) -> str:
+def opinions_text(opinions: list[dict[str, Any]], conflict: str, lang: str = "zh") -> str:
+    if lang == "en":
+        from src.services.report_language import display
+        lines = ["[Analyst opinions]"]
+        for opinion in opinions:
+            role = ANALYST_ROLES_EN.get(opinion.get("role"), (opinion["label"], ""))[0]
+            if opinion.get("error"):
+                lines.append(f"- {role}: no valid opinion available")
+                continue
+            lines.append(f"- {role}: {display(lang, opinion['view'])}, score {opinion['score']}, "
+                         f"confidence {display(lang, opinion['confidence'])}; key points: "
+                         f"{'; '.join(opinion['key_points']) or 'none'}; risks: {'; '.join(opinion['risks']) or 'none'}")
+        valid = sum(valid_opinion(o, "view") for o in opinions)
+        lines.append("[Disagreement] " + ("Insufficient valid opinions to assess consensus." if valid < 2 else
+                     "Opposing directions or a score gap of at least 25; explain the evidence you accept and reduce confidence." if conflict else
+                     "Opinions broadly agree."))
+        return "\n".join(lines)
     lines = ["【分析员观点】"]
     for o in opinions:
         if o.get("error"):

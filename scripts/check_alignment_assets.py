@@ -21,6 +21,7 @@ def check_assets():
     assert load_rules("config/screening_rules.yaml"), "默认规则缺失"
     assert len(load_profiles("config/scoring_profiles.yaml")) == 10, "默认评分策略缺失"
     assert load_skills(), "AI 策略资源缺失"
+    assert all(s.instructions_en for s in load_skills() if s.source == "builtin"), "内置策略英文规则缺失"
     cfg = load_config("config/settings.yaml.example")
     assert cfg["screening"]["profiles_file"] and cfg["screening"]["pipeline"]["enabled"]
     print("默认筛选、评分与AI策略资源验证通过")

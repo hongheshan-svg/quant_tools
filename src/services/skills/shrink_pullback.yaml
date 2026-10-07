@@ -13,3 +13,7 @@ instructions: |
   - 出场条件：反弹到前高附近分批止盈；止损：放量跌破 MA20 或跌破回踩低点 -3%。
   - 回避：均线走平或空头、回踩时放量、大盘防守/冰点、公告风险。
   - 对结论的影响：趋势结构完好且缩量才看多；给出具体支撑位和止损价。
+instructions_en: |
+  Require rising MA5>MA10>MA20, a retest of MA10/MA20 on materially shrinking volume (volume ratio below 0.8), and stable profitable chips. Be cautious if the medium-term price has already doubled.
+  Enter near the average after stabilization such as a long lower wick or small doji, with a clear stop. Take profits in batches near the prior high; stop on a high-volume break below MA20 or 3% below the retest low.
+  Avoid flat/bearish averages, high-volume pullbacks, defensive/frozen markets and announcement risks. Bullish direction requires both intact trend and shrinking volume; specify support and stop prices.

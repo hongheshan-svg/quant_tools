@@ -13,3 +13,7 @@ instructions: |
   - 出场条件：事件落地兑现（利好出尽）、市场不再关注、板块转弱；止损：跌破事件当日低点或 -6%。
   - 回避：传闻未证实、公司公告澄清、利好已连续炒作数日、同时有减持等对冲利空。
   - 对结论的影响：区分「预期阶段」和「兑现阶段」，兑现阶段偏谨慎；说明事件的时间窗口。
+instructions_en: |
+  Extract news/announcement catalysts such as orders, restructuring, policy, price increases or earnings growth. Verify credibility, significance, earnings support, sector resonance and whether price already rallied in anticipation.
+  Enter only a clear, quantifiable event with market confirmation (volume expansion and major inflows) not yet fully priced. Exit on realization/sell-the-news, lost attention or sector weakness. Stop below the event-day low or at a 6% loss.
+  Avoid unverified rumors, company denials, catalysts already traded for days and offsetting negative events such as shareholder reductions. Distinguish expectation from realization and state the event window; realization calls for caution.

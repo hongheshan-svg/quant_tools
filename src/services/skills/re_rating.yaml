@@ -14,3 +14,7 @@ instructions: |
   - 出场条件：估值修复到合理区间、业绩兑现后不及预期、催化事件落地；止损：跌破重估启动位 -7% 左右。
   - 回避：预期已被大幅炒作（股价提前翻倍）、业绩变脸风险、仅有概念无业绩支撑。
   - 对结论的影响：说明「预期差」在哪里、已被市场反映了多少；无法找到明确预期变化时不要硬编，给观望。
+instructions_en: |
+  Identify earnings surprises, a growth turning point, industry recovery, price increases, orders or policy catalysts. Compare PE/PB with historical and sector valuations only when supplied; require room below reasonable valuation and sector capital recognition.
+  Enter newly verified expectations while price/valuation have not repaired, with initial major inflows and a high-volume daily breakout. Exit after valuation repair, disappointing realization or catalyst completion. Stop near 7% below the re-rating launch level.
+  Avoid expectations already heavily traded (for example price doubled), earnings reversal risk and unsupported concepts. Explain the expectation gap and how much is priced in. Without a specific change, do not invent one; watch.

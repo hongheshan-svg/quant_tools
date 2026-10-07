@@ -14,3 +14,7 @@ instructions: |
   - 出场条件：上涨到前期密集成交区分批止盈；止损：跌破放量阳线低点或平台下沿 -5%。
   - 回避：放量下跌（出货）、基本面有硬伤（news、earnings 显示业绩大幅亏损或风险公告）、放量后立即回落。
   - 对结论的影响：低位 + 放量阳线 + 主力流入才给偏多；只有放量没有位置优势视为观望。
+instructions_en: |
+  Require a low base near the past six-month lows after a drawdown above 40%, followed by consolidation. Seek a bullish candle with volume ratio at least 2, preferably MACD bullish divergence, chips concentrating at low prices and sustained major fund inflows.
+  Enter in batches on a base breakout or a low-volume retest holding the high-volume candle low. Take profits near earlier dense trading zones; stop below the breakout candle low or 5% below the platform floor.
+  Avoid high-volume declines, severe earnings or announcement risks, and an immediate failed breakout. Require low location, bullish volume expansion and inflows together; volume expansion alone means watch.

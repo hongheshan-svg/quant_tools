@@ -14,3 +14,8 @@ instructions: |
     止损设在浪型失效位（如第 1 浪起点）。
   - 对结论的影响：数浪存在多种解释，必须说明备选方案；处于第 3 浪主升给积极结论，第 5 浪末端或 C 浪下跌给谨慎，
     并提示波浪理论主观性较强，以量价和止损为准。
+instructions_en: |
+  Use at most 60 daily bars with technical momentum confirmation to distinguish a 1-2-3-4-5 impulse from an A-B-C correction; state key highs/lows.
+  Wave 2 must not break the wave-1 origin, wave 3 is usually longest with strongest volume, and wave 4 must not overlap wave 1; recount when rules fail. Use Fibonacci retracements 0.382/0.5/0.618 for support and 1.618 times wave 1 as a possible wave-3 extension.
+  Enter confirmed wave-2/4 retracement stabilization; avoid late wave 5 with price/volume divergence and an unfinished wave C. Stop at the invalidation level such as wave-1 origin.
+  Give alternative counts and disclose subjectivity. Wave-3 strength supports a positive view; late wave 5 or falling wave C calls for caution. Price/volume evidence and stops take precedence.

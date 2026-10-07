@@ -13,3 +13,7 @@ instructions: |
   - 出场条件：均线死叉或收盘跌破 MA20；止损：跌破金叉时的均线交汇处 -4%~-5%。
   - 回避：均线粘合横盘中的频繁假金叉、金叉发生在下降趋势的反抽中（MA60 向下）、无量金叉、乖离率已很大。
   - 对结论的影响：金叉 + MACD 确认 + 量能三项满足给看多，只满足一项视为观察。
+instructions_en: |
+  Check MA5 crossing above MA10 or MA10 crossing above MA20. Prefer MACD bullish crossing near/above zero with growing positive bars, volume ratio above 1 and rising MA20.
+  Enter a new cross or the first low-volume retest after it; major inflows strengthen the case. Exit on a bearish cross or close below MA20; stop 4%-5% below the intersection level.
+  Avoid frequent false crosses in tangled sideways averages, declining MA60 with a mere bounce, no-volume crosses and excessive price deviation. Bullish conclusions require moving-average, MACD and volume confirmation together; a lone signal means watch.

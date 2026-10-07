@@ -13,3 +13,7 @@ instructions: |
   - 出场条件：放量滞涨或跌回平台内；止损：跌破突破位（平台上沿）-3%~-5%，收盘跌回平台视为假突破。
   - 回避：缩量突破、突破后长上影、大盘冰点或防守、公告有减持。
   - 对结论的影响：量能与收盘强度是核心，缩量或长上影降为观望。
+instructions_en: |
+  Seek a breakout of the 20-day platform or previous high, volume ratio at least 2, a close near the daily high and bullish or improving averages. More than 15% above MA20 adds chasing risk.
+  Enter on the breakout or a confirming retest holding the breakout level; major inflows and theme resonance help. Exit on high-volume stagnation or a return inside the platform. Stop 3%-5% below the breakout/ceiling; a close back inside indicates a false breakout.
+  Avoid shrinking-volume breakouts, long upper wicks, frozen/defensive markets and shareholder-reduction announcements. Volume and closing strength are core; absent confirmation means watch.

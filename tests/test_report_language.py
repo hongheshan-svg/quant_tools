@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import re
 from datetime import datetime
 
@@ -301,6 +302,92 @@ def test_run_analysts_lang_param():
     assert zh_llm.systems and not any("English" in s for s in zh_llm.systems)
 
 
+def _assert_english_instructions(prompt):
+    # 枚举为解析契约保留中文；其余指令必须是完整英文。
+    for enum in ("强烈看多", "强烈看空", "看多", "看空", "震荡", "中性", "高", "中", "低"):
+        prompt = prompt.replace(enum, "")
+    assert not CJK.search(prompt), prompt
+
+
+def test_english_diagnosis_uses_full_templates_and_scoped_facts(db_path):
+    svc, llm = _svc(db_path, extra={"diagnosis": {"mode": "full", "skill_consult": {"enabled": True, "max_skills": 2}}})
+    result = svc.diagnose("002594", force=True, skills=["bull_trend", "volume_breakout"])
+    assert not result.get("error"), result
+    assert len(llm.systems) == 6  # 三名分析员、两项策略、最终决策
+    for system in llm.systems:
+        _assert_english_instructions(system)
+    assert all("[Market phase]" in user and "[Quote]" in user for user in llm.users)
+    decision = llm.users[-1]
+    quote_line = next(line for line in decision.splitlines() if line.startswith("[Quote]"))
+    assert json.loads(quote_line.removeprefix("[Quote] "))["close"] == 23.6
+    assert "Web search is disabled" in decision
+    assert "negative news cannot be ruled out" in decision
+    assert "[Analyst opinions]" in decision
+    assert "股票：" not in decision and "【数据完整度】" not in decision
+    technical_user = next(user for user, system in zip(llm.users, llm.systems) if "technical analyst" in system)
+    intel_user = next(user for user, system in zip(llm.users, llm.systems) if "intelligence analyst" in system)
+    assert "[Technicals]" in technical_user and "[News]" not in technical_user
+    assert "[News]" in intel_user and "[Technicals]" not in intel_user
+
+
+def test_all_builtin_skills_have_english_rules_and_custom_rules_are_preserved(tmp_path):
+    from src.services.skill_consult import consult
+    from src.services.strategy_skills import load_skills, reset_cache
+
+    reset_cache()
+    skills = load_skills(custom_dir=tmp_path)
+    llm = RecLLM({"stance": "看多", "score": 70, "confidence": "中", "reason": "Evidence"})
+    opinions = consult(llm, "[Quote] 20", skills, lang="en")
+    assert len(opinions) == len(skills) == 19
+    for system in llm.systems:
+        _assert_english_instructions(system)
+    (tmp_path / "custom.yaml").write_text('name: custom\ndisplay_name: 自定义\ninstructions: 保留原有用户规则，不可擅自修改。\n')
+    custom = next(s for s in load_skills(custom_dir=tmp_path) if s.name == "custom")
+    custom_llm = RecLLM({})
+    consult(custom_llm, "snapshot", [custom], lang="en")
+    assert custom.instructions in custom_llm.systems[0]
+    assert "English" in custom_llm.systems[0]
+    reset_cache()
+
+
+def test_english_strategy_deliberation_keeps_original_enums():
+    from src.services.strategy_synthesis import synthesize
+
+    original = [{"skill": "a", "stance": "看多", "score": 90, "confidence": "高", "reason": "trend"},
+                {"skill": "b", "stance": "看空", "score": 10, "confidence": "高", "reason": "risk"}]
+    revised = [{**o, "stance": "中性", "score": 50, "confidence": "低", "reason": "Uncertain evidence"} for o in original]
+    llm = RecLLM({"opinions": revised})
+    result = synthesize(original, llm=llm, config={"enabled": True}, lang="en")
+    assert result["deliberation"]["resolution_status"] == "resolved"
+    assert result["original_opinions"] == original and result["revised_opinions"] == revised
+    _assert_english_instructions(llm.systems[0])
+
+
+@pytest.mark.parametrize("status,phrase", [("disabled", "disabled"), ("failed", "failed"), ("empty", "without matching results")])
+def test_english_news_disclosure_preserves_search_status(status, phrase):
+    from src.services.diagnosis_prompts import news_facts
+
+    facts = news_facts([], status)
+    assert facts["web_search_status"] == status and phrase in facts["coverage_note"]
+    assert "negative news" in facts["coverage_note"]
+
+
+def test_english_disagreement_and_partial_bar_guidance():
+    from src.services.diagnosis_agents import disagreement
+    from src.services.diagnosis_prompts import phase_facts
+
+    conflict = disagreement([
+        {"role": "technical", "label": "技术面分析员", "view": "看多", "score": 80, "confidence": "高"},
+        {"role": "risk", "label": "风险分析员", "view": "看空", "score": 40, "confidence": "低"},
+    ], lang="en")
+    assert "Bullish" in conflict and "Bearish" in conflict and "40 points" in conflict
+    assert not CJK.search(conflict)
+    facts = phase_facts({"phase": "morning", "label": "盘中", "is_partial_bar": True,
+                         "effective_daily_bar_date": "2026-09-29"}, "2026-09-25")
+    assert facts["label"] == "Intraday" and facts["is_partial_bar"] and facts["quote_stale"]
+    assert "incomplete" in facts["guidance"] and "do not invent" in facts["guidance"]
+
+
 # ---------- 大盘复盘 ----------
 
 REVIEW_REPLY = {"headline": "Shrinking volume", "trend": "down", "emotion": "weak", "main_lines": "none", "stance": "进攻",
@@ -441,6 +528,9 @@ def test_fund_diagnosis_directive(tmp_path, monkeypatch):
     result = FundDiagnosisService({**cfg, "report": {"language": "en"}}, llm=en_llm).diagnose("510300", force=True)
     assert not result.get("error"), result
     assert result["language"] == "en" and "English" in en_llm.systems[0]
+    _assert_english_instructions(en_llm.systems[0])
+    assert "[Instrument]" in en_llm.users[0] and "[Recent price history]" in en_llm.users[0]
+    assert "An index cannot be traded directly" in en_llm.users[0]
     assert "Position advice" in render_markdown(result)
     zh_llm = RecLLM(reply)
     zh = FundDiagnosisService(cfg, llm=zh_llm).diagnose("510300", force=True)

@@ -25,6 +25,9 @@ from src.services.run_log import RunLog, run_scope
 from src.utils.stock_code import diagnosis_code
 from src.utils.redaction import redact
 from src.services.execution_budget import ExecutionBudget
+from src.services.diagnosis_prompts import (
+    DECISION_ADDENDUM_EN, FUND_SYSTEM_PROMPT_EN, context_text, english_context, news_facts, phase_facts,
+)
 from src.services.decision_profile import normalize_profile
 from src.services.stock_diagnosis import (
     CACHE_MINUTES,
@@ -121,16 +124,18 @@ class FundDiagnosisService(StockDiagnosisService):
         cfg = self.config.get("diagnosis") or {}
         model = str((getattr(self.llm, "primary_cfg", None) or {}).get("model") or "")
         analyst_start = time.perf_counter()
-        opinions = run_analysts(self.llm, context["text"], str(cfg.get("mode", "single")), lang, budget=budget)
+        message = context_text(context, lang)
+        opinions = run_analysts(self.llm, message, str(cfg.get("mode", "single")), lang, budget=budget)
         if opinions:
             run_log.llm("分析员", model, True, (time.perf_counter() - analyst_start) * 1000)
-        conflict = disagreement(opinions)
-        message = context["text"]
+        conflict = disagreement(opinions, lang)
         if opinions:
-            message += "\n" + opinions_text(opinions, conflict)
+            message += "\n" + opinions_text(opinions, conflict, lang)
         decision_start = time.perf_counter()
         budget.check("决策")
-        raw = self.llm.chat_json(user_message=message, system_message=FUND_SYSTEM_PROMPT + (DECISION_ADDENDUM if opinions else "")
+        prompt = FUND_SYSTEM_PROMPT_EN if lang == "en" else FUND_SYSTEM_PROMPT
+        addendum = DECISION_ADDENDUM_EN if lang == "en" else DECISION_ADDENDUM
+        raw = self.llm.chat_json(user_message=message, system_message=prompt + (addendum if opinions else "")
                                   + language_directive(lang, DIAGNOSIS_ENUMS))
         run_log.llm("决策", model, bool(raw), (time.perf_counter() - decision_start) * 1000)
         budget.check("决策")
@@ -274,9 +279,18 @@ class FundDiagnosisService(StockDiagnosisService):
         review_section = self._signal_review_section(code)
         if review_section:
             sections.append(review_section)
+        text_en = english_context({
+            "股票": {"name": name, "code": code, "kind": kind}, "市场阶段": phase_facts(phase_ctx, quote.get("trade_date", "")), "行情": quote,
+            "近期走势": [{"trade_date": b.trade_date, "close": b.close, "volume": b.volume,
+                          "change_pct": b.change_pct} for b in bars[-RECENT_BARS:]],
+            "技术面": {"indicators": tech, "source_evidence": tech_text}, "对应主线": theme,
+            "大盘环境": regime, "相关资讯": news_facts(news_lines, web_status), "数据完整度": data_quality,
+            "Applicability": "Individual-stock fund flows, chips, earnings, announcements and holdings are not supplied. An index cannot be traded directly. No theme match is not bearish evidence.",
+            **({"Historical signal review": self._signal_review_section(code, "en")} if review_section else {}),
+        }) if report_language(self.config) == "en" else ""
         return {
             "code": code, "name": name, "kind": kind, "quote": quote, "tech": tech, "role": {}, "regime": regime,
-            "position": None, "real_position": None, "text": "\n".join(sections), "data_quality": data_quality,
+            "position": None, "real_position": None, "text": "\n".join(sections), "text_en": text_en, "data_quality": data_quality,
             "flow_text": "", "flow_ratio": None, "chip": None, "earnings_text": "", "earnings_risk": "",
             "risk_notices": [], "valuation_text": "",
             "news_evidence": news_lines, "web_status": web_status,

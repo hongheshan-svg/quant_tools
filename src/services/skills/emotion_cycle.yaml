@@ -14,3 +14,7 @@ instructions: |
     退潮期空仓或极轻仓，不接力高位股。
   - 对结论的影响：周期在退潮/冰点时，个股再强也只给观望或看空；周期在修复/发酵时才给积极结论，
     并指出当前阶段和判断依据；数据不足以判断周期时明说。
+instructions_en: |
+  Identify the short-term sentiment stage before analyzing the stock: frozen (few limit-ups, many limit-downs, low streak height), repair (more first limits, less loss), expansion (higher streaks, stronger sector effects), climax (broad gains, crowded high-level acceleration), retreat (leaders break, reopened limits rise, losses spread).
+  Use market breadth, limit-ups, theme ladders/stages and the stock's limit-up history. Late frozen/early repair permits small leader trials; expansion favors leaders and catch-up stocks; climax favors holding without chasing; retreat requires cash or very light allocation, with no high-level relay.
+  Frozen/retreat caps even a strong stock at watch or bearish. Positive conclusions require repair/expansion evidence. State the stage and evidence, or explicitly acknowledge insufficient data.

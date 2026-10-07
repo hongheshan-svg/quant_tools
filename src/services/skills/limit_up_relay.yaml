@@ -15,3 +15,8 @@ instructions: |
     止损：接力买入后次日跌破买入价 -3%~-5% 离场。
   - 回避：高位分歧加大、连板股大面积亏钱、冰点/防守环境、纯一字无法买入、公告有减持或立案风险。
   - 对结论的影响：主线龙头 + 强封板 + 环境配合才可给看多；缺任一项降为观望；环境不匹配时必须明确提示风险。
+instructions_en: |
+  Check streak height, seal time (before 10:00 is strong), reopened limits (0-1 preferable), one-price versus turnover limits, theme stage/leadership, market regime, breadth and the next-day premium of previous limit-ups.
+  Require a strong active theme, strong seal, at least three limit-up peers and an offensive/balanced market. Prefer a high-volume turnover first limit or second-limit relay; beyond three consecutive limits only an absolute sector leader qualifies.
+  Exit on failure to gap up the next day, a spike followed by reversal, failed seal or a broken leader streak. A next-day loss of 3%-5% from relay entry triggers exit.
+  Avoid high-level disagreements, widespread relay losses, frozen/defensive markets, unbuyable one-price limits, reductions of holdings or investigations. Missing leadership, seal strength or market support means watch with explicit risk.
