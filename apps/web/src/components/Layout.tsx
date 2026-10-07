@@ -8,6 +8,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { api } from '@/api/endpoints'
 import { useLang, useT } from '@/i18n'
 import { useThemeStore } from '@/stores/theme'
+import { toast } from '@/stores/toast'
 import { cn } from '@/utils/cn'
 import { ErrorBoundary } from './ErrorBoundary'
 import { StockSearch } from './StockSearch'
@@ -123,8 +124,8 @@ export function Layout({ authEnabled }: { authEnabled: boolean }) {
                 type="button"
                 aria-label={t('退出登录')}
                 onClick={async () => {
-                  await api.logout()
-                  window.location.reload()
+                  try { await api.logout(); window.location.reload() }
+                  catch (error) { toast.info(error instanceof Error ? error.message : String(error)) }
                 }}
                 className="rounded-md border border-line p-1.5 text-muted hover:text-text"
               >

@@ -6,6 +6,7 @@ import { Button, Card, ErrorBox, Field, Select, Spinner, Textarea } from '@/comp
 import { useApi } from '@/hooks/useApi'
 import { useT } from '@/i18n'
 import { toast } from '@/stores/toast'
+import { allowDiscardDrafts } from '@/utils/settingsDrafts'
 
 export function TemplatesPanel() {
   const t = useT()
@@ -13,6 +14,8 @@ export function TemplatesPanel() {
   const [name, setName] = useState('')
   const [text, setText] = useState('')
   const [custom, setCustom] = useState(false)
+  const [baselineRevision, setBaselineRevision] = useState(0)
+  useEffect(() => { window.dispatchEvent(new CustomEvent('settings:baseline-reset', { detail: 'templates' })) }, [baselineRevision])
   const [loaded, setLoaded] = useState(false)
   const [preview, setPreview] = useState<{ markdown: string; error?: string } | null>(null)
   const [busy, setBusy] = useState(false)
@@ -31,6 +34,7 @@ export function TemplatesPanel() {
       setText(r.text)
       setCustom(r.custom)
       setLoaded(true)
+      setBaselineRevision((value) => value + 1)
     }).catch((e) => toast.error(e instanceof Error ? e.message : String(e)))
     return () => { cancelled = true }
   }, [name])
@@ -69,6 +73,7 @@ export function TemplatesPanel() {
       setText(r.text)
       setCustom(r.custom)
       setPreview(null)
+      setBaselineRevision((value) => value + 1)
       toast.success(t('已恢复内置'))
       void list.reload()
     } catch (e) {
@@ -86,7 +91,7 @@ export function TemplatesPanel() {
       <p className="text-sm text-muted">{t('模板使用 Jinja2 语法；没有自定义模板时使用内置格式；模板出错时自动回退内置格式')}</p>
       <Card>
         <Field label="选择模板">
-          <Select aria-label={t('选择模板')} value={name} onChange={(e) => setName(e.target.value)}>
+          <Select aria-label={t('选择模板')} value={name} onChange={(e) => { if (allowDiscardDrafts()) setName(e.target.value) }}>
             {(list.data ?? []).map((x) => (
               <option key={x.name} value={x.name}>{t(x.label)}{x.custom ? ` (${t('自定义')})` : ''}</option>
             ))}

@@ -1,5 +1,5 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useState } from 'react'
+import { createBrowserRouter, RouterProvider, Route, Routes } from 'react-router-dom'
 import { api } from './api/endpoints'
 import type { AuthStatus } from './api/types'
 import { Layout } from './components/Layout'
@@ -28,6 +28,9 @@ const TradingPage = lazy(() => import('./pages/TradingPage').then((m) => ({ defa
 const UsagePage = lazy(() => import('./pages/UsagePage').then((m) => ({ default: m.UsagePage })))
 const WatchlistPage = lazy(() => import('./pages/WatchlistPage').then((m) => ({ default: m.WatchlistPage })))
 const WorkspacePage = lazy(() => import('./pages/WorkspacePage').then((m) => ({ default: m.WorkspacePage })))
+
+const AuthRouteContext = createContext(false)
+function AuthenticatedRoutes() { return <AppRoutes authEnabled={useContext(AuthRouteContext)} /> }
 
 
 export function AppRoutes({ authEnabled }: { authEnabled: boolean }) {
@@ -66,6 +69,7 @@ export default function App() {
   const [auth, setAuth] = useState<AuthStatus | null>(null)
   const [needLogin, setNeedLogin] = useState(false)
   const [authError, setAuthError] = useState('')
+  const [router] = useState(() => createBrowserRouter([{ path: '*', element: <AuthenticatedRoutes /> }]))
   const connect = useCallback(() => {
     setAuthError('')
     return api.authStatus().then((s) => {
@@ -88,9 +92,7 @@ export default function App() {
       {needLogin ? (
         <Suspense fallback={<Spinner />}><LoginPage passwordSet={auth.password_set} onLoggedIn={() => setNeedLogin(false)} /></Suspense>
       ) : (
-        <BrowserRouter>
-          <AppRoutes authEnabled={auth.auth_enabled} />
-        </BrowserRouter>
+        <AuthRouteContext.Provider value={auth.auth_enabled}><RouterProvider router={router} /></AuthRouteContext.Provider>
       )}
       <Toaster />
     </>

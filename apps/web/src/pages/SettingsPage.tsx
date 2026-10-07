@@ -17,6 +17,7 @@ import { ReportLanguageSection } from '@/pages/settings/ReportLanguageSection'
 import { ScreeningSettingsPanel } from '@/pages/settings/ScreeningSettingsPanel'
 import { toast } from '@/stores/toast'
 import { getDesktop, type DesktopInfo, type QuantDesktop } from '@/utils/desktop'
+import { SettingsDraftBoundary, SettingsNavigationGuard } from '@/components/SettingsDraftBoundary'
 
 type TabKey = 'llm' | 'screening' | 'notifier' | 'bot' | 'search' | 'intelligence' | 'scheduler' | 'templates' | 'backup' | 'security' | 'desktop'
 
@@ -27,6 +28,13 @@ export function SettingsPage() {
   const desktop = getDesktop()
   const [tab, setTab] = useState<TabKey>(() =>
     (['llm', 'screening', 'notifier', 'bot', 'search', 'intelligence', 'scheduler', 'templates', 'backup', 'security'] as string[]).includes(initialTab ?? '') || (initialTab === 'desktop' && desktop) ? (initialTab as TabKey) : 'llm')
+  const [visited, setVisited] = useState(() => new Set<TabKey>([tab]))
+  const [generation, setGeneration] = useState(0)
+  useEffect(() => {
+    const imported = () => { setGeneration((value) => value + 1); setVisited(new Set([tab])) }
+    window.addEventListener('settings:imported', imported)
+    return () => window.removeEventListener('settings:imported', imported)
+  }, [tab])
   const tabs: { key: TabKey; label: string }[] = [
     { key: 'llm', label: t('AI 模型') },
     { key: 'screening', label: t('选股策略') },
@@ -42,21 +50,26 @@ export function SettingsPage() {
   if (desktop) tabs.push({ key: 'desktop', label: t('桌面端') })
   return (
     <div>
+      <SettingsNavigationGuard />
       <PageHeader title={t('设置')} description={t('保存后立即生效；设置会写回 config/settings.yaml（文件中的注释会丢失）')} actions={<Link to="/setup" className="text-sm text-accent hover:underline">{t('配置向导')}</Link>} />
       <Card bodyClassName="p-3">
-        <Tabs value={tab} onChange={setTab} tabs={tabs} />
+        <Tabs value={tab} onChange={(key) => { setVisited((previous) => new Set([...previous, key])); setTab(key) }} tabs={tabs} />
         <div className="mb-2 flex justify-end"><HelpButton helpKey={tab} /></div>
-        {tab === 'llm' && <><LLMSettingsForm /><ReportLanguageSection /><DiagnosisSettingsSection /></>}
-        {tab === 'screening' && <ScreeningSettingsPanel />}
-        {tab === 'notifier' && <NotifierForm />}
-        {tab === 'bot' && <BotForm />}
-        {tab === 'search' && <SearchForm />}
-        {tab === 'intelligence' && <IntelligenceForm />}
-        {tab === 'scheduler' && <SchedulerPanel />}
-        {tab === 'templates' && <TemplatesPanel />}
-        {tab === 'backup' && <BackupPanel />}
-        {tab === 'security' && <SecurityForm />}
-        {tab === 'desktop' && desktop && <DesktopPanel desktop={desktop} />}
+        <div key={generation}>
+          {visited.has('llm') && <div hidden={tab !== 'llm'}><SettingsDraftBoundary id="llm" paths={['/settings/llm']}><LLMSettingsForm /></SettingsDraftBoundary><SettingsDraftBoundary id="report" paths={['/settings/report']}><ReportLanguageSection /></SettingsDraftBoundary><SettingsDraftBoundary id="diagnosis" paths={['/settings/diagnosis']}><DiagnosisSettingsSection /></SettingsDraftBoundary></div>}
+          {tabs.filter((item) => item.key !== 'llm' && visited.has(item.key)).map((item) => <div key={item.key} hidden={tab !== item.key}><SettingsDraftBoundary id={item.key} paths={item.key === 'security' ? ['/auth/password'] : [`/settings/${item.key}`]}>
+            {item.key === 'screening' && <ScreeningSettingsPanel />}
+            {item.key === 'notifier' && <NotifierForm />}
+            {item.key === 'bot' && <BotForm />}
+            {item.key === 'search' && <SearchForm />}
+            {item.key === 'intelligence' && <IntelligenceForm />}
+            {item.key === 'scheduler' && <SchedulerPanel />}
+            {item.key === 'templates' && <TemplatesPanel />}
+            {item.key === 'backup' && <BackupPanel />}
+            {item.key === 'security' && <SecurityForm />}
+            {item.key === 'desktop' && desktop && <DesktopPanel desktop={desktop} />}
+          </SettingsDraftBoundary></div>)}
+        </div>
       </Card>
     </div>
   )

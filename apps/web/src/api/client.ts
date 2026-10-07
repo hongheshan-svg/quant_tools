@@ -1,5 +1,6 @@
 // 统一请求封装：带 Cookie，错误转成 ApiError；401 时广播 auth:required 让页面跳转登录
 import { t } from '@/i18n'
+import { allowDiscardDrafts } from '@/utils/settingsDrafts'
 
 export const API_BASE = '/api/v1'
 
@@ -21,6 +22,9 @@ function detailOf(body: unknown, fallback: string): string {
 }
 
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  if ((path === '/settings/import' || path === '/auth/logout' || (path.startsWith('/settings/') && init.method === 'DELETE')) && !allowDiscardDrafts()) throw new ApiError('已取消，未保存草稿仍保留', 0)
+  const settingsWrite = ((path.startsWith('/settings/') && ['PUT', 'DELETE'].includes(init.method ?? '')) || path === '/auth/password') && !path.includes('/test')
+  if (settingsWrite) window.dispatchEvent(new CustomEvent('settings:save-start', { detail: path }))
   const headers = new Headers(init.headers)
   if (init.body && !(init.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
@@ -35,6 +39,8 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
     }
     throw new ApiError(message, res.status)
   }
+  if (settingsWrite && init.method !== 'DELETE' && !(body && typeof body === 'object' && ('error' in body || ('ok' in body && !body.ok)))) window.dispatchEvent(new CustomEvent('settings:saved', { detail: path }))
+  if (path === '/settings/import') window.dispatchEvent(new Event('settings:imported'))
   return body as T
 }
 
