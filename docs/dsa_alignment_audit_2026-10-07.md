@@ -1,5 +1,7 @@
 # daily_stock_analysis 全面复核（2026-10-07）
 
+> 本文保留修改前的审计与复现记录。下列 18 项的实现、最终验收和当前约束见[18 项对齐实施与验收](dsa_alignment_completion_2026-10-07.md)；本文“缺失/未实现”等判断指审计基线，不代表最新代码。
+
 ## 基线与结论
 
 本次重新获取并读取 [ZhuLinsen/daily_stock_analysis](https://github.com/ZhuLinsen/daily_stock_analysis)，固定上游为 [`ce364e457aab288863a5707e7b3df79786ad07f2`](https://github.com/ZhuLinsen/daily_stock_analysis/commit/ce364e457aab288863a5707e7b3df79786ad07f2)，提交时间 2026-10-05 15:52:26 +08:00。相比此前参考的 `be148f39`，上游增加了 **22 个提交**。本地比较对象是已经推送的 `44936fc4bcf9ef76122dc647dc68e859079a8408`。
