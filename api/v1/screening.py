@@ -107,3 +107,9 @@ def backtest(days: int = Query(60, ge=10, le=365), tasks: TaskManager = Depends(
 def screening_runs(limit: int = Query(20, ge=1, le=100), pipeline: PipelineService = Depends(get_pipeline)) -> list[dict]:
     from src.strategy.screener import StrategyScreener
     return StrategyScreener(pipeline.config).runs(limit)
+
+
+@router.get("/source-history")
+def screening_source_history(limit: int = Query(30, ge=1, le=100), pipeline: PipelineService = Depends(get_pipeline)) -> dict:
+    from src.strategy.screener import StrategyScreener
+    return StrategyScreener(pipeline.config).source_history(limit)

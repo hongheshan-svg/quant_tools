@@ -8,6 +8,8 @@ from __future__ import annotations
 import time
 import threading
 import uuid
+from datetime import datetime, timedelta
+from loguru import logger
 from contextvars import ContextVar
 from functools import wraps
 from contextlib import contextmanager
@@ -17,6 +19,17 @@ from src.utils.redaction import redact_text
 TRACE_ID = ContextVar("research_trace_id", default="")
 EVENT_SINK = ContextVar("research_event_sink", default=None)
 ACTIVE_LOG = ContextVar("research_run_log", default=None)
+
+
+def emit_event(event: dict, sink=None) -> None:
+    """观察者失败不能改变业务结果；仅记录脱敏警告。"""
+    target = sink if sink is not None else EVENT_SINK.get()
+    if target is not None:
+        try:
+            from src.utils.redaction import redact
+            target(redact(event))
+        except Exception as error:
+            logger.warning("运行事件接收失败：{}", redact_text(error, 160))
 
 
 @contextmanager
@@ -65,6 +78,7 @@ class RunLog:
         self._steps: list[dict[str, Any]] = []
         self._started = time.perf_counter()
         self.model = ""
+        self.truncated = False
         self.trace_id = TRACE_ID.get() or uuid.uuid4().hex
         self._lock = threading.RLock()
         self._sink = EVENT_SINK.get()
@@ -74,13 +88,18 @@ class RunLog:
     def _append(self, name: str, ok: bool, ms: int, detail: str, kind: str, metadata: dict | None = None) -> None:
         event = {"name": redact_text(name, MAX_DETAIL), "kind": kind, "ok": bool(ok), "ms": int(ms), "detail": redact_text(detail, MAX_DETAIL)}
         if metadata is not None:
-            event["metadata"] = metadata
+            from src.utils.redaction import redact
+            event["metadata"] = redact(metadata)
         with self._lock:
             if len(self._steps) >= MAX_STEPS:
+                self.truncated = True
                 return
+            ended = datetime.now()
+            event.update(id=f"{self.trace_id}:step:{len(self._steps) + 1}",
+                         started_at=(ended - timedelta(milliseconds=max(ms, 0))).isoformat(), ended_at=ended.isoformat())
             self._steps.append(event)
         if self._sink:
-            self._sink({"type": "step", "trace_id": self.trace_id, **event})
+            emit_event({"type": "step", "trace_id": self.trace_id, **event}, self._sink)
 
     @contextmanager
     def step(self, name: str) -> Iterator[_Step]:
@@ -114,9 +133,13 @@ class RunLog:
                      str(attempt.get("error") or ""), "provider", metadata)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        result = {
+            "version": 1, "truncated": self.truncated,
             "trace_id": self.trace_id,
             "steps": list(self._steps),
             "total_ms": int((time.perf_counter() - self._started) * 1000),
             "model": self.model,
         }
+        from src.services.run_diagnostics import snapshot
+        result["diagnostics"] = snapshot(result)
+        return result

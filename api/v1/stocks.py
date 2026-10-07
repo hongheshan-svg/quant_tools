@@ -223,3 +223,10 @@ def diagnose(code: str, tasks: TaskManager = Depends(get_tasks), pipeline: Pipel
     code = fund["code"] if fund else bare_code(code)
     return tasks.submit("diagnosis", pipeline.diagnose_stock, code, True, dedupe_key=f"diagnosis:{code}", subject={"codes": [code]},
                         result_error=business_result_error, label=f"AI 诊断 {fund['name'] if fund else code}")
+
+
+@router.get("/diagnoses/{diagnosis_id}/flow")
+@router.get("/diagnoses/{diagnosis_id}/diagnostics")
+def diagnosis_flow(diagnosis_id: int, pipeline: PipelineService = Depends(get_pipeline)) -> dict:
+    from src.services.run_diagnostics import snapshot
+    return snapshot(_get_or_404(pipeline, diagnosis_id).get("run_log"))

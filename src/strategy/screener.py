@@ -396,6 +396,23 @@ class StrategyScreener:
         return hashlib.sha256(json.dumps(definition, ensure_ascii=False, sort_keys=True, allow_nan=False).encode()).hexdigest()
 
     def run(self, trade_date: str | None = None, save: bool = True, point_in_time: bool = False) -> ScreenResult:
+        from src.services.screening_sources import capture_sources
+        from src.utils.redaction import redact_text
+        with capture_sources() as capture:
+            try:
+                result = self._run(trade_date, save, point_in_time)
+            except Exception as error:
+                if save:
+                    failed = ScreenResult(trade_date=trade_date or "", status="error", notes=[redact_text(error, 200)])
+                    failed.pipeline["sources"] = capture.finish()
+                    self._record_run(failed, "error")
+                raise
+            result.pipeline["sources"] = capture.finish()
+            if save:
+                self._record_run(result, result.status)
+            return result
+
+    def _run(self, trade_date: str | None = None, save: bool = True, point_in_time: bool = False) -> ScreenResult:
         """point_in_time=True 用于历史回测：只用 trade_date 当天及以前的数据，策略权重不生效。"""
         trading_calendar.load(self.db_path, refresh=False)
         from src.services.market_phase import current_phase
@@ -411,6 +428,8 @@ class StrategyScreener:
             from src.services.data_freshness import daily_quality
             date_quality = daily_quality(trade_date, historical=historical)
             snapshot = self._snapshot(session, trade_date)
+            from src.services.screening_sources import local_snapshot
+            local_snapshot(snapshot.values())
             pool = [r for r in snapshot.values() if self._in_pool(r)]
             candidates = [r for r in pool if (r.amount or 0) >= PRE_FILTER_AMOUNT]
             bars = self._history(session, trade_date, [r.code for r in candidates])
@@ -477,7 +496,6 @@ class StrategyScreener:
         if save:
             if complete:
                 self._save(result)
-            self._record_run(result, result.status)
         logger.info(f"策略选股 {trade_date}：全市场 {len(snapshot)} 只 → 股票池 {len(pool)} → 入选 {len(result.picks)} 只")
         return result
 
@@ -709,6 +727,17 @@ class StrategyScreener:
         from src.database.models import ScreeningRun
         with get_db_session(self.db_path) as session:
             return [{"id": row.id, "trade_date": row.trade_date, "status": row.status, "created_at": row.created_at.isoformat(), **json.loads(row.result_json)} for row in session.query(ScreeningRun).order_by(ScreeningRun.id.desc()).limit(limit)]
+
+    def source_history(self, limit: int = 30) -> dict:
+        runs = self.runs(max(1, min(limit, 100)))
+        items = [{"id": row["id"], "trade_date": row["trade_date"], "status": row["status"],
+                  "created_at": row["created_at"], "sources": row.get("pipeline", {}).get("sources")}
+                 for row in runs]
+        return {"items": items, "summary": {
+            "runs": len(items), "recorded": sum(r["sources"] is not None for r in items),
+            "success": sum((r["sources"] or {}).get("success", 0) for r in items),
+            "failure": sum((r["sources"] or {}).get("failure", 0) for r in items),
+            "fallback_runs": sum(bool((r["sources"] or {}).get("fallback_datasets")) for r in items)}}
 
     # ---- 数据 ----
 

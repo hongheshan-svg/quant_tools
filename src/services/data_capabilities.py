@@ -162,10 +162,56 @@ def capabilities(config: dict) -> list[dict[str, Any]]:
     return result
 
 
+# 按已接入的提供方接口登记能力，不能用数据集名字推测第三方支持范围。
+_PROVIDER_CAPS = {}
+
+
+def _register(dataset, providers, kinds, scenarios, *, exchanges=("SH", "SZ", "BJ"), scope="symbol", adjustment="not_applicable"):
+    for provider in providers:
+        _PROVIDER_CAPS[(dataset, provider)] = {
+            "markets": ["CN"], "exchanges": list(exchanges), "asset_kinds": list(kinds),
+            "scenarios": list(scenarios), "scope": scope, "adjustment": adjustment,
+        }
+
+
+_register("实时行情", REALTIME_LABELS, ["stock"], ["watchlist", "diagnosis", "stock_screening", "portfolio_valuation"], scope="whole_market")
+_register("个股日线", ["tencent", "sina", "eastmoney", "efinance", "tickflow"], ["stock"], ["diagnosis", "stock_screening", "portfolio_valuation"], adjustment="forward")
+_register("个股日线", ["pytdx", "tushare"], ["stock"], ["diagnosis", "stock_screening"], adjustment="none")
+_register("个股日线", ["baostock"], ["stock"], ["diagnosis", "stock_screening"], exchanges=("SH", "SZ"), adjustment="forward")
+_register("季度基本面", ["sina", "indicator"], ["stock"], ["diagnosis", "stock_screening"])
+_register("分红事件", ["新浪"], ["stock"], ["diagnosis", "stock_screening"])
+_register("涨停池", ["东方财富涨停池", "东方财富强势股池(仅涨停)"], ["stock"], ["stock_screening"], scope="whole_market")
+_register("涨停原因", ["同花顺"], ["stock"], ["diagnosis", "stock_screening"], scope="whole_market")
+_register("个股资金流", ["同花顺", "东方财富"], ["stock"], ["diagnosis", "stock_screening"], scope="whole_market")
+_register("个股资金流补充", ["miaoxiang"], ["stock"], ["diagnosis", "chat"])
+_register("筹码分布", ["eastmoney", "miaoxiang"], ["stock"], ["diagnosis", "chat"])
+_register("筹码分布", ["local"], ["stock"], ["diagnosis"], scope="local_estimate")
+_register("基金日线", ["tencent"], ["etf", "index"], ["diagnosis", "etf_rotation", "portfolio_valuation"], exchanges=("SH", "SZ"), adjustment="etf_forward_index_none")
+_register("基金日线", ["csindex", "cnindex"], ["index"], ["diagnosis"], exchanges=(), adjustment="none")
+_register("股东数据", ["东方财富"], ["stock"], ["diagnosis", "chat"])
+_register("联网搜索", news_search.PROVIDERS, ["news"], ["diagnosis", "chat", "market_review"], exchanges=(), scope="search")
+
+
+def provider_capability(dataset: str, provider: str, config: dict) -> dict:
+    from copy import deepcopy
+    result = deepcopy(_PROVIDER_CAPS.get((dataset, provider), {
+        "markets": [], "exchanges": [], "asset_kinds": [], "scenarios": [], "scope": "unknown", "adjustment": "unknown"}))
+    if dataset == "RSS 资讯源":
+        result.update(asset_kinds=["news"], scenarios=["intelligence"], scope="configured_feed")
+    if (dataset, provider) == ("个股日线", "tickflow"):
+        result["adjustment"] = (config.get("data_sources") or {}).get("tickflow_kline_adjust", "forward")
+    result["scenarios_by_asset"] = {kind: list(result["scenarios"]) for kind in result["asset_kinds"]}
+    if (dataset, provider) == ("基金日线", "tencent"):
+        result["scenarios_by_asset"]["index"] = ["diagnosis"]
+        result["scope"] = "registered_etf_and_index"
+    return result
+
+
 def data_center(config: dict) -> dict:
-    """只读能力矩阵与本地可用性；不探测供应商、不修改配置、密钥不出现在结果中。"""
+    """声明能力、健康时间和实际批次来源相互独立；不联网、不返回密钥。"""
     import os
     from datetime import datetime
+    from sqlalchemy import func
     from src.database.db import get_db_session
     from src.database.models import StockDaily, FundDaily, StockFundFlow
     from src.services.data_freshness import daily_quality
@@ -173,29 +219,31 @@ def data_center(config: dict) -> dict:
     matrices = []
     for dataset in datasets:
         name = dataset["dataset"]
-        kinds = ["etf", "index"] if name == "基金日线" else ["market"] if name in {"涨停池", "涨停原因"} else ["stock"] if name not in {"联网搜索", "RSS 资讯源"} else ["stock", "etf", "index", "market"]
-        scenarios = ["watchlist", "diagnosis", "chat"]
-        if name in {"实时行情", "个股日线", "季度基本面", "涨停池", "涨停原因", "个股资金流"}:
-            scenarios += ["stock_screening"]
-        if name in {"实时行情", "个股日线", "基金日线"}: scenarios += ["portfolio_valuation"]
         for priority, source in enumerate(dataset["sources"], 1):
-            supported = ["index"] if source["name"] in {"csindex", "cnindex"} else kinds
             order_key = {"实时行情": "REALTIME", "个股日线": "DAILY_HISTORY"}.get(name)
             credential_key = {"tushare": "TUSHARE_TOKEN", "tickflow": "TICKFLOW_API_KEY", "miaoxiang": "MIAOXIANG_API_KEY"}.get(source["name"])
             env_keys = ["QUANT__DATA_SOURCES__" + key for key in (order_key, credential_key) if key]
             origin = "environment_override" if any(key in os.environ for key in env_keys) else "file_or_default"
-            matrices.append({"provider": source["name"], "provider_label": source["label"], "dataset": name, "markets": ["CN"],
-                             "asset_kinds": supported, "scenarios": scenarios, "priority": priority,
-                             "configuration_origin": origin, "configured": source["configured"], "health": source["health"], "limitations": source["note"],
-                             "north_exchange_supported": source["name"] != "baostock" if name == "个股日线" else None,
-                             "observation_timestamp": None, "fetched_at": source["health"]["last_success"]})
+            cap = provider_capability(name, source["name"], config)
+            matrices.append({"provider": source["name"], "provider_label": source["label"], "dataset": name, **cap,
+                "priority": priority, "configuration_origin": origin, "configured": source["configured"],
+                "health": source["health"], "limitations": source["note"],
+                "north_exchange_supported": "BJ" in cap["exchanges"] if "stock" in cap["asset_kinds"] else None,
+                "observation_timestamp": None, "fetched_at": None,
+                "health_checked_at": max(filter(None, [source["health"]["last_success"], source["health"]["last_failure"]]), default=None)})
     snapshots = []
     for model, dataset in ((StockDaily, "个股日线"), (FundDaily, "基金日线"), (StockFundFlow, "个股资金流")):
         with get_db_session((config.get("database") or {}).get("sqlite_path", "data/quant.db")) as session:
             row = session.query(model).order_by(model.trade_date.desc(), model.updated_at.desc()).first()
             quality = daily_quality(row.trade_date if row else None, row.updated_at if row else None)
-            count = session.query(model).filter(model.trade_date == row.trade_date).count() if row else 0
-            snapshots.append({"dataset": dataset, **quality, "rows_on_date": count,
-                              "scope": "database_latest_date", "note": "最新日期的样本行不能证明全市场完整覆盖；配置及健康成功不能替代数据质量"})
+            groups = session.query(model.source, func.count(model.id), func.count(func.distinct(model.code)),
+                func.min(model.updated_at), func.max(model.updated_at)).filter(model.trade_date == row.trade_date).group_by(model.source).all() if row else []
+            sources = [{"source": source or "unknown", "rows": count, "symbols": symbols,
+                "first_fetched_at": first.isoformat() if first else None, "last_fetched_at": last.isoformat() if last else None}
+                for source, count, symbols, first, last in groups]
+            snapshots.append({"dataset": dataset, **quality, "rows_on_date": sum(g[1] for g in groups),
+                "representative_code": row.code if row else None, "source": row.source if row else None,
+                "sources": sources, "mixed_sources": len(sources) > 1, "coverage": "observed_rows_only",
+                "scope": "database_latest_date", "note": "以下为实际存储行来源；覆盖数不代表全市场完整，健康检查时间不代表数据取得时间"})
     return {"as_of": datetime.now().isoformat(), "read_only": True, "datasets": datasets, "matrix": matrices, "snapshots": snapshots,
             "unsupported": ["overseas_equities", "multi_currency_portfolio", "miaoxiang_daily", "miaoxiang_whole_market_quotes"]}

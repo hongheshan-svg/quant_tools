@@ -122,7 +122,16 @@ class TaskManager:
             progress = {"text": str(values[0]) if values else ""}
         with self._lock:
             if task_id in self._tasks:
-                self._tasks[task_id]["progress"] = progress
+                task = self._tasks[task_id]
+                event = dict(progress.get("event") or {"type": "progress", **progress})
+                event.setdefault("id", f"{task['trace_id']}:event:{task['revision'] + 1}")
+                event.setdefault("at", datetime.now().isoformat())
+                history = task.setdefault("flow_events", [])
+                history.append(event)
+                if len(history) > 200:
+                    del history[0]
+                    task["flow_events_dropped"] = task.get("flow_events_dropped", 0) + 1
+                task["progress"] = progress
                 self._tasks[task_id]["revision"] += 1
                 self._persist(self._tasks[task_id])
                 self._changed.notify_all()

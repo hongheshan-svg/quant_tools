@@ -81,6 +81,10 @@ def test_diagnose_has_run_log_and_persists(db_path):
         assert row.run_log
         stored = json.loads(row.run_log)
     assert any(s["name"] == "决策" for s in stored["steps"])
+    assert any(s["kind"] == "save" for s in stored["steps"])
+    assert stored == result["run_log"]
+    history = DataQueryService(db_path).get_diagnosis(result["diagnosis_id"])
+    assert history["run_log"] == history["result"]["run_log"] == stored
 
 
 def test_build_context_text_unchanged_by_run_log(db_path):
@@ -197,3 +201,46 @@ def test_api_trend_and_validation(env):
     assert client.get("/api/v1/stocks/600519/diagnosis-trend").status_code == 200
     assert client.get("/api/v1/stocks/600519/diagnosis-trend", params={"days": 0}).status_code == 422
     assert client.get("/api/v1/stocks/600519/diagnosis-trend", params={"days": 731}).status_code == 422
+
+
+def test_run_flow_api_legacy_and_latest_contract(env):
+    from src.services.run_log import execution_trace
+    client, _, config = env
+    with execution_trace("audit-flow"):
+        log = RunLog()
+        log.add("完成", True, 3, "api_key=private-secret")
+        log._append("报告保存", True, 1, "", "save")
+    i = _add(config, "600519", datetime.now(), run_log=log.to_dict())
+    flow = client.get(f"/api/v1/stocks/diagnoses/{i}/flow")
+    assert flow.status_code == 200
+    assert flow.json()["nodes"][-1]["lane"] == "save"
+    assert "private-secret" not in flow.text
+    assert client.get(f"/api/v1/stocks/diagnoses/{i}/diagnostics").json() == flow.json()
+    assert client.get('/api/v1/stocks/diagnoses/999999/flow').status_code == 404
+    assert client.get('/api/v1/tasks/unknown/flow').status_code == 404
+    old = _add(config, "000001", datetime.now())
+    assert client.get(f"/api/v1/stocks/diagnoses/{old}/flow").json()["status"] == "unknown"
+
+
+def test_source_history_and_task_flow_endpoints(env):
+    from tests.test_api import _wait
+    from src.strategy.screener import ScreenResult, StrategyScreener
+    client, app, config = env
+    screener = StrategyScreener(config)
+    screener._record_run(ScreenResult(trade_date='2026-09-18', status='partial'), 'partial')
+    response = client.get('/api/v1/screening/source-history')
+    assert response.status_code == 200
+    assert response.json()['summary'] == {'runs': 1, 'recorded': 0, 'success': 0, 'failure': 0, 'fallback_runs': 0}
+    assert response.json()['items'][0]['sources'] is None
+    assert client.get('/api/v1/screening/source-history?limit=101').status_code == 422
+    def worker(progress):
+        progress({'type': 'step', 'name': '已完成取数', 'ok': True})
+        raise RuntimeError('token=private-secret')
+    task = app.state.tasks.submit('audit', worker)
+    done = _wait(client, task)
+    assert done['status'] == 'error'
+    flow = client.get(f"/api/v1/tasks/{task['id']}/flow")
+    assert flow.status_code == 200 and flow.json()['status'] == 'failed'
+    assert flow.json()['nodes'][0]['name'] == '已完成取数'
+    assert 'private-secret' not in flow.text
+    assert client.get(f"/api/v1/tasks/{task['id']}/diagnostics").json() == flow.json()

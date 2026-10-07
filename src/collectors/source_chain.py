@@ -75,7 +75,7 @@ class SourceHealthRegistry:
             for row in reversed(rows):
                 self.record(row.dataset, row.source, row.success, row.error or "", row.elapsed, emit=False, persist=False, at=row.created_at)
 
-    def record(self, dataset: str, source: str, ok: bool, error: str = "", elapsed: float | None = None, *, emit: bool = True, persist: bool = True, at: datetime | None = None) -> None:
+    def record(self, dataset: str, source: str, ok: bool, error: str = "", elapsed: float | None = None, *, emit: bool = True, persist: bool = True, at: datetime | None = None, capture_trace: bool = True) -> None:
         now = at or datetime.now()
         with self._lock:
             rec = self._records.setdefault(
@@ -94,9 +94,12 @@ class SourceHealthRegistry:
                 rec["consecutive_failures"] += 1
                 rec["total_failure"] += 1
                 rec["last_error"] = redact_text(error or "无数据", ERROR_MAX_CHARS)
-        from src.services.run_log import EVENT_SINK, TRACE_ID
+        from src.services.screening_sources import source_attempt
+        if emit and capture_trace:
+            source_attempt(dataset, {"source": source, "ok": bool(ok), "error": redact_text(error, 200), "ms": int((elapsed or 0) * 1000)})
+        from src.services.run_log import EVENT_SINK, TRACE_ID, emit_event
         if emit and EVENT_SINK.get():
-            EVENT_SINK.get()({"type": "source_health", "dataset": dataset, "source": source,
+            emit_event({"type": "source_health", "trace_id": TRACE_ID.get(), "dataset": dataset, "source": source,
                               "ok": bool(ok), "error": redact_text(error, 200), "elapsed": elapsed})
         if persist and self._db_path:
             from src.database.db import get_db_session
@@ -184,7 +187,7 @@ def fetch_with_fallback(
                 if is_valid(data):
                     elapsed = time.monotonic() - started
                     breaker.record_success(name)
-                    source_health.record(dataset, name, True, elapsed=elapsed)
+                    source_health.record(dataset, name, True, elapsed=elapsed, capture_trace=False)
                     result.errors.pop(name, None)
                     count = len(data) if hasattr(data, "__len__") else 1
                     result.attempts.append({"source": name, "attempt": attempt, "ok": True, "ms": int(elapsed * 1000), "record_count": count})
@@ -204,7 +207,7 @@ def fetch_with_fallback(
                 time.sleep(min(retry_wait, max(0, expires - time.monotonic())))
         if count_empty_failures or result.errors.get(name) != NO_DATA:
             breaker.record_failure(name, result.errors.get(name, ""))
-        source_health.record(dataset, name, False, result.errors.get(name, ""), time.monotonic() - started)
+        source_health.record(dataset, name, False, result.errors.get(name, ""), time.monotonic() - started, capture_trace=False)
 
     with _state_lock:
         cached = _last_good.get(key)
@@ -218,6 +221,8 @@ def fetch_with_fallback(
 
 
 def _trace_attempt(dataset: str, attempt: dict) -> None:
+    from src.services.screening_sources import source_attempt
+    source_attempt(dataset, attempt)
     from src.services.run_log import ACTIVE_LOG
     log = ACTIVE_LOG.get()
     if log is not None:

@@ -1050,3 +1050,14 @@ def settings_schema() -> dict:
             result.append(entry)
         return result
     return {"fields": fields(defaults), "scheduler": SchedulerSettings.model_json_schema()}
+
+
+@router.get("/tasks/{task_id}/flow")
+@router.get("/tasks/{task_id}/diagnostics")
+def task_flow(task_id: str, tasks: TaskManager = Depends(get_tasks)) -> dict:
+    from src.services.run_diagnostics import snapshot
+    task = tasks.get(task_id)
+    if task is None:
+        raise not_found("任务不存在")
+    result = task.get("result")
+    return snapshot(result.get("run_log") if isinstance(result, dict) else None, task=task)
