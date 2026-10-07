@@ -1,0 +1,18 @@
+{
+  "settings": {
+    "pending_input_disabled": true,
+    "concurrent_import_blocked": true,
+    "final_value": 29
+  },
+  "source_batch": "mixed sources visible, health timestamps separate",
+  "etf": {
+    "short_history_metrics_hidden": true,
+    "defensive_missing_cash": true
+  },
+  "diagnostics": {
+    "save_step_persisted": true,
+    "clipboard_summary": true
+  },
+  "failed_task_flow": true,
+  "page_errors": []
+}

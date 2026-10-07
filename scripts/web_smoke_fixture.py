@@ -91,4 +91,7 @@ class OfflineLLM:
     def chat_stream(self, user_message, system_message='', **kwargs):
         yield json.dumps({'answer': '隔离问股回答：已按指定范围完成只读研究。'}, ensure_ascii=False)
 app.state.chat_store._factory = lambda cfg: StockChatSession(cfg, llm=OfflineLLM())
+if os.environ.get('QUANT_AUDIT_FIXES') == '1':
+    from scripts.dsa_fix_fixture import seed
+    seed(app)
 uvicorn.run(app, host='127.0.0.1', port=int(sys.argv[1]) if len(sys.argv) > 1 else 8766, log_level='warning')
