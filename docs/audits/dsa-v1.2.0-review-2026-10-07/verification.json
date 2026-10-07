@@ -1,0 +1,62 @@
+{
+  "audit_date": "2026-10-07",
+  "local_baseline": {
+    "tag": "v1.2.0",
+    "commit": "976920ab254e08a6ef6e4096eb2a89fbabf3906c"
+  },
+  "upstream": {
+    "repository": "ZhuLinsen/daily_stock_analysis",
+    "commit": "ce364e457aab288863a5707e7b3df79786ad07f2",
+    "commit_date": "2026-10-05T07:52:26Z"
+  },
+  "related_tests": {
+    "passed": 105,
+    "warnings": 4,
+    "full_suite": false,
+    "files": [
+      "test_dsa_audit_regressions.py",
+      "test_dsa_trace_regressions.py",
+      "test_web_intent_stages.py",
+      "test_alignment_data_contracts.py",
+      "test_portfolio_nav_quality.py",
+      "test_research_alignment.py",
+      "test_full_alignment.py"
+    ]
+  },
+  "offline_probes": {
+    "completed_scenarios": 8,
+    "scenario_keys": [
+      "shared_context_freshness",
+      "mixed_ambiguity_confirmation",
+      "etf_profile_portfolio",
+      "expired_signal_profile",
+      "legacy_skill_weights",
+      "review_memory_coverage",
+      "unverified_calendar_freezes_outcome",
+      "market_timezone"
+    ],
+    "network": "blocked",
+    "database": "temporary",
+    "calendar": "synthetic"
+  },
+  "browser_probe": {
+    "completed_scenarios": 1,
+    "page_errors": [],
+    "unsaved_edit_lost": true,
+    "external_browser_requests": "blocked",
+    "service_config": "temporary",
+    "live_model_calls": false
+  },
+  "release_rechecked": {
+    "workflow_run": 37583590548,
+    "conclusion": "success",
+    "successful_jobs": 16,
+    "assets": 14,
+    "draft": false,
+    "prerelease": false
+  },
+  "finding_groups": 8,
+  "scope_extension_groups": 6,
+  "business_code_changed": false,
+  "real_provider_or_cross_os_install_validation": false
+}

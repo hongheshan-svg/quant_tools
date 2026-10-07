@@ -1,0 +1,9 @@
+{
+  "settings_refresh_race": {
+    "input_enabled_while_refresh_pending": true,
+    "draft_before_response": "audit-unsaved-model",
+    "draft_after_response": "audit-saved-model",
+    "unsaved_edit_lost": true
+  },
+  "page_errors": []
+}

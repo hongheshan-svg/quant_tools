@@ -1,0 +1,173 @@
+{
+  "shared_context_freshness": {
+    "expected_quality": {
+      "status": "stale",
+      "trade_date": "2026-09-25",
+      "expected_date": "2026-09-30",
+      "fetched_at": "2026-09-25T16:00:00",
+      "is_partial_bar": false,
+      "limitations": [
+        "stale_quote"
+      ]
+    },
+    "pack_phase": {},
+    "quote_status": "available",
+    "daily_status": "available"
+  },
+  "mixed_ambiguity_confirmation": {
+    "before_targets": [
+      {
+        "code": "600519",
+        "name": "贵州茅台",
+        "kind": "stock"
+      }
+    ],
+    "candidates": [
+      {
+        "code": "601318",
+        "name": "中国平安",
+        "kind": "stock"
+      },
+      {
+        "code": "000001",
+        "name": "平安银行",
+        "kind": "stock"
+      }
+    ],
+    "after_tasks": [
+      {
+        "kind": "stock_analysis",
+        "question": "分析贵州茅台和平安",
+        "targets": [
+          {
+            "code": "000001",
+            "name": "平安银行",
+            "kind": "stock"
+          }
+        ]
+      }
+    ],
+    "requires_confirmation": false
+  },
+  "etf_profile_portfolio": {
+    "ledger_position": [
+      {
+        "code": "510300",
+        "quantity": 100,
+        "market_price": 4.0,
+        "price_quality": {
+          "status": "available",
+          "trade_date": "2026-09-30",
+          "expected_date": "2026-09-30",
+          "fetched_at": "2026-09-30T16:00:00",
+          "is_partial_bar": false,
+          "limitations": []
+        }
+      }
+    ],
+    "profile_portfolio": {
+      "status": "unavailable",
+      "limitations": [
+        "not_tradable"
+      ]
+    }
+  },
+  "expired_signal_profile": {
+    "profile": {
+      "status": "fresh",
+      "limitations": [],
+      "data": {
+        "active": [
+          {
+            "id": 1,
+            "action": "buy",
+            "action_label": "买入",
+            "status": "active",
+            "trade_date": "2026-09-01",
+            "expires_on": "2026-09-10",
+            "stop_loss": null,
+            "target_price": null,
+            "ret_1d": null,
+            "ret_3d": null
+          }
+        ],
+        "review": {
+          "samples": 0,
+          "hit_rate": null,
+          "avg_ret": null,
+          "text": "样本不足（0 条）"
+        }
+      }
+    },
+    "risk_summary": {
+      "status": "available",
+      "signals": {}
+    }
+  },
+  "legacy_skill_weights": {
+    "performance": [
+      {
+        "skill": "volume_breakout",
+        "display_name": "放量突破",
+        "samples": 30,
+        "hits": 30,
+        "hit_rate": 100.0,
+        "avg_ret": 5.0,
+        "weight": 1.176
+      }
+    ],
+    "weights": {
+      "volume_breakout": 1.176
+    },
+    "current_outcome_count": 0
+  },
+  "review_memory_coverage": {
+    "ended_signals": 20,
+    "unjudgeable_signals": 17,
+    "review": {
+      "code": "000001",
+      "samples": 3,
+      "hits": 3,
+      "hit_rate": 100.0,
+      "avg_ret": 5.0,
+      "avg_adverse": null,
+      "bias": "正常",
+      "text": "近 3 次信号命中 3 次（100%）"
+    }
+  },
+  "unverified_calendar_freezes_outcome": {
+    "before": {
+      "status": "evaluated",
+      "end_date": "2026-09-28",
+      "return_pct": 10.0,
+      "data_quality_json": "{\"source\": \"local_daily\", \"available_bars\": 2, \"required_bars\": 1, \"base_source\": \"fixture\", \"base_revision\": null, \"price_adjustment\": \"none\", \"end_revision\": null, \"calendar_verified\": false}"
+    },
+    "after_verified_calendar": {
+      "status": "evaluated",
+      "end_date": "2026-09-28",
+      "return_pct": 10.0
+    }
+  },
+  "market_timezone": {
+    "utc": {
+      "phase": "premarket",
+      "label": "盘前",
+      "now": "2026-09-30 08:00",
+      "is_trading_day": true,
+      "is_partial_bar": false,
+      "minutes_to_open": 90,
+      "minutes_to_close": null,
+      "effective_daily_bar_date": "2026-09-29"
+    },
+    "shanghai": {
+      "phase": "postmarket",
+      "label": "盘后",
+      "now": "2026-09-30 16:00",
+      "is_trading_day": true,
+      "is_partial_bar": false,
+      "minutes_to_open": null,
+      "minutes_to_close": null,
+      "effective_daily_bar_date": "2026-09-30"
+    }
+  }
+}
