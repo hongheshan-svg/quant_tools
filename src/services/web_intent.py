@@ -1,6 +1,7 @@
 """Web 问股确定性意图：纯本地实体识别、串行任务、歧义确认与有界追问上下文。"""
 
 import re
+from copy import deepcopy
 from src.services.stock_search import StockSearch, ALIASES
 
 KINDS = {
@@ -22,13 +23,13 @@ def resolve(question, db_path, state=None, stock_context=None):
         candidates = pending.get("candidates") or []
         answer = next((candidate for i, candidate in enumerate(candidates, 1) if text in {candidate["code"], candidate["name"], str(i), f"第{i}个"}), None)
         if answer:
-            tasks = pending["tasks"]
+            tasks = deepcopy(pending["tasks"])
             for task in tasks:
                 if task.get("needs_confirmation"):
                     task["targets"] = [answer]
                     task.pop("needs_confirmation", None)
                     break
-            return _finish(tasks, state)
+            return _finish(tasks, state, stock_context)
         # 新话题使旧确认失效，不把新的行情或大盘请求当作同意。
         state = {**state, "pending": None}
     search = StockSearch(db_path)
@@ -37,6 +38,7 @@ def resolve(question, db_path, state=None, stock_context=None):
     clauses = [part.strip() for part in re.split(r"[，,。！？!?；;]|然后|接着|其次|顺便", text) if part.strip()][:12]
     inherited = (stock_context or {}).get("code") or next(iter(state.get("recent_stocks") or []), None)
     for clause in clauses:
+        first_task = len(tasks)
         targets, mentions = [], []
         for match in re.finditer(r"(?<![A-Za-z0-9])(?:sh|sz|bj)?\d{6}(?!\d)", clause, re.I):
             raw = match.group()
@@ -91,14 +93,31 @@ def resolve(question, db_path, state=None, stock_context=None):
             tasks.append({"kind": state.get("last_kind") or "stock_analysis", "question": clause, "targets": [{"code": inherited}]})
         else:
             tasks.append({"kind": "chat", "question": clause, "targets": [stock_context] if stock_context else []})
+        # 同一分句也按动词/主题在原文中的位置排列，不固定把股票任务放在最前。
+        def position(task):
+            match = re.search(KINDS.get(task['kind'], r'(?!)'), clause, re.I)
+            return match.start() if match else min((m[0] for m in mentions), default=len(clause))
+        tasks[first_task:] = sorted(tasks[first_task:], key=position)
         if targets: inherited = targets[-1]["code"]
-    if stock_context and any(target['code'] != stock_context['code'] for task in tasks for target in task['targets']):
+    return _finish(tasks or [{"kind": "chat", "question": text, "targets": []}], state, stock_context)
+
+
+def within_scope(tasks: list[dict], stock_context: dict | None) -> bool:
+    """确认、追问及执行前使用同一个规范证券边界。"""
+    if not stock_context:
+        return True
+    from src.utils.stock_code import diagnosis_code, StockCodeError
+    try:
+        scope = diagnosis_code(stock_context['code'])
+        return all(diagnosis_code(target['code']) == scope for task in tasks for target in task['targets'])
+    except (KeyError, StockCodeError):
+        return False
+
+
+def _finish(tasks, state, stock_context=None):
+    if not within_scope(tasks, stock_context):
         return {'tasks': [], 'requires_confirmation': True, 'state': {**state, 'pending': None},
                 'message': f"当前限定证券为 {stock_context['code']}；请先修改限定股票代码，再分析其他标的。"}
-    return _finish(tasks or [{"kind": "chat", "question": text, "targets": []}], state)
-
-
-def _finish(tasks, state):
     tasks = tasks[:12]
     ambiguous = next((task["needs_confirmation"] for task in tasks if task.get("needs_confirmation") is not None), None)
     if ambiguous is not None:

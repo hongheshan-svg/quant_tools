@@ -72,7 +72,7 @@ class ChatSessionStore:
             extra = {"stock_context": stock_context, "skills": skills} if stock_context or skills else {}
             yield from chat.ask_stream(question, perspective, cancel=cancel, **extra)
             return
-        from src.services.web_intent import resolve
+        from src.services.web_intent import resolve, within_scope
         state = deepcopy(chat.turns[-1].intent_state) if chat.turns else {}
         plan = resolve(question, self.db_path, state, stock_context)
         aggregate = ChatTurn(question=question, perspective=perspective, stock_context=stock_context, skills=skills or [], intent_plan=plan['tasks'], intent_state=plan['state'])
@@ -92,6 +92,9 @@ class ChatSessionStore:
         partial = None
         try:
             for task in plan['tasks']:
+                if not within_scope([task], stock_context):
+                    aggregate.error = "任务证券超出当前限定范围，请重新确认"
+                    break
                 targets = task['targets'] or [None]
                 for target in targets:
                     if cancel and cancel.is_set():
@@ -102,7 +105,7 @@ class ChatSessionStore:
                         yield aggregate.stage_events[-1]
                         aggregate.error = "问股超时：已达到分析总时长上限"
                         break
-                    scope = {"code": target['code']} if target else None
+                    scope = {"code": target['code']} if target else stock_context
                     title = target.get('name') or target['code'] if target else task['kind']
                     heading = f"\n\n### {title}\n\n" if len(plan['tasks']) > 1 or len(targets) > 1 else ''
                     aggregate.answer += heading

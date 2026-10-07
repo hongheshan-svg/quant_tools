@@ -42,6 +42,24 @@ def test_explicit_scope_cannot_be_overridden(names):
     assert plan['requires_confirmation'] and not plan['tasks']
 
 
+def test_confirmation_rechecks_scope_and_does_not_mutate_pending(names):
+    plan = resolve('分析平安，然后看看大盘', 'unused')
+    blocked = resolve('000001', 'unused', plan['state'], {'code': '600519'})
+    assert blocked['requires_confirmation'] and not blocked['tasks']
+    assert plan['state']['pending']['tasks'][0].get('needs_confirmation')
+    allowed = resolve('000001', 'unused', plan['state'], {'code': 'sz000001'})
+    assert not allowed['requires_confirmation']
+
+
+@pytest.mark.parametrize('question,expected', [
+    ('先看看持仓再分析贵州茅台', ['portfolio_risk', 'stock_analysis']),
+    ('先复盘大盘再看看持仓最后分析贵州茅台', ['market_review', 'portfolio_risk', 'stock_analysis']),
+    ('先分析贵州茅台再看看持仓', ['stock_analysis', 'portfolio_risk']),
+])
+def test_order_inside_single_clause(names, question, expected):
+    assert [task['kind'] for task in resolve(question, 'unused')['tasks']] == expected
+
+
 def test_store_executes_order_without_network_and_replays_stages(tools, monkeypatch):
     config = tools.config
     llm = StreamLLM([{'answer': '个股结论'}, {'answer': '大盘结论'}, {'answer': '组合结论'}])
