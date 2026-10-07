@@ -86,9 +86,9 @@ describe('Settings AI 输出语言', () => {
     expect(JSON.parse(puts(calls)[0].body!)).toEqual({ language: 'zh' })
   })
 
-  it('offers exactly the zh and en options', async () => {
+  it('offers Chinese, English and Korean options', async () => {
     stub([])
     const select = await open()
-    expect(Array.from(select.options).map((o) => o.value).sort()).toEqual(['en', 'zh'])
+    expect(Array.from(select.options).map((o) => o.value).sort()).toEqual(['en', 'ko', 'zh'])
   })
 })

@@ -23,7 +23,7 @@ def test_identity_aliases_have_one_canonical_stock(code):
     assert all("sz" not in alias and "bj" not in alias for alias in code_candidates(code))
 
 
-@pytest.mark.parametrize("code", ["SZ600519", "600519.SZ", "BJ000001", "SH600519.SZ", "abc", "60051"])
+@pytest.mark.parametrize("code", ["SZ600519", "600519.SZ", "BJ000001", "SH600519.SZ", "ab?c", "60051"])
 def test_invalid_identity_cannot_be_silently_rewritten(code):
     with pytest.raises(StockCodeError):
         resolve_identity(code)

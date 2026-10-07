@@ -264,21 +264,28 @@ def test_expired_reevaluate_keeps_status_fills_returns(svc, db_path):
 
 def _evaluated(db_path, code, n, ret, action="buy", adverse=-2.0):
     for i in range(n):
-        _add_signal(db_path, code=code, action=action, trade_date=f"2026-09-{1 + i:02d}", status="expired",
+        from src.services.outcome_engine import OutcomeEngine
+        from src.database.models import ResearchOutcome
+        version = OutcomeEngine({}).version
+        sid = _add_signal(db_path, code=code, action=action, trade_date=f"2026-09-{1 + i:02d}", status="expired",
                     ret_1d=ret, ret_3d=ret, ret_5d=ret, max_adverse_pct=adverse, max_favorable_pct=3.0,
-                    evaluated_at=datetime(2026, 9, 25), evaluation_version="daily-return-v3:neutral=0.5")
+                    evaluated_at=datetime(2026, 9, 25), evaluation_version=version)
+        with get_db_session(db_path) as session:
+            session.add(ResearchOutcome(owner_type='signal', owner_id=sid, horizon=5,
+                engine_version=version, status='evaluated', return_pct=ret, hit=ret > .5,
+                data_quality_json='{"calendar_verified": true}'))
 
 
 def test_review_insufficient_samples(svc, db_path):
     _evaluated(db_path, "600519", 2, 5.0)
     r = svc.review("600519")
-    assert r["samples"] == 2 and "样本不足" in r["text"]
+    assert r["samples"] == 2 and r["confidence_adjustment"] == "observe"
 
 
 def test_review_bias_optimistic(svc, db_path):
-    _evaluated(db_path, "600519", 4, -3.0)
+    _evaluated(db_path, "600519", 10, -3.0)
     r = svc.review("600519")
-    assert r["samples"] == 4 and r["hits"] == 0 and r["hit_rate"] < 40
+    assert r["samples"] == 10 and r["hits"] == 0 and r["hit_rate"] < 40
     assert r["bias"] == "偏乐观"
     assert r["avg_ret"] == pytest.approx(-3.0, abs=0.01)
     for k in ("avg_adverse", "text"):

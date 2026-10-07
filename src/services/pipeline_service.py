@@ -164,12 +164,12 @@ class PipelineService:
 
         return MarketReviewService(self.config).get()
 
-    def screen_stocks(self) -> dict[str, Any]:
+    def screen_stocks(self, variant_seed: str | None = None) -> dict[str, Any]:
         """全市场策略选股（放量突破、强势未板、龙回头、主线补涨、缩量回踩、超跌反弹）。"""
         from src.strategy.screener import StrategyScreener
 
         try:
-            return StrategyScreener(self.config).run().to_dict()
+            return StrategyScreener(self.config).run(variant_seed=variant_seed).to_dict()
         except Exception as e:
             logger.error(f"策略选股异常: {e}")
             return {"status": "failed", "error": str(e), "picks": [], "notes": [f"选股失败: {e}"], "stats": {}, "trade_date": "", "regime": ""}
@@ -225,6 +225,10 @@ class PipelineService:
         from src.services.stock_diagnosis import StockDiagnosisService
 
         try:
+            from src.utils.stock_code import resolve_identity
+            if resolve_identity(code).market != "CN":
+                from src.services.overseas_research import OverseasResearchService
+                return OverseasResearchService(self.config).diagnose(code, force)
             if resolve_fund(code, self.db_path):  # ETF / 指数走基金诊断，个股逻辑不变
                 from src.services.fund_diagnosis import FundDiagnosisService
 

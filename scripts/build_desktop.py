@@ -30,12 +30,12 @@ NPM = "npm.cmd" if sys.platform == "win32" else "npm"
 # 运行时按字符串导入、PyInstaller 静态分析找不到的模块
 HIDDEN_IMPORTS = ["tiktoken_ext", "tiktoken_ext.openai_public", "multipart", "tickflow"]
 # 带数据文件（价格表、日历、字典等）的包
-COLLECT_DATA = ["litellm", "akshare", "tiktoken_ext", "efinance"]
+COLLECT_DATA = ["exchange_calendars", "fxmacrodata_public", "tzdata", "yfinance", "litellm", "akshare", "tiktoken_ext", "efinance"]
 # 大量按需导入子模块的包
 # discord.py 按需导入大量子模块；它依赖的 aiohttp 有 PyInstaller 自带 hook，无需额外收集
-COLLECT_SUBMODULES = ["litellm", "uvicorn", "discord"]
+COLLECT_SUBMODULES = ["exchange_calendars", "fxmacrodata_public", "yfinance", "futu", "litellm", "uvicorn", "discord"]
 # 带原生库的包（akshare 的交易日历等接口用 py_mini_racer 执行 JS）
-COLLECT_ALL = ["py_mini_racer"]
+COLLECT_ALL = ["longbridge", "curl_cffi", "py_mini_racer"]
 # 后台服务用不到的大包
 EXCLUDES = ["tkinter", "matplotlib", "IPython", "pytest"]
 

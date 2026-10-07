@@ -37,6 +37,7 @@ export const NAV: { group: string; items: { to: string; label: string; icon: Rea
     items: [
       { to: '/review', label: '大盘复盘', icon: <LineChart className="size-4" /> },
       { to: '/themes', label: '主线分析', icon: <Flame className="size-4" /> },
+      { to: '/overseas', label: '海外研究', icon: <LineChart className="size-4" /> },
       { to: '/research', label: '深度研究', icon: <Microscope className="size-4" /> },
       { to: '/screening', label: '策略选股', icon: <Filter className="size-4" /> },
       { to: '/performance', label: '信号绩效', icon: <BarChart3 className="size-4" /> },
@@ -50,6 +51,7 @@ export const NAV: { group: string; items: { to: string; label: string; icon: Rea
     items: [
       { to: '/sources', label: '数据源状态', icon: <Activity className="size-4" /> },
       { to: '/usage', label: 'AI 用量', icon: <Gauge className="size-4" /> },
+      { to: '/integrations', label: '扩展接入', icon: <Settings className="size-4" /> },
       { to: '/settings', label: '设置', icon: <Settings className="size-4" /> },
     ],
   },

@@ -11,12 +11,25 @@ from src.database.db import get_db_session
 from src.database.models import FundDaily, ResearchOutcome, StockDaily
 from src.utils.stock_code import code_candidates, diagnosis_code
 
-ENGINE_VERSION = "daily-return-v3"
+ENGINE_VERSION = "daily-return-v4"
 HORIZONS = (1, 3, 5, 10)
+
+
+def reliable_outcome(row, version: str) -> bool:
+    """统计只能消费当前引擎、已验证日历和有限收益的完成结果。"""
+    try:
+        quality = json.loads(row.data_quality_json or '{}')
+        return (row.engine_version == version and row.status == 'evaluated'
+                and quality.get('calendar_verified') is True
+                and row.return_pct is not None and math.isfinite(row.return_pct)
+                and row.hit is not None)
+    except (ValueError, TypeError, AttributeError):
+        return False
 
 
 class OutcomeEngine:
     def __init__(self, config: dict):
+        self.config = config
         self.db_path = (config.get("database") or {}).get("sqlite_path", "data/quant.db")
         cfg = config.get("evaluation") or {}
         self.neutral_band = float(cfg.get("neutral_band_pct", 0.5))
@@ -32,6 +45,14 @@ class OutcomeEngine:
         from src.services.data_freshness import completed_bar_date, incomplete_bar
         cutoff = completed_bar_date(now)
         self._price_quality, self._path_failure, self.validated_bars = {}, "", []
+        self._calendar_coverage = trading_calendar.has_calendar_coverage
+        self._next_day = lambda day: trading_calendar.next_trade_day(datetime.strptime(day, "%Y-%m-%d").date()).isoformat()
+        from src.utils.stock_code import resolve_identity
+        identity = resolve_identity(code)
+        if identity.market != "CN":
+            return self._overseas_price_path(identity, trade_date, now)
+        if not trading_calendar.has_calendar_coverage(trade_date, trade_date):
+            return None, [], 'calendar_unverified'
         canonical = diagnosis_code(code)
         models = (FundDaily,) if canonical.startswith(("sh", "sz", "bj")) else (StockDaily, FundDaily)
         for model in models:
@@ -56,6 +77,9 @@ class OutcomeEngine:
                         selected[day] = row
             previous = base
             for day, row in sorted(selected.items()):
+                if not trading_calendar.has_calendar_coverage(previous.trade_date, day):
+                    self._path_failure = 'calendar_unverified'
+                    break
                 expected = trading_calendar.next_trade_day(datetime.strptime(previous.trade_date, '%Y-%m-%d').date()).isoformat()
                 if day != expected:
                     self._path_failure = 'missing_trading_day'
@@ -76,6 +100,60 @@ class OutcomeEngine:
                                    "end_revision": getattr(previous, "price_revision", None)}
             return float(base.close), sorted(closes.items()), ""
         return None, [], "missing_base_price"
+
+    def _overseas_price_path(self, identity, trade_date: str, now: datetime) -> tuple:
+        from zoneinfo import ZoneInfo
+        from src.services.overseas_research import OverseasResearchService
+        from src.services.overseas_market import MARKETS, phase, quote_quality
+        import exchange_calendars as xcals
+        import pandas as pd
+        moment = now.replace(tzinfo=ZoneInfo("Asia/Shanghai")) if now.tzinfo is None else now
+        state = phase(identity.market, moment)
+        if not state["calendar_verified"]:
+            self._calendar_coverage = lambda *args: False
+            return None, [], "calendar_unverified"
+        calendar = xcals.get_calendar(MARKETS[identity.market][0])
+        self._calendar_coverage = lambda start, end: calendar.first_session <= pd.Timestamp(start) <= pd.Timestamp(end) <= calendar.last_session
+        self._next_day = lambda day: calendar.next_session(pd.Timestamp(day)).strftime("%Y-%m-%d")
+        if not self._calendar_coverage(trade_date, trade_date):
+            return None, [], "calendar_unverified"
+        cached = OverseasResearchService(self.config).cached("overseas:" + identity.code)
+        rows = {row["trade_date"]: row for row in cached.get("bars", []) if row["trade_date"] <= state["effective_daily_bar_date"]}
+        base = rows.get(trade_date)
+        if not base or not self._positive(base.get("close")) or not calendar.is_session(pd.Timestamp(trade_date)):
+            return None, [], "missing_base_price"
+        def incomplete(row):
+            reasons = quote_quality(row, identity.market, moment)["limitations"]
+            return any(reason != "stale_quote" for reason in reasons)
+        if incomplete(base):
+            return None, [], "incomplete_base_bar"
+        closes, previous = [], trade_date
+        for day, row in sorted(rows.items()):
+            if day <= trade_date:
+                continue
+            if not self._calendar_coverage(previous, day):
+                self._path_failure = "calendar_unverified"
+                break
+            if not calendar.is_session(pd.Timestamp(day)):
+                continue
+            if day != self._next_day(previous):
+                self._path_failure = "missing_trading_day"
+                break
+            if row.get("stock_splits") or row.get("price_adjustment") != base.get("price_adjustment") or row.get("source") != base.get("source"):
+                self._path_failure = "incomparable_price_basis"
+                break
+            if not self._positive(row.get("close")):
+                self._path_failure = "invalid_price"
+                break
+            if incomplete(row):
+                self._path_failure = "incomplete_daily_bar"
+                break
+            closes.append((day, float(row["close"])))
+            self.validated_bars.append({"date": day, **{key: row.get(key) for key in ("close", "open", "high", "low")}})
+            previous = day
+        self._price_quality = {"market": identity.market, "currency": identity.currency, "base_source": base.get("source"),
+                               "price_adjustment": base.get("price_adjustment")}
+        return float(base["close"]), closes, ""
 
     def evaluate(self, session, owner_type: str, owner_id: int, code: str, trade_date: str,
                  direction: int, *, now: datetime | None = None, horizons=HORIZONS) -> list[ResearchOutcome]:
@@ -99,19 +177,19 @@ class OutcomeEngine:
             row.evaluated_at = now
             end = bars[horizon - 1][0] if len(bars) >= horizon else now.strftime("%Y-%m-%d")
             row.data_quality_json = json.dumps({"source": "local_daily", "available_bars": len(bars), "required_bars": horizon,
-                **getattr(self, "_price_quality", {}), "calendar_verified": trading_calendar.has_calendar_coverage(trade_date, end)})
+                **getattr(self, "_price_quality", {}), "calendar_verified": self._calendar_coverage(trade_date, end)})
             row.status, row.reason = ("unable", reason) if reason else ("pending", "insufficient_daily_bars")
             row.end_date = row.end_price = row.return_pct = row.hit = None
-            if reason in {'missing_base_price', 'incomplete_base_bar'}:
+            if reason in {'missing_base_price', 'incomplete_base_bar', 'calendar_unverified'}:
                 row.status = 'pending'
             if len(bars) < horizon and self._path_failure:
-                row.status, row.reason = ('pending' if self._path_failure == 'incomplete_daily_bar' else 'unable'), self._path_failure
+                row.status, row.reason = ('pending' if self._path_failure in {'incomplete_daily_bar', 'calendar_unverified'} else 'unable'), self._path_failure
             if base and len(bars) >= horizon:
                 # 不允许跳过缺失交易日拼凑 horizon；日历不完整时明确留下限制。
                 expected = trade_date
                 complete = True
                 for day, _ in bars[:horizon]:
-                    expected = trading_calendar.next_trade_day(datetime.strptime(expected, "%Y-%m-%d").date()).strftime("%Y-%m-%d")
+                    expected = self._next_day(expected)
                     if day != expected:
                         complete = False
                         break

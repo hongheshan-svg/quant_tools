@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from api.deps import get_pipeline, get_tasks
@@ -92,9 +92,20 @@ def picks(trade_date: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"), 
     return {"trade_date": actual, "picks": rows}
 
 
+class ScreeningRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    variant_seed: str | None = Field(None, min_length=1, max_length=128, pattern=r'^[A-Za-z0-9_-]+$')
+
+
 @router.post("/run")
-def run(tasks: TaskManager = Depends(get_tasks), pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
-    return tasks.submit("screening", pipeline.screen_stocks, dedupe_key="screening", label="策略选股", result_error=business_result_error)
+def run(body: ScreeningRequest | None = Body(None), tasks: TaskManager = Depends(get_tasks), pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
+    extra = {'variant_seed': body.variant_seed} if body and body.variant_seed else {}
+    return tasks.submit("screening", pipeline.screen_stocks, dedupe_key="screening", label="策略选股", result_error=business_result_error, **extra)
+
+
+@router.post('/screen')
+def screen(body: ScreeningRequest, pipeline: PipelineService = Depends(get_pipeline)):
+    return pipeline.screen_stocks(variant_seed=body.variant_seed)
 
 
 @router.post("/backtest")

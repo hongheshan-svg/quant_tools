@@ -1,5 +1,6 @@
 // 2026-10-07 上游对齐：研究、数据质量、阶段回放与告警范围。
 export default {
+  '有效期': 'Valid until', '海外研究': 'Overseas research', '扩展接入': 'Integrations',
   '轮动配置格式无效': 'Invalid rotation configuration', '有未保存的设置': 'Unsaved settings',
   '有未保存的设置，离开或覆盖会丢弃草稿。确定继续吗？': 'There are unsaved settings. Leaving or replacing them will discard the drafts. Continue?',
   '动量交易日数': 'Momentum lookback (trading days)', '持有槽数': 'Holding slots', '换仓缓冲（百分点）': 'Switch buffer (percentage points)',

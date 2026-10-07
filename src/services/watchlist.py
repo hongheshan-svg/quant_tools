@@ -119,6 +119,16 @@ class WatchlistService:
         rows = self.list()
         with get_db_session(self.db_path) as session:
             for r in rows:
+                from src.utils.stock_code import overseas_identity
+                foreign = overseas_identity(r["code"])
+                if foreign:
+                    from src.services.overseas_research import OverseasResearchService
+                    snapshot = OverseasResearchService(self.config).snapshot(foreign.code)
+                    quote = snapshot["quote"]
+                    r.update({"trade_date": quote.get("trade_date", ""), "close": quote.get("close"),
+                              "change_pct": quote.get("change_pct"), "quote_source": quote.get("source"),
+                              "quote_quality": snapshot["quality"], "market": foreign.market, "currency": foreign.currency})
+                    continue
                 if r["kind"] == "stock":
                     bar = (session.query(StockDaily.trade_date, StockDaily.close, StockDaily.change_pct, StockDaily.source, StockDaily.updated_at)
                            .filter(StockDaily.code.in_(code_candidates(r["code"])), StockDaily.close > 0)

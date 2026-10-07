@@ -137,10 +137,10 @@ def consult(llm, context_text: str, skills: list[Skill], weights: dict[str, floa
 
     def ask(skill: Skill) -> dict[str, Any] | None:
         try:
-            prompt = CONSULT_PROMPT_EN if lang == "en" else CONSULT_PROMPT
-            instructions = (skill.instructions_en or skill.instructions) if lang == "en" else skill.instructions
+            prompt = CONSULT_PROMPT_EN if lang in ("en", "ko") else CONSULT_PROMPT
+            instructions = (skill.instructions_en or skill.instructions) if lang in ("en", "ko") else skill.instructions
             raw = llm.chat_json(user_message=context_text,
-                                system_message=prompt.format(display_name=skill.name if lang == "en" else skill.display_name,
+                                system_message=prompt.format(display_name=skill.name if lang in ("en", "ko") else skill.display_name,
                                                              instructions=instructions) + directive)
             return _normalize(skill, raw, float(weights.get(skill.name, 1.0)))
         except Exception as e:
@@ -179,7 +179,7 @@ def consensus(opinions: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def section_text(opinions: list[dict[str, Any]], cons: dict[str, Any], lang: str = "zh") -> str:
-    if lang == "en":
+    if lang in ("en", "ko"):
         lines = ["[Strategy consultation]"]
         for o in opinions:
             lines.append(f"- {o['skill']}: {display(lang, o['stance'])}, score {o['score']}, "
@@ -268,45 +268,43 @@ class SkillOpinionService:
                 count += 1
         return {"evaluated": count}
 
-    def _stats(self, days: int) -> dict[str, dict[str, Any]]:
+    def _stats(self, days: int, horizon: int = 5) -> dict[str, dict[str, Any]]:
+        """当前策略版本的独立样本；无法判断与等待中样本保留在覆盖率分母。"""
+        from src.services.outcome_engine import OutcomeEngine, reliable_outcome
+        from src.database.models import ResearchOutcome, StockDiagnosis
+        from src.utils.stock_code import diagnosis_code
+        from sqlalchemy import select
         since = datetime.now() - timedelta(days=days)
-        stats: dict[str, dict[str, Any]] = {}
+        stats, versions, seen = {}, {}, set()
+        version = OutcomeEngine(self.config).version
         with get_db_session(self.db_path) as session:
-            from src.services.outcome_engine import OutcomeEngine
-            from src.database.models import ResearchOutcome
-            version = OutcomeEngine(self.config).version
-            evaluated = {r.owner_id: (r.hit, r.return_pct) for r in session.query(ResearchOutcome).filter_by(
-                owner_type="skill", horizon=5, engine_version=version, status="evaluated").all()}
-            from sqlalchemy import select
-            from src.database.models import StockDiagnosis
-            rows = session.query(SkillOpinion).filter(
-                SkillOpinion.created_at >= since, SkillOpinion.hit.isnot(None),
-                # 无父 ID 的老版独立样本保持兼容；有引用但父记录已丢失的样本不得参与学习。
+            outcomes = {r.owner_id: r for r in session.query(ResearchOutcome).filter_by(
+                owner_type="skill", horizon=horizon, engine_version=version)}
+            rows = session.query(SkillOpinion).filter(SkillOpinion.created_at >= since,
+                SkillOpinion.stance.in_(("看多", "看空")),
                 SkillOpinion.diagnosis_id.is_(None) | SkillOpinion.diagnosis_id.in_(select(StockDiagnosis.id)),
-            ).order_by(SkillOpinion.created_at, SkillOpinion.id).all()
-            values = []
-            versions = {}
+            ).order_by(SkillOpinion.created_at.desc(), SkillOpinion.id.desc())
             for row in rows:
-                if row.skill_version:
-                    if row.skill not in versions:
-                        skill = get_skill(row.skill)
-                        versions[row.skill] = hashlib.sha256((skill.instructions if skill else row.skill).encode()).hexdigest()
-                    # 新版样本必须使用当前策略与评估版本，旧结果不能跨版本调权。
-                    if row.skill_version != versions[row.skill] or row.id not in evaluated:
-                        continue
-                values.append((row.skill, *evaluated.get(row.id, (row.hit, row.ret_5d)), row.code, row.trade_date))
-        seen = set()
-        for skill, hit, ret, code, trade_date in values:
-            from src.utils.stock_code import diagnosis_code
-            unit = (skill, diagnosis_code(code), trade_date)
-            if unit in seen:
-                continue
-            seen.add(unit)
-            s = stats.setdefault(skill, {"samples": 0, "hits": 0, "rets": []})
-            s["samples"] += 1
-            s["hits"] += 1 if hit else 0
-            if ret is not None:
-                s["rets"].append(ret)
+                if row.skill not in versions:
+                    skill = get_skill(row.skill)
+                    versions[row.skill] = hashlib.sha256((skill.instructions if skill else row.skill).encode()).hexdigest()
+                if not row.skill_version or row.skill_version != versions[row.skill]:
+                    continue
+                unit = (row.skill, diagnosis_code(row.code), row.trade_date)
+                if unit in seen:
+                    continue
+                seen.add(unit)
+                value = stats.setdefault(row.skill, {"samples": 0, "hits": 0, "rets": [], "total": 0, "unable": 0, "pending": 0})
+                value["total"] += 1
+                outcome = outcomes.get(row.id)
+                if outcome is None or outcome.status == "pending":
+                    value["pending"] += 1
+                elif not reliable_outcome(outcome, version):
+                    value["unable"] += 1
+                else:
+                    value["samples"] += 1
+                    value["hits"] += int(outcome.hit)
+                    value["rets"].append(outcome.return_pct)
         return stats
 
     @staticmethod
@@ -317,17 +315,28 @@ class SkillOpinionService:
         posterior = (hits + 2) / (samples + 4)  # Beta(2,2) 收缩，避免少量极端命中率过度调权
         return round(max(0.8, min(1.2, 1 + (posterior - 0.5) * 0.4)), 3)
 
+    @staticmethod
+    def _coverage_weight(value: dict) -> float:
+        if not value["samples"] or (value["unable"] + value["pending"]) / value["total"] > .5:
+            return 1.0
+        return SkillOpinionService._weight(value["samples"], value["hits"] / value["samples"] * 100)
+
     def weights(self, days: int = 90) -> dict[str, float]:
-        return {k: self._weight(v["samples"], v["hits"] / v["samples"] * 100) for k, v in self._stats(days).items()}
+        return {key: self._coverage_weight(value) for key, value in self._stats(days).items()}
 
     def performance(self, days: int = 90) -> list[dict[str, Any]]:
+        from src.services.outcome_engine import HORIZONS, OutcomeEngine
         display = {s.name: s.display_name for s in load_skills()}
+        windows = {h: self._stats(days, h) for h in HORIZONS}
         result = []
-        for skill, v in self._stats(days).items():
-            rate = v["hits"] / v["samples"] * 100
-            result.append({
-                "skill": skill, "display_name": display.get(skill, skill), "samples": v["samples"], "hits": v["hits"],
-                "hit_rate": round(rate, 1), "avg_ret": round(sum(v["rets"]) / len(v["rets"]), 2) if v["rets"] else None,
-                "weight": self._weight(v["samples"], rate),
-            })
-        return sorted(result, key=lambda r: (-r["samples"], r["skill"]))
+        for skill, value in windows[5].items():
+            def summary(v):
+                return {"samples": v["samples"], "hits": v["hits"], "total": v["total"],
+                        "unable": v["unable"], "pending": v["pending"],
+                        "unable_rate": round((v["unable"] + v["pending"]) / v["total"] * 100, 1),
+                        "hit_rate": round(v["hits"] / v["samples"] * 100, 1) if v["samples"] else None,
+                        "avg_ret": round(sum(v["rets"]) / len(v["rets"]), 2) if v["rets"] else None}
+            result.append({"skill": skill, "display_name": display.get(skill, skill), **summary(value),
+                "weight": self._coverage_weight(value), "engine_version": OutcomeEngine(self.config).version,
+                "horizons": {str(h): summary(rows[skill]) for h, rows in windows.items() if skill in rows}})
+        return sorted(result, key=lambda row: (-row["samples"], row["skill"]))

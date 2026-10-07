@@ -97,3 +97,21 @@ def test_portfolio_tool_preserves_unavailable_quality(tools, monkeypatch):
     payload = json.loads(tools.call('portfolio_risk', {'account': 'real:家人'}))
     assert accounts == ['real:家人'] and payload['quality']['valuation'] == 'partial'
     assert payload['exposure'] is None and payload['drawdown']['current_drawdown'] is None
+
+
+def test_confirmation_executes_both_resolved_targets_in_original_order(tools, names):
+    llm = StreamLLM([{'answer': '茅台研究'}, {'answer': '平安研究'}])
+    chat = StockChatSession(tools.config, llm=llm, tools=tools)
+    store = ChatSessionStore(tools.config, session_factory=lambda cfg: chat)
+    record = store.create()
+    list(store.ask_stream(record['id'], '分析贵州茅台和平安'))
+    events = list(store.ask_stream(record['id'], '000001'))
+    answer = store.get(record['id'])['turns'][-1]
+    assert [t['code'] for t in answer['intent_plan'][0]['targets']] == ['600519', '000001']
+    assert '茅台研究' in answer['answer'] and '平安研究' in answer['answer']
+    assert events[-1]['type'] == 'done'
+
+
+def test_overseas_and_domestic_codes_in_same_intent(names):
+    result = resolve('分析 AAPL 和贵州茅台，以及 005930.KS', 'unused')
+    assert [t['code'] for task in result['tasks'] for t in task['targets']] == ['AAPL', '600519', '005930.KS']

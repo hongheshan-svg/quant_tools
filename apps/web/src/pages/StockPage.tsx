@@ -1,4 +1,5 @@
 // 个股详情：K 线（日/周/月）、日线数据、新闻公告、AI 诊断、加入自选；ETF/指数只有 K 线、日线和 AI 诊断
+import { OverseasPage } from './OverseasPage'
 import { Star } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
@@ -20,6 +21,11 @@ type TabKey = 'kline' | 'daily' | 'news' | 'diagnosis' | 'research'
 const MIN_BARS = 60
 
 export function StockPage() {
+  const { code = "" } = useParams()
+  return /^(?:[A-Z]{1,5}(?:-[A-Z])?|\d+\.(?:HK|T|KS|KQ|TW|TWO)|HK\d+)$/i.test(code) ? <OverseasPage key={code} initialCode={code} /> : <DomesticStockPage />
+}
+
+function DomesticStockPage() {
   const t = useT()
   const { code = '' } = useParams()
   const fund = fundKind(code)
@@ -159,7 +165,7 @@ export function ResearchOverview({ code, reportArtifact, reportId }: { code: str
     <Card title={t('持仓与盯盘')}>
       {data.portfolio.status === 'unavailable' ? <p className="text-muted">{t('持仓数据不可用')}</p> : <p>{data.portfolio.data?.held ? data.portfolio.data.holdings.map((h) => `${h.label} ${h.quantity} 股，成本 ${h.avg_cost}`).join('；') : t('未持仓')}</p>}
       {data.monitors.data?.alert_rules.map((r, i) => <p key={i}>{r.text} {r.note}</p>)}
-      {data.signals.data?.active.map((s) => <p key={s.id}><Link className="text-accent" to="/signals">{s.action_label}</Link> · {t('止损')} {s.stop_loss ?? '--'} · {t('目标')} {s.target_price ?? '--'}</p>)}
+      {data.signals.data?.active.map((s) => <p key={s.id}><Link className="text-accent" to={`/signals?code=${code}`}>{s.action_label}</Link> · {t('止损')} {s.stop_loss ?? '--'} · {t('目标')} {s.target_price ?? '--'} · {t('有效期')} {s.expires_on ?? '--'}</p>)}
     </Card>
     <Card title={t('近期报告')}><ul className="space-y-1">{data.history.data?.recent_reports.map((r) => <li key={r.id}><Link className="text-accent" to={`/history?code=${encodeURIComponent(code)}&id=${r.id}`}>{r.created_at} · {r.summary}</Link></li>)}</ul></Card>
     <Card title={t('相关资讯')}><ul className="space-y-1">{data.intelligence.data?.items.map((i) => <li key={i.id}><a href={i.url || undefined} target="_blank" rel="noreferrer">{i.title}</a><span className="ml-2 text-xs text-muted">{i.source}</span></li>)}</ul></Card>
@@ -220,9 +226,9 @@ function DiagnosisTab({ code, isFund }: { code: string; isFund: boolean }) {
         <Button variant="primary" loading={task.running} onClick={run}>{task.running ? t('诊断中 {p}', { p: progressText(task.progress) }) : data ? t('重新诊断') : t('开始诊断')}</Button>
       </div>
       {review && (
-        <p className={review.samples >= 3 ? 'mb-3 text-sm' : 'mb-3 text-xs text-muted'}>
+        <p className={review.confidence_adjustment !== 'observe' ? 'mb-3 text-sm' : 'mb-3 text-xs text-muted'}>
           <span className="text-muted">{t('历史信号复盘：')}</span>{review.text}
-          {review.samples >= 3 && review.bias && review.bias !== '正常' && <Badge tone="warn" className="ml-1">{t(review.bias)}</Badge>}
+          {review.confidence_adjustment !== 'observe' && review.bias && review.bias !== '正常' && <Badge tone="warn" className="ml-1">{t(review.bias)}</Badge>}
           <Link to={`/signals?code=${code}`} className="ml-2 text-xs text-accent hover:underline">{t('决策信号')}</Link>
         </p>
       )}

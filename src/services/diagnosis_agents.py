@@ -99,7 +99,7 @@ def run_analysts(llm, context_text: str, mode: str, lang: str = "zh", *,
         data = "\n".join(sections[k] for k in dict.fromkeys(keys) if k in sections)
         try:
             prompt = ANALYST_PROMPT
-            if lang == "en":
+            if lang in ("en", "ko"):
                 label_en, focus = ANALYST_ROLES_EN[role_key]
                 prompt = ANALYST_PROMPT_EN.format(role=label_en, focus=focus)
             else:
@@ -125,18 +125,18 @@ def disagreement(opinions: list[dict[str, Any]], lang: str = "zh") -> str:
     scores = [o["score"] for o in valid]
     parts = []
     if "看多" in views and "看空" in views:
-        if lang == "en":
+        if lang in ("en", "ko"):
             from src.services.report_language import display
             parts.append("; ".join(f"{ANALYST_ROLES_EN.get(o.get('role'), ('analyst', ''))[0]}: {display(lang, o['view'])}" for o in valid))
         else:
             parts.append("、".join(f"{o['label'][:-3]}{o['view']}" for o in valid))
     if max(scores) - min(scores) >= DISAGREEMENT_SCORE_GAP:
-        parts.append(f"Score gap: {max(scores) - min(scores)} points" if lang == "en" else f"评分相差 {max(scores) - min(scores)} 分")
-    return ("; " if lang == "en" else "；").join(parts)
+        parts.append(f"Score gap: {max(scores) - min(scores)} points" if lang in ("en", "ko") else f"评分相差 {max(scores) - min(scores)} 分")
+    return ("; " if lang in ("en", "ko") else "；").join(parts)
 
 
 def opinions_text(opinions: list[dict[str, Any]], conflict: str, lang: str = "zh") -> str:
-    if lang == "en":
+    if lang in ("en", "ko"):
         from src.services.report_language import display
         lines = ["[Analyst opinions]"]
         for opinion in opinions:

@@ -41,7 +41,10 @@ class StockProfileService:
     def build(self, code: str, history_days: int = 90) -> dict[str, Any]:
         from src.services.fund_registry import resolve_fund
 
-        code = resolve_identity(code).code
+        identity = resolve_identity(code)
+        if identity.market != "CN":
+            return self._overseas(identity.code, history_days)
+        code = identity.code
         fund = resolve_fund(code, self.db_path)
         kind = fund["kind"] if fund else "stock"
         canonical = fund["code"] if fund else bare_code(code)
@@ -84,7 +87,7 @@ class StockProfileService:
         from src.services.data_freshness import daily_quality
         quality = daily_quality(data["trade_date"], data.get("updated_at"), allow_partial=True)
         stale = bool(latest_market and data["trade_date"] < latest_market)
-        limits = quality["limitations"] or (["stale_quote"] if stale else [])
+        limits = list(dict.fromkeys(quality["limitations"] + (["stale_quote"] if stale else [])))
         return {"status": PARTIAL if limits else FRESH, "limitations": limits,
                 "data": {**data, "quality": quality}, "name": name}
 
@@ -113,18 +116,18 @@ class StockProfileService:
         from src.services.decision_signals import DecisionSignalService
 
         service = DecisionSignalService(self.config)
-        active = service.list(status="active", code=code, limit=ACTIVE_SIGNAL_LIMIT)
+        active = service.list(status="active", code=code, limit=ACTIVE_SIGNAL_LIMIT, valid_only=True)
         rows = active.get("items", []) if isinstance(active, dict) else active
         review = service.review(code)
-        if not rows and not review.get("samples"):
+        if not rows and not review.get("total"):
             return {"status": UNAVAILABLE, "limitations": ["no_signal"]}
         keep = ("id", "action", "action_label", "status", "trade_date", "expires_on", "stop_loss", "target_price", "ret_1d", "ret_3d")
         return {"status": FRESH, "limitations": [],
                 "data": {"active": [{k: r.get(k) for k in keep} for r in rows],
-                         "review": {k: review.get(k) for k in ("samples", "hit_rate", "avg_ret", "text")}}}
+                         "review": {k: review.get(k) for k in ("samples", "hit_rate", "avg_ret", "text", "total", "completed", "unable", "pending", "unable_rate", "confidence_adjustment", "limitations")}}}
 
     def _portfolio(self, code: str, kind: str) -> dict[str, Any]:
-        if kind != "stock":
+        if kind not in {"stock", "etf"}:
             return {"status": UNAVAILABLE, "limitations": ["not_tradable"]}
         from src.services.real_portfolio import RealPortfolioService
         from src.trading.execution_service import ExecutionService
@@ -167,7 +170,7 @@ class StockProfileService:
 
 def _position_fields(p: dict[str, Any]) -> dict[str, Any]:
     out = {k: p.get(k) for k in ("quantity", "available_quantity", "avg_cost", "market_price", "market_value",
-                                 "unrealized_pnl", "stop_loss", "target_price")}
+                                 "unrealized_pnl", "stop_loss", "target_price", "price_quality", "valuation_is_estimate")}
     cost, price = out.get("avg_cost") or 0, out.get("market_price") or 0
     out["unrealized_pnl_pct"] = round((price / cost - 1) * 100, 2) if cost and price else None
     return out
@@ -191,3 +194,20 @@ def _rule_text(rule: dict[str, Any]) -> str:
         else:
             parts.append(f"{field['label']} {value}")
     return spec["label"] + ("：" + "，".join(parts) if parts else "")
+
+    def _overseas(self, code: str, history_days: int) -> dict:
+        from src.services.overseas_research import OverseasResearchService
+        from src.services.overseas_portfolio import OverseasPortfolioService
+        snapshot = OverseasResearchService(self.config).snapshot(code)
+        positions = [p for p in OverseasPortfolioService(self.config).portfolio()["positions"] if p["code"] == code]
+        quote = snapshot["quote"]
+        unavailable = {"status": UNAVAILABLE, "limitations": ["overseas_research_only"]}
+        return {"code": code, "name": code, "kind": "stock", "market": snapshot["market"], "currency": snapshot["currency"],
+                "quote": {"status": FRESH if snapshot["quality"]["status"] == "available" else PARTIAL,
+                          "limitations": snapshot["quality"]["limitations"], "data": quote, **quote},
+                "research": _block(lambda: self._research(code)), "history": _block(lambda: self._history(code, history_days)),
+                "portfolio": {"status": PARTIAL if any(p.get("market_value_cny") is None for p in positions) else FRESH,
+                              "limitations": ["snapshot_holdings"],
+                              "data": {"held": bool(positions), "holdings": [{**p, "source": "real", "label": "海外持仓"} for p in positions]}},
+                "signals": unavailable, "monitors": unavailable, "intelligence": unavailable,
+                "evidence_quality": {"fresh": 0, "partial": 1, "unavailable": 3}, "research_only": True}

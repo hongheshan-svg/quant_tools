@@ -29,6 +29,36 @@ class StockIdentity:
     currency: str = "CNY"
 
 
+def overseas_identity(raw: str) -> StockIdentity | None:
+    """海外身份显式后缀优先；裸六位仍保留为 A 股，避免串市场。"""
+    value = raw.strip().upper()
+    aliases = {"HK": ("HK", "HKD"), "T": ("JP", "JPY"), "KS": ("KR", "KRW"),
+               "KQ": ("KR", "KRW"), "TW": ("TW", "TWD"), "TWO": ("TW", "TWD")}
+    match = re.fullmatch(r"HK[.:]?(\d{1,5})", value)
+    if match:
+        value = match[1].zfill(5) + ".HK"
+    for prefix, suffix in (("JP:", ".T"), ("KR:", ".KS"), ("TW:", ".TW")):
+        if value.startswith(prefix):
+            value = value[len(prefix):] + suffix
+    match = re.fullmatch(r"(\d{1,6})\.(HK|T|KS|KQ|TW|TWO)", value)
+    if match:
+        digits, exchange = match.groups()
+        widths = {"HK": (1, 5), "T": (4, 4), "KS": (6, 6), "KQ": (6, 6), "TW": (4, 6), "TWO": (4, 6)}
+        if not widths[exchange][0] <= len(digits) <= widths[exchange][1]:
+            raise StockCodeError("海外证券代码长度不符")
+        if exchange == "HK":
+            digits = digits.zfill(5)
+        market, currency = aliases[exchange]
+        return StockIdentity(digits + "." + exchange, exchange, "stock", market, currency)
+    if value.startswith(("US:", "US.")):
+        value = value[3:]
+    if value.endswith(".US"):
+        value = value[:-3]
+    if re.fullmatch(r"[A-Z]{1,5}(?:[.\-][A-Z])?", value):
+        return StockIdentity(value.replace(".", "-"), "US", "stock", "US", "USD")
+    return None
+
+
 def _inferred_exchange(digits: str) -> str:
     if digits.startswith(("92", "4", "8")):
         return "bj"
@@ -43,6 +73,9 @@ def resolve_identity(code: str | None) -> StockIdentity:
     index = INDEX_CODES.get(raw) or _INDEX_BY_NAME.get(raw)
     if index:
         return StockIdentity(index["code"], index["code"][:2], "index")
+    foreign = overseas_identity(raw)
+    if foreign:
+        return foreign
     match = _CODE.fullmatch(raw)
     if not match:
         raise StockCodeError("股票代码应为 6 位数字，可带 sh/sz/bj 前缀或 .SH/.SZ/.BJ 后缀")
@@ -65,6 +98,9 @@ def bare_code(code: str | None) -> str:
     if _CODE.fullmatch(raw):
         identity = resolve_identity(raw)
         return identity.code[2:] if identity.kind == "index" else identity.code
+    foreign = overseas_identity(raw)
+    if foreign:
+        return foreign.code
     return raw
 
 
@@ -86,7 +122,8 @@ def code_candidates(code: str | None) -> list[str]:
     if not raw:
         return []
     if not _CODE.fullmatch(raw):
-        return [raw]
+        foreign = overseas_identity(raw)
+        return list(dict.fromkeys([foreign.code, raw])) if foreign else [raw]
     identity = resolve_identity(raw)
     if identity.kind == "index":
         digits = identity.code[2:]

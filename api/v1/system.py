@@ -388,6 +388,11 @@ def _merge_llm(current: dict[str, Any], incoming: dict[str, Any]) -> dict[str, A
             if "api_key" in new:
                 new["api_key"] = _restore_keys(new["api_key"], old.get("api_key"))
             merged[role] = {**old, **new}
+    from src.analyzers.local_runtime import validate_model_settings
+    try:
+        validate_model_settings(merged)
+    except ValueError as error:
+        raise bad_request(str(error)) from error
     return merged
 
 
@@ -518,7 +523,7 @@ def test_search_settings(body: SearchTestBody, config: dict = Depends(get_config
 # ---------- AI 输出语言 ----------
 
 class ReportSettingsBody(BaseModel):
-    language: Literal["zh", "en"]
+    language: Literal["zh", "en", "ko"]
 
 
 @router.get("/settings/report")

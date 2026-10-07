@@ -102,7 +102,7 @@ export function WatchlistPage() {
         <div className="num text-xs text-muted">{r.code}</div>
       </>
     ) },
-    { key: 'close', title: t('最新价'), align: 'right', render: (r) => <span className="num">{fmtNum(r.close)}</span> },
+    { key: 'close', title: t('最新价'), align: 'right', render: (r) => <span className="num">{fmtNum(r.close)}{r.currency && r.currency !== 'CNY' ? ` ${r.currency}` : ''}</span> },
     { key: 'pct', title: t('涨跌幅'), align: 'right', render: (r) => <Pct value={r.change_pct} /> },
     { key: 'action', title: t('最近诊断'), render: (r) => <span className={verdictClass(r.diagnosis?.action_label)}>{t(r.diagnosis?.action_label ?? '未诊断')}</span> },
     { key: 'score', title: t('评分'), align: 'right', render: (r) => <span className="num">{r.diagnosis?.score ?? ''}</span> },

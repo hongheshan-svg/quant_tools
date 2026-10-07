@@ -15,6 +15,18 @@ KINDS = {
 FOLLOWUP = re.compile(r"^(它|他|这只|这个|那只|继续|再|那么|那|还有|为什么|what about|and |why)")
 
 
+def _refresh_targets(task):
+    """每个实体占据原位置；确认只替换对应槽位，不覆盖已解析的证券。"""
+    task['targets'] = []
+    task.pop('needs_confirmation', None)
+    for index, slot in enumerate(task.get('_target_slots', [])):
+        if slot.get('pending') is not None:
+            task.setdefault('needs_confirmation', {**slot['pending'], 'slot': index})
+        for item in slot.get('targets', []):
+            if item not in task['targets']:
+                task['targets'].append(item)
+
+
 def resolve(question, db_path, state=None, stock_context=None):
     state = state or {}
     pending = state.get("pending")
@@ -26,8 +38,13 @@ def resolve(question, db_path, state=None, stock_context=None):
             tasks = deepcopy(pending["tasks"])
             for task in tasks:
                 if task.get("needs_confirmation"):
-                    task["targets"] = [answer]
-                    task.pop("needs_confirmation", None)
+                    if '_target_slots' in task:
+                        slot = task['needs_confirmation']['slot']
+                        task['_target_slots'][slot] = {'targets': [answer]}
+                        _refresh_targets(task)
+                    else:
+                        task["targets"] = list(task.get('targets', [])) + [answer]
+                        task.pop("needs_confirmation", None)
                     break
             return _finish(tasks, state, stock_context)
         # 新话题使旧确认失效，不把新的行情或大盘请求当作同意。
@@ -48,6 +65,16 @@ def resolve(question, db_path, state=None, stock_context=None):
                 mentions.append((match.start(), match.end(), raw, exact[:1]))
             else:
                 mentions.append((match.start(), match.end(), raw, []))
+        for match in re.finditer(r"(?<![A-Za-z0-9])(?:HK[.:]?\d{1,5}|\d{4,6}\.(?:HK|T|KS|KQ|TW|TWO)|US[:.][A-Za-z]{1,5}(?:[-.][A-Za-z])?|[A-Z]{1,5}(?:[-.][A-Z])?)(?![A-Za-z0-9])", clause):
+            raw = match.group()
+            if raw in {"AI", "ETF", "AND", "OR", "US", "HK"}:
+                continue
+            found = search.search(raw, 10)
+            from src.utils.stock_code import overseas_identity
+            identity = overseas_identity(raw)
+            exact = [item for item in found if identity and item["code"] == identity.code]
+            if exact:
+                mentions.append((match.start(), match.end(), raw, exact[:1]))
         for code, name, _, kind in entries:
             for alias in (name, *ALIASES.get(code, ())):
                 if alias and len(alias) >= 2 and alias in clause:
@@ -64,15 +91,22 @@ def resolve(question, db_path, state=None, stock_context=None):
             for item in found:
                 if item not in group: group.append(item)
         ambiguous = None
+        slots = []
         for (_, _, alias), found in grouped.items():
             if len(found) == 1:
                 if found[0] not in targets: targets.append(found[0])
-            elif ambiguous is None:
-                ambiguous = {"name": alias, "candidates": found}
+                slots.append({'targets': found})
+            else:
+                unresolved = {"name": alias, "candidates": found}
+                slots.append({'targets': [], 'pending': unresolved})
+                if ambiguous is None:
+                    ambiguous = unresolved
         kinds = [kind for kind, pattern in KINDS.items() if re.search(pattern, clause, re.I)]
         if targets or ambiguous:
             stock_kind = "quote" if "quote" in kinds and "stock_analysis" not in kinds else "stock_analysis"
             tasks.append({"kind": stock_kind, "question": clause, "targets": targets, **({"needs_confirmation": ambiguous} if ambiguous is not None else {})})
+            tasks[-1]['_target_slots'] = slots
+            _refresh_targets(tasks[-1])
             for kind in kinds:
                 if kind in {"portfolio_risk", "strategy_screening", "sector_analysis"} or kind == 'market_review' and re.search(r'大盘|market review', clause, re.I):
                     tasks.append({"kind": kind, "question": clause, "targets": targets if kind == "sector_analysis" else []})
@@ -125,4 +159,6 @@ def _finish(tasks, state, stock_context=None):
         return {"tasks": tasks, "requires_confirmation": True, "state": {**state, "pending": pending},
                 "message": f"请确认「{ambiguous['name']}」对应的证券：" + "；".join(f"{i}. {item.get('name', '')}({item['code']})" for i, item in enumerate(ambiguous["candidates"], 1)) if ambiguous["candidates"] else f"未能明确识别「{ambiguous['name']}」，请提供证券代码或完整名称。"}
     recent = list(dict.fromkeys([item["code"] for task in reversed(tasks) for item in task["targets"]] + (state.get("recent_stocks") or [])))[:8]
+    for task in tasks:
+        task.pop('_target_slots', None)
     return {"tasks": tasks, "requires_confirmation": False, "state": {"pending": None, "recent_stocks": recent, "last_kind": tasks[-1]["kind"]}}

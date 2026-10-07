@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 from loguru import logger
 
+from src.notifier.astrbot import AstrBotNotifier
 from src.notifier.bark import BarkNotifier
 from src.notifier.dingtalk import DingTalkNotifier
 from src.notifier.discord import DiscordNotifier
@@ -45,8 +46,10 @@ NOTIFIERS = {
     "pushover": PushoverNotifier,
     "bark": BarkNotifier,
     "webhook": WebhookNotifier,
+    "astrbot": AstrBotNotifier,
 }
 CHANNEL_LABELS = {
+    "astrbot": "AstrBot",
     "wechat": "企业微信", "dingtalk": "钉钉", "feishu": "飞书", "email": "邮件",
     "telegram": "Telegram", "discord": "Discord", "slack": "Slack", "pushplus": "PushPlus", "serverchan": "Server酱",
     "ntfy": "ntfy", "gotify": "Gotify", "pushover": "Pushover", "bark": "Bark", "webhook": "自定义 Webhook",
@@ -54,7 +57,7 @@ CHANNEL_LABELS = {
 MESSAGE_KINDS = {"daily_report": "每日报告", "alert": "盘中提醒", "watchlist": "自选股仪表盘", "chat": "AI 问股",
                  "system_error": "系统错误"}
 # 支持发送图片（send_image）的渠道；notifier.image.channels 只有其中的渠道生效
-IMAGE_CHANNELS = {"wechat", "telegram", "email", "discord", "ntfy"}
+IMAGE_CHANNELS = {"slack", "feishu","wechat", "telegram", "email", "discord", "ntfy"}
 WEBHOOK_HOSTS = {"wechat": ("qyapi.weixin.qq.com",), "dingtalk": ("oapi.dingtalk.com",), "feishu": ("open.feishu.cn", "open.larksuite.com")}
 
 
@@ -68,6 +71,10 @@ def _f(key: str, label: str, required: bool = False, secret: bool = False, place
 
 # 新渠道的配置字段，Web 设置页据此通用渲染；旧渠道（企业微信、钉钉、飞书、邮件）有专用表单
 CHANNEL_FIELDS: dict[str, list[dict]] = {
+    "astrbot": [_f("url", "适配器地址", True), _f("token", "签名密钥", secret=True)],
+    "feishu": [_f("webhook_url", "Webhook 地址", secret=True), _f("secret", "Webhook 签名密钥", secret=True),
+        _f("app_id", "应用 App ID"), _f("app_secret", "应用 App Secret", secret=True),
+        _f("chat_id", "目标群 Chat ID"), _f("domain", "区域（feishu 或 lark）", default="feishu")],
     "telegram": [
         _f("bot_token", "Bot Token", True, True, "123456:ABC-DEF..."),
         _f("chat_id", "Chat ID", True, placeholder="用户、群组 ID 或 @频道名"),
@@ -75,7 +82,7 @@ CHANNEL_FIELDS: dict[str, list[dict]] = {
         _f("message_thread_id", "话题 ID（可空）", placeholder="超级群组的话题 message_thread_id"),
     ],
     "discord": [_f("webhook_url", "Webhook 地址", True, True, "https://discord.com/api/webhooks/...")],
-    "slack": [_f("webhook_url", "Incoming Webhook 地址", True, True, "https://hooks.slack.com/services/...")],
+    "slack": [_f("webhook_url", "Incoming Webhook 地址", secret=True), _f("bot_token", "Bot Token（图片需要）", secret=True), _f("channel_id", "频道 ID（Bot 模式）")],
     "pushplus": [
         _f("token", "Token", True, True),
         _f("topic", "群组编码（可空）", placeholder="一对多推送时填写"),
@@ -109,7 +116,7 @@ CHANNEL_FIELDS: dict[str, list[dict]] = {
 }
 URL_KEYS = ("api_base", "server", "url", "webhook_url")
 # 有固定域名的 Webhook：必须 https 且域名匹配
-STRICT_HOSTS = {"discord": ("discord.com", "discordapp.com"), "slack": ("hooks.slack.com",)}
+STRICT_HOSTS = {"feishu": ("open.feishu.cn", "open.larksuite.com"),"discord": ("discord.com", "discordapp.com"), "slack": ("hooks.slack.com",)}
 
 
 def secret_fields(name: str) -> list[str]:
@@ -126,6 +133,10 @@ def _channel_cfg(config: dict, name: str) -> dict:
 def is_configured(config: dict, name: str) -> bool:
     """配置是否完整；Webhook 还是示例占位符（含 your-）时不算。"""
     cfg = _channel_cfg(config, name)
+    if name in ("slack", "feishu"):
+        fields = ("bot_token", "channel_id") if name == "slack" else ("app_id", "app_secret", "chat_id")
+        valid = lambda key: bool(str(cfg.get(key) or "").strip()) and "your-" not in str(cfg.get(key))
+        return valid("webhook_url") or all(valid(k) for k in fields)
     if name == "email":
         return EmailNotifier.is_configured(cfg)
     if name in CHANNEL_FIELDS:
@@ -242,6 +253,10 @@ def send_email(config: dict, to: list[str] | str, title: str, content: str) -> b
 
 def _diagnose_fields(name: str, cfg: dict) -> list[str]:
     issues: list[str] = []
+    if name in ("slack", "feishu") and not is_configured({"notifier": {name: cfg}}, name):
+        issues.append("缺少 Webhook 或完整的应用凭据及目标群/频道")
+    if name == "feishu" and cfg.get("domain", "feishu") not in ("feishu", "lark"):
+        issues.append("区域只能是 feishu 或 lark")
     for f in CHANNEL_FIELDS[name]:
         value = str(cfg.get(f["key"]) or "").strip()
         if not value:

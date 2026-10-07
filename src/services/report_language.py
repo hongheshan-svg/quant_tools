@@ -1,4 +1,4 @@
-"""AI 输出语言（报告语言）：zh 中文 / en 英文。
+"""AI 输出语言（报告语言）：zh 中文 / en 英文 / ko 韩文。
 
 个股/ETF/指数诊断和分析员、策略会诊、审议按语言选完整模板；其他服务追加输出语言指令。
 英文诊断输入采用同一事实快照，源新闻、标的名称和用户自定义策略保留原文；
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-LANGUAGES = ("zh", "en")
+LANGUAGES = ("zh", "en", "ko")
 
 # 常用枚举的英文显示名
 LABELS_EN: dict[str, str] = {
@@ -32,13 +32,15 @@ def report_language(config: dict | None) -> str:
 
 
 def language_directive(lang: str, enums: str = "") -> str:
-    """输出语言指令：zh 返回空串；en 返回英文指令。enums 描述必须保持原样的枚举字段。"""
-    if lang != "en":
+    """输出语言指令：zh 返回空串；en/ko 指定对应输出语言。enums 描述必须保持原样的枚举字段。"""
+    if lang not in ("en", "ko"):
         return ""
     text = (
         "\n\nOutput language: write ALL free-text fields (summaries, reasons, analysis, "
         "risks, plans, conclusions) in English. Keep every JSON key exactly unchanged."
     )
+    if lang == "ko":
+        text = text.replace("in English", "in Korean (한국어)")
     if enums:
         text += (
             " The following enumerated fields must keep their original values verbatim "
@@ -50,7 +52,7 @@ def language_directive(lang: str, enums: str = "") -> str:
 
 def tr(lang: str, zh: str, en: str) -> str:
     """按语言选文案。"""
-    return en if lang == "en" else zh
+    return en if lang in ("en", "ko") else zh
 
 
 def display(lang: str, value: Any) -> Any:

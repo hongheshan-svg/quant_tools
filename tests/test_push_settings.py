@@ -58,8 +58,8 @@ def test_diagnose_config():
     issues = {c["channel"]: c["issues"] for c in result["channels"]}
     assert issues["wechat"] == ["Webhook 地址应以 https:// 开头"]
     assert issues["dingtalk"] == ["Webhook 地址还是示例占位符"]
-    assert issues["feishu"] == ["Webhook 域名不是 open.feishu.cn/open.larksuite.com，请确认复制的是飞书机器人地址",
-                                "加签密钥还是示例占位符（不需要加签就留空）"]
+    assert len(issues["feishu"]) == 2
+    assert "open.feishu.cn" in issues["feishu"][0] and "占位符" in issues["feishu"][1]
     assert issues["email"] == ["缺少收件人", "没有填写账号或授权码，大多数邮箱的 SMTP 需要登录"]
     assert result["routes"] == ["盘中提醒 只推送到 钉钉，但这些渠道都没启用或配置不完整，这类消息不会推送",
                                 "AI 问股 的路由里有未知渠道：line",

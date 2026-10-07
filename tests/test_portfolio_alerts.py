@@ -45,6 +45,7 @@ def db_path(tmp_path, monkeypatch):
     _reset_db_engine()
     init_db(path)
     alert_mod.reset_state()
+    monkeypatch.setattr("src.services.market_phase.current_phase", lambda *a, **k: {"phase": "post_market", "now": DAYS[-1] + "T23:59:59", "effective_daily_bar_date": DAYS[-1], "is_partial_bar": False})
     monkeypatch.setattr(trading_calendar, "_trade_days", set())            # 按周一至周五判断
     monkeypatch.setattr(trading_calendar, "in_trade_session", lambda now=None: True)
     monkeypatch.setattr(daily_history_mod, "ensure_daily_history", lambda *a, **k: 0)

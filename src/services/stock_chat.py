@@ -256,11 +256,11 @@ class StockChatSession:
             'strategy_screening': {'screening', 'market', 'theme'},
             'portfolio_risk': {'position', 'portfolio_risk', 'market'},
         }.get(intent)
-        if allowed is not None and name not in allowed:
+        if allowed is not None and name not in allowed and not (name.startswith("fxmacrodata_") and intent in ("market_review", "sector_analysis", "portfolio_risk")):
             return '工具被拒绝：超出当前任务的只读工具范围'
         from src.utils.stock_code import resolve_identity
         context_code = (turn.stock_context or {}).get("code")
-        if context_code and name not in ("market", "watchlist"):
+        if context_code and name not in ("market", "watchlist") and not name.startswith("fxmacrodata_"):
             try:
                 expected = resolve_identity(context_code).code
                 if name == "web_search":

@@ -32,7 +32,7 @@ from src.database.models import DecisionSignal
 DIRECTIONS = {"buy": 1, "add": 1, "reduce": -1, "sell": -1, "avoid": -1}
 DEFAULT_HORIZON = 5
 MAX_HORIZON = 20
-MIN_REVIEW_SAMPLES = 3
+MIN_REVIEW_SAMPLES = 10
 BIAS_HIT_RATE = 40.0          # 同方向命中率低于该值（%）视为判断偏差
 FEEDBACKS = ("useful", "not_useful")
 TERMINAL_STATUSES = ("expired", "hit_target", "hit_stop")
@@ -249,27 +249,49 @@ class DecisionSignalService:
 
     def review(self, code: str, limit: int = 20) -> dict[str, Any]:
         """某只标的最近已结束的信号复盘，供诊断提示词和个股页使用。"""
-        code = (code or "").strip().lower()
+        from src.services.outcome_engine import OutcomeEngine, reliable_outcome, HORIZONS
+        from src.database.models import ResearchOutcome
+        from src.utils.stock_code import diagnosis_code, code_candidates
+        code = diagnosis_code(code)
+        version = OutcomeEngine(self.config).version
         with get_db_session(self.db_path) as session:
             rows = (
-                session.query(DecisionSignal).filter(DecisionSignal.code == code, DecisionSignal.status != "active")
+                session.query(DecisionSignal).filter(DecisionSignal.code.in_(code_candidates(code)), DecisionSignal.status != "active")
                 .order_by(DecisionSignal.created_at.desc(), DecisionSignal.id.desc()).limit(limit).all()
             )
             signals = [self._to_dict(r) for r in rows]
-        judged = [(s, self.is_hit(s)) for s in signals]
-        judged = [(s, h) for s, h in judged if h is not None]
+            outcomes = {(o.owner_id, o.horizon): o for o in session.query(ResearchOutcome).filter(
+                ResearchOutcome.owner_type == 'signal', ResearchOutcome.owner_id.in_([r.id for r in rows]),
+                ResearchOutcome.engine_version == version).all()}
+            judged, pending, unable, weak = [], 0, 0, 0
+            for signal in signals:
+                horizon = max((n for n in HORIZONS if n <= (signal.get('horizon_days') or DEFAULT_HORIZON)), default=1)
+                outcome = outcomes.get((signal['id'], horizon))
+                if outcome is None or outcome.status == 'pending':
+                    pending += 1
+                elif not reliable_outcome(outcome, version):
+                    unable += 1
+                    weak += outcome.status == 'evaluated'
+                else:
+                    judged.append(({**signal, 'ret_5d': outcome.return_pct}, outcome.hit))
         samples = len(judged)
         hits = sum(1 for _, h in judged if h)
         adverse_long = [s["max_adverse_pct"] for s, _ in judged if DIRECTIONS[s["action"]] > 0 and s["max_adverse_pct"] is not None]
         out: dict[str, Any] = {
             "code": code, "samples": samples, "hits": hits,
+            "total": len(signals), "completed": samples, "unable": unable, "pending": pending,
+            "unable_rate": round((unable + pending) / len(signals) * 100, 1) if signals else 0,
+            "engine_version": version, "confidence_adjustment": "observe", "limitations": [],
             "hit_rate": round(hits / samples * 100, 1) if samples else None,
             "avg_ret": _avg([s["ret_5d"] for s, _ in judged if s["ret_5d"] is not None]),
             "avg_adverse": _avg(adverse_long), "bias": "", "text": "",
         }
-        if samples < MIN_REVIEW_SAMPLES:
-            out["text"] = f"样本不足（{samples} 条）"
+        if samples < MIN_REVIEW_SAMPLES or out['unable_rate'] > 50 or weak:
+            out['limitations'] = (["insufficient_samples"] if samples < MIN_REVIEW_SAMPLES else []) + \
+                (["low_evaluation_coverage"] if out['unable_rate'] > 50 else []) + (["weak_data_quality"] if weak else [])
+            out["text"] = f"仅供观察：{len(signals)} 条信号中 {samples} 条有效评估、{unable} 条无法评估、{pending} 条待评估；证据不足，不调整信心"
             return out
+        out['confidence_adjustment'] = 'neutral'
         bias = "正常"
         for direction, label in ((1, "偏乐观"), (-1, "偏悲观")):
             group = [h for s, h in judged if DIRECTIONS[s["action"]] == direction]
@@ -277,6 +299,7 @@ class DecisionSignalService:
                 bias = label
                 break
         out["bias"] = bias
+        out['confidence_adjustment'] = 'downgrade' if bias != '正常' else 'neutral'
         text = f"近 {samples} 次信号命中 {hits} 次（{hits / samples * 100:.0f}%）"
         if adverse_long:
             text += f"，看多后平均最大回撤 {_avg(adverse_long):.1f}%"
@@ -355,9 +378,15 @@ class DecisionSignalService:
             return {'status': 'unknown', 'signals': {}, 'reason': 'signal_query_failed'}
 
     def list(self, status: str | None = None, action: str | None = None, code: str | None = None,
-             days: int = 90, limit: int = 50, offset: int = 0, profile: str | None = None) -> dict[str, Any]:
+             days: int = 90, limit: int = 50, offset: int = 0, profile: str | None = None,
+             valid_only: bool = False) -> dict[str, Any]:
         with get_db_session(self.db_path) as session:
             query = session.query(DecisionSignal)
+            if valid_only:
+                from src.utils.timestamps import quote_now
+                day = quote_now().date().isoformat()
+                query = query.filter(DecisionSignal.status == 'active', DecisionSignal.trade_date <= day,
+                                     DecisionSignal.expires_on.is_(None) | (DecisionSignal.expires_on >= day))
             if days:
                 query = query.filter(DecisionSignal.created_at >= datetime.now() - timedelta(days=days))
             if status:

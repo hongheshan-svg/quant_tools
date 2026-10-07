@@ -1,6 +1,6 @@
 // 统一请求封装：带 Cookie，错误转成 ApiError；401 时广播 auth:required 让页面跳转登录
 import { t } from '@/i18n'
-import { allowDiscardDrafts, isSettingsWritePending, setSettingsWritePending } from '@/utils/settingsDrafts'
+import { allowDiscardDrafts, isSettingsWritePending, setSettingsWritePending, trackSettingsRead } from '@/utils/settingsDrafts'
 
 export const API_BASE = '/api/v1'
 
@@ -26,10 +26,13 @@ export async function request<T>(path: string, init: RequestInit = {}): Promise<
   if (mutation && isSettingsWritePending()) throw new ApiError(t('设置操作正在进行，请等待完成后重试'), 409)
   if ((path === '/settings/import' || path === '/auth/logout' || (path.startsWith('/settings/') && init.method === 'DELETE')) && !allowDiscardDrafts()) throw new ApiError('已取消，未保存草稿仍保留', 0)
   if (mutation) setSettingsWritePending(true)
+  const settingsRead = (!init.method || init.method === 'GET') && path.startsWith('/settings/')
+  if (settingsRead) trackSettingsRead(1)
   try {
     return await performRequest<T>(path, init)
   } finally {
     if (mutation) setSettingsWritePending(false)
+    if (settingsRead) trackSettingsRead(-1)
   }
 }
 

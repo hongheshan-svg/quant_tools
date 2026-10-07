@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -89,15 +89,16 @@ STOCKS = {
 
 
 @pytest.fixture
-def config(tmp_path):
+def config(tmp_path, monkeypatch):
     path = str(tmp_path / "screen.db")
     _reset_db_engine()
     init_db(path)
+    monkeypatch.setattr("src.services.market_phase.current_phase", lambda *a, **k: {"phase": "post_market", "now": TRADE_DATE + "T16:00:00", "effective_daily_bar_date": TRADE_DATE, "is_partial_bar": False})
     with get_db_session(path) as session:
         for code, (name, bars) in STOCKS.items():
             db_code = f"sh{code}" if code == "600001" else code  # 混合代码格式
             for day, bar in zip(DAYS, bars):
-                session.add(StockDaily(code=db_code, name=name, trade_date=day, **bar))
+                session.add(StockDaily(code=db_code, name=name, trade_date=day, updated_at=datetime.fromisoformat(day + "T16:00:00"), **bar))
         # 主线：今天 4 家「海峡两岸」涨停；补涨股 10 个交易日前因该题材涨停
         for i in range(4):
             session.add(LimitUpStock(code=f"60010{i}", name=f"题材{i}", trade_date=TRADE_DATE, concepts="海峡两岸", continuous_days=1))

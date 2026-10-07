@@ -44,7 +44,7 @@ def build_context_pack(context: dict, run_log=None) -> dict[str, Any]:
     sections = split_sections(context.get("text", ""))
     steps = {s["name"]: s for s in (run_log.to_dict()["steps"] if run_log else [])}
     pack = AnalysisContextPack(subject={"code": identity.code, "stock_name": context.get("name", ""),
-                                       "kind": context.get("kind") or identity.kind, "market": "CN", "currency": "CNY"},
+                                       "kind": context.get("kind") or identity.kind, "market": identity.market, "currency": identity.currency},
                                phase=context.get("phase") or {}, data_quality=quality)
     specifications = {
         "quote": ("行情", quote, quote.get("source") or "本地日线", quote.get("trade_date")),
@@ -82,7 +82,11 @@ def build_context_pack(context: dict, run_log=None) -> dict[str, Any]:
             status = "estimated"
         elif key in ("quote", "daily", "technical", "chips") and not missing:
             from src.services.data_freshness import daily_quality
-            freshness = daily_quality(as_of, times['fetched_at'], phase=context.get('phase') or {}, allow_partial=key == 'quote')
+            if identity.market == 'CN':
+                freshness = daily_quality(as_of, times['fetched_at'], phase=context.get('phase') or {}, allow_partial=key == 'quote')
+            else:
+                from src.services.overseas_market import quote_quality
+                freshness = quote_quality(quote, identity.market)
             status = freshness['status']
         values = value if isinstance(value, dict) else {"evidence" if isinstance(value, list) else "summary": value}
         pack.blocks[key] = ContextBlock(status=status, source=source, as_of=as_of, **times,
@@ -108,6 +112,9 @@ def local_context_pack(code: str, db_path: str) -> dict:
     from src.database.db import get_db_session
     from src.database.models import ResearchCache, FinanceNews
     identity = resolve_identity(code)
+    if identity.market != "CN":
+        from src.services.overseas_research import OverseasResearchService
+        return OverseasResearchService({"database": {"sqlite_path": db_path}}).snapshot(identity.code)["context_pack"]
     query = DataQueryService(db_path)
     if identity.kind != "stock":
         from src.collectors.fund_data import get_fund_daily
@@ -124,7 +131,8 @@ def local_context_pack(code: str, db_path: str) -> dict:
         except (TypeError, ValueError):
             fundamentals = None
         news = session.query(FinanceNews).filter(FinanceNews.title.contains(identity.code), FinanceNews.news_time >= datetime.now() - timedelta(days=7), FinanceNews.news_time <= datetime.now()).order_by(FinanceNews.news_time.desc()).limit(10).all()
-    return build_context_pack({"code": identity.code, "name": quote.get("name", ""), "quote": quote,
+    from src.services.market_phase import current_phase
+    return build_context_pack({"code": identity.code, "name": quote.get("name", ""), "quote": quote, "phase": current_phase(),
         "daily": {"bars": bars}, "fundamentals": fundamentals,
         "data_quality": {"bar_count": len(bars)}, "news_evidence": [{"title": n.title, "source": n.source,
         "news_time": str(n.news_time or ""), "collected_at": iso_timestamp(n.collected_at)} for n in news]})
@@ -173,7 +181,7 @@ def build_research_artifact(result: dict, report_id: int | None = None) -> dict[
     artifact = ResearchArtifact(
         artifact_id=f"diagnosis:{report_id}" if report_id else f"diagnosis:{identity.code}:{result.get('created_at', '')}",
         source_report_id=report_id, created_at=result.get("created_at"),
-        subject={"stock_code": identity.code, "stock_name": result.get("name", ""), "market": "CN"},
+        subject={"stock_code": identity.code, "stock_name": result.get("name", ""), "market": identity.market, "currency": identity.currency},
         thesis={"direction": "bullish" if action in ("buy", "add") else "bearish" if action in ("reduce", "sell", "avoid") else "neutral",
                 "summary": result.get("one_sentence") or "", "score": valid_score(result.get("score")),
                 "confidence": {"高": 0.8, "中": 0.5, "低": 0.2}.get(result.get("confidence")),

@@ -217,6 +217,10 @@ global_data:
 
 # --- 消息推送配置 ---
 notifier:
+  astrbot:
+    enabled: false
+    url: ""
+    token: ""
   # 每日报告：定时任务在 scheduler.daily_report_time 推送，界面上的 AI 涨停预测完成后也会推送
   # 内容：大盘复盘、交易信号（含价格计划）、待确认订单、模拟盘账户、近 60 天信号绩效
   daily_report_enabled: true
@@ -246,6 +250,10 @@ notifier:
     secret: "your-secret"
   # 飞书自定义机器人（安全设置选「签名校验」时填写 secret）
   feishu:
+    app_id: ""
+    app_secret: ""
+    chat_id: ""
+    domain: "feishu"
     enabled: false
     webhook_url: "https://open.feishu.cn/open-apis/bot/v2/hook/your-hook"
     secret: ""
@@ -275,6 +283,8 @@ notifier:
     webhook_url: ""
   # Slack：api.slack.com/apps 创建应用并启用 Incoming Webhooks，复制 Webhook 地址
   slack:
+    bot_token: ""
+    channel_id: ""
     enabled: false
     webhook_url: ""
   # PushPlus：pushplus.plus 微信扫码登录后在「个人中心」获取 token；topic 填群组编码可一对多推送
@@ -411,6 +421,9 @@ bot:
   workers: 2            # 同时处理的消息数
 
 screening:
+  selection_variant:
+    rotation_ratio: 0.5       # 匿名近分轮换只影响后半名额，0 关闭
+    max_score_gap: 1.5        # 候选不低于原截止分超过 1.5 分
   enabled: true
   rules_file: config/screening_rules.yaml  # 不存在时使用同名 .example
   profiles_file: config/scoring_profiles.yaml
@@ -571,3 +584,23 @@ logging:
   rotation: "10 MB"
   retention: "30 days"
   log_dir: "logs"
+
+# 扩展接入，凭据也可使用 QUANT__INTEGRATIONS__... 环境变量。
+integrations:
+  fxmacrodata:
+    api_key: ""
+  adanos:
+    api_key: ""
+  longbridge:
+    app_key: ""
+    app_secret: ""
+    access_token: ""
+  futu:
+    host: "127.0.0.1"
+    port: 11111
+  runtime:
+    timeout_seconds: 300
+    codex_cli: "codex"
+    claude_code_cli: "claude"
+    opencode_cli: "opencode"
+    hermes_url: "http://127.0.0.1:8642/v1"

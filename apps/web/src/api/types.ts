@@ -2,6 +2,8 @@
 
 export type Dict<T = unknown> = Record<string, T>
 
+export interface ScreeningRequest { variant_seed?: string }
+
 export interface Task<R = unknown> {
   revision?: number
   trace_id?: string
@@ -404,7 +406,7 @@ export interface StockProfile {
   history: ProfileBlock<{ total: number; history_days: number; recent_reports: DiagnosisHistoryItem[] }>
   intelligence: ProfileBlock<{ items: ScopedIntelligenceItem[] }>
   portfolio: ProfileBlock<{ held: boolean; holdings: { source: string; label: string; quantity: number; avg_cost: number; market_price: number; unrealized_pnl_pct: number | null }[] }>
-  signals: ProfileBlock<{ active: { id: number; action_label: string; stop_loss: number | null; target_price: number | null }[] }>
+  signals: ProfileBlock<{ active: { id: number; expires_on?: string | null; action_label: string; stop_loss: number | null; target_price: number | null }[] }>
   monitors: ProfileBlock<{ in_watchlist: boolean; alert_rules: { type: string; text: string; note: string }[] }>
 }
 
@@ -514,7 +516,7 @@ export interface ScreeningPick {
 }
 
 export interface ScreeningSettings {
-  screening: { profiles_file?: string; pipeline?: Record<string, number | boolean>; max_total?: number; [key: string]: unknown }
+  screening: { selection_variant?: { rotation_ratio?: number; max_score_gap?: number }; profiles_file?: string; pipeline?: Record<string, number | boolean>; max_total?: number; [key: string]: unknown }
   profiles: { name: string; label?: string; enabled?: boolean; weights: Record<string, number>; conditions?: unknown[]; [key: string]: unknown }[]
 }
 
@@ -748,6 +750,14 @@ export interface DecisionSignalStats {
 }
 
 export interface SignalReview {
+  total?: number
+  completed?: number
+  unable?: number
+  pending?: number
+  unable_rate?: number
+  engine_version?: string
+  confidence_adjustment?: string
+  limitations?: string[]
   samples: number
   hits: number
   hit_rate: number | null
@@ -796,11 +806,17 @@ export interface DiagnosisOutcomes {
 // ---------- 问股 ----------
 
 export interface SkillPerformanceRow {
+  total?: number
+  unable?: number
+  pending?: number
+  unable_rate?: number
+  engine_version?: string
+  horizons?: Record<string, { samples: number; total: number; hit_rate: number | null; unable: number; pending: number }>
   skill: string
   display_name: string
   samples: number
   hits: number
-  hit_rate: number
+  hit_rate: number | null
   avg_ret: number | null
   weight: number
 }
@@ -883,6 +899,8 @@ export interface ChatSession {
 // ---------- 自选股 ----------
 
 export interface WatchlistRow {
+  market?: string
+  currency?: string
   quote_quality?: { status: string; reason?: string; expected_date?: string }
   state?: { status: string; label: string; next_action: 'wait' | 'retry_query' | 'analyze' | 'view_report'; reason: string; task_id?: string }
   quote_source?: string | null
@@ -1294,7 +1312,7 @@ export interface NotifierSettings {
   image_channels?: string[]
 }
 
-export type ReportLanguage = 'zh' | 'en'
+export type ReportLanguage = 'zh' | 'en' | 'ko'
 
 export interface ReportSettings {
   language: ReportLanguage
@@ -1467,3 +1485,30 @@ export interface ScreeningSourceHistory {
     local_reads: { dataset: string; source: string; trade_date: string; rows: number }[]
   } }[]
 }
+
+export interface IntegrationSettings {
+  settings: Record<string, Record<string, string | number>>
+  groups: { key: string; label: string; fields: { key: string; label: string; secret: boolean; type: string }[] }[]
+}
+export interface MacroOperation {
+  name: string
+  description: string
+  parameters: { properties?: Record<string, { type?: string; description?: string; enum?: string[]; default?: unknown }>; required?: string[] }
+}
+export interface RuntimeStatus { provider: string; available: boolean | null; reason: string; capabilities: string[] }
+export interface OverseasSnapshot {
+  code: string; name: string; market: string; currency: string; research_only: boolean
+  bars: DailyBar[]; quote: Partial<DailyBar> & { source?: string }; technical: Record<string, number | null>
+  quality: { status: string; limitations: string[] }
+  phase: { timezone: string; now: string; phase: string; effective_daily_bar_date: string | null; calendar_verified: boolean }
+  attempts: { provider: string; status: string }[]
+  refresh_status?: string
+}
+export interface OverseasPortfolio {
+  positions: { account: string; code: string; currency: string; quantity: number; average_cost: number | null; price: number | null;
+    market_value: number | null; market_value_cny: number | null; as_of: string; quote_date: string | null;
+    price_quality: { status: string; limitations: string[] }; fx: { status: string; rate?: number; as_of?: string } }[]
+  status: string; market_value_cny: number | null; base_currency: string; limitations: string[]
+}
+export interface HoldingsImportResult { ok: boolean; saved: number; rows: Record<string, unknown>[]; errors: { line: number; error: string }[] }
+export interface RuntimeAnswer { answer: string; session_id: string; tools: { name: string; success: boolean }[] }

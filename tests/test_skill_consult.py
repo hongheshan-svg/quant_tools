@@ -233,6 +233,20 @@ def test_evaluate_bearish_hit_and_ignores_non_trade_rows(svc, db):
     assert rows["b"].hit is True
 
 
+def _certify_samples(path):
+    """权重算法测试使用明确绑定当前版本的可靠后验。"""
+    import hashlib
+    from src.database.models import ResearchOutcome
+    from src.services.outcome_engine import OutcomeEngine
+    with get_db_session(path) as session:
+        for row in session.query(SkillOpinion).filter(SkillOpinion.hit.isnot(None)):
+            skill = get_skill(row.skill)
+            row.skill_version = hashlib.sha256((skill.instructions if skill else row.skill).encode()).hexdigest()
+            session.add(ResearchOutcome(owner_type="skill", owner_id=row.id,
+                horizon=5, engine_version=OutcomeEngine({}).version, status="evaluated",
+                hit=row.hit, return_pct=row.ret_5d, data_quality_json='{"calendar_verified":true}'))
+
+
 def test_performance_only_counts_hit_samples_and_percent(svc, db):
     with get_db_session(db) as s:
         for i in range(10):
@@ -242,6 +256,7 @@ def test_performance_only_counts_hit_samples_and_percent(svc, db):
             s.add(SkillOpinion(code="600519", skill="limit_up_relay", stance="中性", score=50, trade_date="2026-09-21", created_at=datetime.now()))
         s.add(SkillOpinion(code="600519", skill="dragon_head", stance="看空", score=20, trade_date="2026-09-21",
                            ret_5d=-2.0, hit=True, created_at=datetime.now() - timedelta(days=200)))  # 超出统计窗口
+    _certify_samples(db)
     perf = {p["skill"]: p for p in svc.performance(90)}
     assert set(perf) == {"limit_up_relay"}
     row = perf["limit_up_relay"]
@@ -262,6 +277,7 @@ def test_weights_rules(svc, db):
     add("low", 40, 16)
     add("small", 29, 29)  # 样本不足 -> 1.0
     add("capped_low", 30, 0)
+    _certify_samples(db)
     w = svc.weights(90)
     assert w["high"] == pytest.approx(1.109, abs=0.001) and w["low"] == pytest.approx(0.964, abs=0.001)
     assert w["small"] == 1.0 and w["capped_low"] == pytest.approx(0.824, abs=0.001)
@@ -366,6 +382,7 @@ def test_api_skill_performance(env):
         for i in range(4):
             s.add(SkillOpinion(code=f"600{i:03d}", skill="limit_up_relay", stance="看多", score=70, trade_date="2026-09-21",
                                ret_5d=2.0, hit=i < 3, created_at=datetime.now()))
+    _certify_samples(config["database"]["sqlite_path"])
     r = client.get("/api/v1/chat/skills/performance?days=90")
     assert r.status_code == 200
     rows = r.json()

@@ -133,8 +133,8 @@ class FundDiagnosisService(StockDiagnosisService):
             message += "\n" + opinions_text(opinions, conflict, lang)
         decision_start = time.perf_counter()
         budget.check("决策")
-        prompt = FUND_SYSTEM_PROMPT_EN if lang == "en" else FUND_SYSTEM_PROMPT
-        addendum = DECISION_ADDENDUM_EN if lang == "en" else DECISION_ADDENDUM
+        prompt = FUND_SYSTEM_PROMPT_EN if lang in ("en", "ko") else FUND_SYSTEM_PROMPT
+        addendum = DECISION_ADDENDUM_EN if lang in ("en", "ko") else DECISION_ADDENDUM
         raw = self.llm.chat_json(user_message=message, system_message=prompt + (addendum if opinions else "")
                                   + language_directive(lang, DIAGNOSIS_ENUMS))
         run_log.llm("决策", model, bool(raw), (time.perf_counter() - decision_start) * 1000)
@@ -296,7 +296,7 @@ class FundDiagnosisService(StockDiagnosisService):
             "大盘环境": regime, "相关资讯": news_facts(news_lines, web_status), "数据完整度": data_quality,
             "Applicability": "Individual-stock fund flows, chips, earnings, announcements and holdings are not supplied. An index cannot be traded directly. No theme match is not bearish evidence.",
             **({"Historical signal review": self._signal_review_section(code, "en")} if review_section else {}),
-        }) if report_language(self.config) == "en" else ""
+        }) if report_language(self.config) in ("en", "ko") else ""
         return {
             "code": code, "name": name, "kind": kind, "quote": quote, "tech": tech, "role": {}, "regime": regime,
             "position": None, "real_position": None, "text": "\n".join(sections), "text_en": text_en, "data_quality": data_quality,

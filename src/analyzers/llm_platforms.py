@@ -122,3 +122,7 @@ AI_PLATFORMS: dict[str, dict] = {
         "default_model": "",
     },
 }
+
+# 专用本地后端，模型名 default 使用本地登录配置的默认模型。
+for _provider, _name in (("codex_cli", "Codex CLI"), ("claude_code_cli", "Claude Code CLI"), ("opencode_cli", "OpenCode CLI"), ("hermes", "Hermes 本机服务")):
+    AI_PLATFORMS[_provider] = {"name": _name, "base_url": "http://127.0.0.1:8642/v1" if _provider == "hermes" else "", "models": ["hermes-agent" if _provider == "hermes" else "default"], "default_model": "hermes-agent" if _provider == "hermes" else "default"}

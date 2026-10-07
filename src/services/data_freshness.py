@@ -34,7 +34,7 @@ def daily_quality(trade_date: str | None, fetched_at=None, *, phase: dict | None
         return {**result, "status": "missing", "limitations": ["invalid_quote_date"]}
     # 无完整交易日上下文时保留未知边界，不以入库时间证明新鲜。
     if not expected:
-        return result
+        return {**result, "status": "partial", "limitations": ["market_phase_unknown"]}
     today = str(phase.get("now") or "")[:10]
     reasons = []
     if str(trade_date) > (today or expected) or not trading_calendar.is_trade_day(day):

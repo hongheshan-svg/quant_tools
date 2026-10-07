@@ -258,6 +258,37 @@ class AlertRule(Base):
     updated_at = Column(DateTime, default=datetime.now)
 
 
+class OverseasTrade(Base):
+    """海外券商成交记录，原币费用，导入键去重。"""
+    __tablename__ = "overseas_trade"
+    id = Column(Integer, primary_key=True)
+    account = Column(String(100), nullable=False)
+    import_key = Column(String(64), nullable=False)
+    code = Column(String(20), nullable=False)
+    currency = Column(String(3), nullable=False)
+    trade_date = Column(String(10), nullable=False)
+    side = Column(String(4), nullable=False)
+    quantity = Column(Float, nullable=False)
+    price = Column(Float, nullable=False)
+    fee = Column(Float, nullable=False, default=0)
+    __table_args__ = (Index("idx_overseas_trade_import", "account", "import_key", unique=True),)
+
+
+class OverseasHolding(Base):
+    """券商导入的海外持仓快照，原币成本与 A 股账本分开存储。"""
+    __tablename__ = "overseas_holding"
+    id = Column(Integer, primary_key=True)
+    account = Column(String(100), nullable=False)
+    code = Column(String(20), nullable=False)
+    currency = Column(String(3), nullable=False)
+    quantity = Column(Float, nullable=False)
+    average_cost = Column(Float)
+    as_of = Column(String(10), nullable=False)
+    source = Column(String(30), nullable=False)
+    updated_at = Column(DateTime, default=datetime.now)
+    __table_args__ = (Index("idx_overseas_holding_account_code", "account", "code", unique=True),)
+
+
 class ResearchCache(Base):
     __tablename__ = "research_cache"
     key = Column(String(100), primary_key=True)

@@ -127,9 +127,8 @@ def test_real_account_risk_and_alerts(config, tmp_path, monkeypatch):
 
     service.set_cash(100_000.0, as_of=datetime(2026, 9, 25, 9, 0))
     report = PortfolioRiskService(config, account="real").report()
-    assert report["cash_known"] is True and report["exposure"] == pytest.approx(
-        (155_000 + 10_000) / (100_000 + 155_000 + 10_000) * 100, abs=0.1)
-    assert "总仓位 62% 高于大盘「防守」环境建议的 30%" in report["warnings"]
+    assert report["cash_known"] is True and report["exposure"] is None  # 缺少当前有效行情，不把旧价当可靠仓位
+    assert not any("总仓位 62%" in warning for warning in report["warnings"])
 
     # 盘中提醒覆盖实盘持仓
     alert_mod.reset_state()

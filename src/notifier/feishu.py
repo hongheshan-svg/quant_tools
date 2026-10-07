@@ -6,6 +6,7 @@ import base64
 import hashlib
 import hmac
 import time
+import json
 
 import httpx
 from loguru import logger
@@ -24,6 +25,39 @@ class FeishuNotifier:
         self.enabled = fs_cfg.get("enabled", False)
         self.webhook_url = fs_cfg.get("webhook_url", "")
         self.secret = fs_cfg.get("secret", "")
+        self.app_id = fs_cfg.get("app_id", "")
+        self.app_secret = fs_cfg.get("app_secret", "")
+        self.chat_id = fs_cfg.get("chat_id", "")
+        self.domain = "https://open.larksuite.com" if fs_cfg.get("domain") == "lark" else "https://open.feishu.cn"
+        self._token = ""
+        self._expires = 0
+
+    def _headers(self) -> dict:
+        if not self._token or time.monotonic() >= self._expires:
+            data = httpx.post(self.domain + "/open-apis/auth/v3/tenant_access_token/internal",
+                json={"app_id": self.app_id, "app_secret": self.app_secret}, timeout=10).json()
+            if data.get("code") != 0 or not data.get("tenant_access_token"):
+                raise RuntimeError("飞书应用认证失败")
+            self._token = data["tenant_access_token"]
+            self._expires = time.monotonic() + max(1, int(data.get("expire", 7200)) - 60)
+        return {"Authorization": "Bearer " + self._token}
+
+    def _app_message(self, kind: str, content: dict) -> bool:
+        response = httpx.post(self.domain + "/open-apis/im/v1/messages", params={"receive_id_type": "chat_id"},
+            headers=self._headers(), json={"receive_id": self.chat_id, "msg_type": kind,
+            "content": json.dumps(content, ensure_ascii=False)}, timeout=15)
+        return response.status_code == 200 and response.json().get("code") == 0
+
+    def send_image(self, title: str, image: bytes) -> bool:
+        if not self.enabled or not all((self.app_id, self.app_secret, self.chat_id)):
+            return False
+        try:
+            result = httpx.post(self.domain + "/open-apis/im/v1/images", headers=self._headers(),
+                data={"image_type": "message"}, files={"image": ("report.png", image, "image/png")}, timeout=30).json()
+            return result.get("code") == 0 and self._app_message("image", {"image_key": result["data"]["image_key"]})
+        except Exception:
+            logger.warning("飞书应用图片推送失败，请检查权限及群聊成员关系")
+            return False
 
     def _security_fields(self) -> dict:
         """签名校验：以「时间戳\\n密钥」为 HMAC 密钥对空消息签名（飞书规则）。"""
@@ -40,7 +74,7 @@ class FeishuNotifier:
             logger.debug("飞书推送未启用")
             return False
 
-        if not self.webhook_url:
+        if not self.webhook_url and not all((self.app_id, self.app_secret, self.chat_id)):
             logger.warning("飞书 webhook URL 未配置")
             return False
 
@@ -60,6 +94,8 @@ class FeishuNotifier:
         }
 
         try:
+            if all((self.app_id, self.app_secret, self.chat_id)):
+                return self._app_message("interactive", payload["card"])
             resp = httpx.post(self.webhook_url, json=payload, timeout=10)
             data = resp.json()
             if data.get("code", data.get("StatusCode")) == 0:

@@ -94,4 +94,7 @@ app.state.chat_store._factory = lambda cfg: StockChatSession(cfg, llm=OfflineLLM
 if os.environ.get('QUANT_AUDIT_FIXES') == '1':
     from scripts.dsa_fix_fixture import seed
     seed(app)
+if os.environ.get('QUANT_AUDIT_EXTENSIONS') == '1':
+    from scripts.dsa_extension_fixture import seed
+    seed(app)
 uvicorn.run(app, host='127.0.0.1', port=int(sys.argv[1]) if len(sys.argv) > 1 else 8766, log_level='warning')

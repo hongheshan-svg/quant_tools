@@ -2,6 +2,8 @@
 
 从财经快讯、社交热搜、行情和国际市场等多个来源采集数据，由大语言模型（LLM）分析舆情，再用多因子加权模型给涨停股打分，预测下一交易时段最可能涨停的股票，并生成交易信号和模拟盘订单。系统会根据历史信号的实际结果自动调整因子权重。
 
+“海外研究”和“扩展接入”提供港美日韩台研究、券商 CSV 持仓/成交导入、原币与人民币估值、72 项宏观工具、本地 CLI/App Server 模型，以及 OpenClaw/Grok Bot 接入示例。新增飞书/Lark 与 Slack Bot、AstrBot、韩文报告和美股社交证据；配置及边界见[扩展接入指南](docs/integrations.md)，本轮质量修复见[对齐验收](docs/dsa_full_alignment_2026-10-07.md)。
+
 > **免责声明：** 本项目仅供学习和研究使用，输出结果不构成任何投资建议。股市有风险，据此操作风险自负。
 
 ## 功能
@@ -42,7 +44,7 @@
 - **AI 用量统计：** 大模型通过 LiteLLM 接入，每个模型可填多个 API Key（被拒绝或限流时自动换下一个，该 Key 冷却 10 分钟），支持 Claude、Gemini、Ollama 本地模型和所有兼容 OpenAI 接口的平台；每次调用的 token 和估算费用按天、功能、模型汇总；设置页「获取模型列表」按需联网获取指定 API 的可用模型；模型不支持某参数时自动调整后重试（无需手动设置），「测试连接」返回中文诊断说明。
 - **定时任务与配置备份：** Web【设置】可查看各定时任务的触发规则和下次运行时间并立即运行；配置可导出备份（默认隐藏密钥）和导入恢复。
 - **多种运行方式：** Web 界面（React + FastAPI，可在手机上用）、Electron 桌面端（Windows 安装包、macOS dmg、Linux AppImage，支持自动更新）、Docker、GitHub Actions 定时运行、无界面定时任务。
-- **国际化：** 界面支持中文/英文切换（顶栏和登录页的语言按钮，浏览器会记住选择），设置和帮助按界面语言切换；AI 输出语言独立配置（【设置 → AI 模型 → AI 输出语言】），诊断、复盘、问股等 AI 回答可选中文或英文输出。个股与 ETF/指数诊断使用完整英文决策、分析员、策略会诊和审议模板；19 个内置策略提供英文规则，JSON 字段及枚举保持兼容。
+- **国际化：** 界面支持中文/英文切换（顶栏和登录页的语言按钮，浏览器会记住选择），设置和帮助按界面语言切换；AI 输出语言独立配置（【设置 → AI 模型 → AI 输出语言】），诊断、复盘、问股等 AI 回答可选中文、英文或韩文输出。个股与 ETF/指数诊断使用完整英文决策、分析员、策略会诊和审议模板；19 个内置策略提供英文规则，JSON 字段及枚举保持兼容。
 
 ## 数据源
 
@@ -78,6 +80,7 @@
 ## 环境要求
 
 - Python 3.10 及以上（CI 使用 3.12，也在 3.14 上测试）
+- Linux 使用 Python 3.12+ 时，Longbridge 新 SDK 要求 glibc 2.39+；Ubuntu 22.04 / Debian 12 使用 Python 3.11。官方 Linux 安装包和 Docker 已选择兼容的 3.11 + Longbridge 0.2.74。
 - Node.js 22 及以上（构建 Web 前端和桌面端；CI 使用 24）
 - Chromium（通过 Playwright 安装；Docker 镜像和打包的桌面端会自动准备）
 - 至少一个大模型 API Key：DeepSeek、通义千问、智谱 GLM、Kimi、百度文心、豆包、硅基流动、OpenAI、Claude、Gemini，或本地的 Ollama（不需要 Key）
@@ -477,7 +480,7 @@ python scripts/fetch_history.py --mode daily --start-date 2026-06-01
 | `desktop` | 桌面端刷新间隔、并发线程数、是否实时 AI 分析快讯 |
 | `notifier` | 每日报告开关、免打扰时段；企业微信、钉钉、飞书机器人 Webhook（钉钉、飞书支持签名）；邮件（SMTP）；Telegram、Discord、Slack、PushPlus、Server酱、ntfy、Gotify、Pushover、Bark、自定义 Webhook；按消息类型的推送路由 `routes`；邮件分组 `email.groups`；分享图的品牌名、底部文字和二维码（`image.brand`/`footer`/`qr_url`）。【设置 → 推送】可以直接修改 |
 | `diagnosis` | 个股诊断模式（single / standard / full）、历史校准开关、决策风格（保守/均衡/进取）、是否启用股东数据 |
-| `report` | AI 输出语言（中文/英文） |
+| `report` | AI 输出语言（中文/英文/韩文） |
 | `watchlist` | 自选股每日仪表盘开关、自选股上限、同时诊断的股票数、是否逐只即时推送（`single_notify`）、总诊断时长上限（`timeout_minutes`，0 不限） |
 | `intelligence` | RSS 资讯源开关、更新间隔（最少 5 分钟）、每个源最多条数、保留天数、订阅源列表 |
 | `web` | Web 服务地址和端口、登录开关、会话天数、API Token、是否同时运行定时任务、后台任务并发数、跨域来源 |

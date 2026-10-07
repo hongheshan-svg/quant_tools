@@ -132,8 +132,21 @@ def self_check() -> int:
 
         assert _qr_data_uri("https://example.com").startswith("data:image/png;base64,")
 
+    def overseas_extensions() -> None:
+        from datetime import datetime, timezone
+        from src.services.overseas_market import MARKETS, phase
+        from src.services.macro_tools import catalogue
+        from longbridge.openapi import Config, QuoteContext
+        from importlib.util import find_spec
+
+        assert len(catalogue()) == 72
+        assert all(phase(market, datetime(2026, 9, 30, 23, tzinfo=timezone.utc))["calendar_verified"] for market in MARKETS)
+        assert callable(Config) and callable(QuoteContext)
+        # Futu 导入会在用户目录创建日志；自检只查包，实际连接时才初始化 SDK。
+        assert find_spec("futu") is not None
+
     failed = 0
-    for check in (mini_racer, litellm_prices, pinyin, strategy_skills, report_templates, qr_code):
+    for check in (mini_racer, litellm_prices, pinyin, strategy_skills, report_templates, qr_code, overseas_extensions):
         try:
             check()
             print(f"ok    {check.__name__}", flush=True)

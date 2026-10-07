@@ -80,7 +80,7 @@ def chan(monkeypatch):
 
 
 def test_image_channels_constant():
-    assert notifier.IMAGE_CHANNELS == {"wechat", "telegram", "email", "discord", "ntfy"}
+    assert notifier.IMAGE_CHANNELS == {"wechat", "telegram", "email", "discord", "ntfy", "slack", "feishu"}
 
 
 def test_broadcast_sends_image_for_matching_channel(chan):
@@ -396,7 +396,7 @@ def test_digest_job_registered_only_when_enabled():
 def test_notifier_settings_include_image_channels(env):  # noqa: F811
     client, _, _ = env
     data = client.get("/api/v1/settings/notifier").json()
-    assert set(data["image_channels"]) == {"wechat", "telegram", "email", "discord", "ntfy"}
+    assert set(data["image_channels"]) == {"wechat", "telegram", "email", "discord", "ntfy", "slack", "feishu"}
 
 
 def test_alert_settings_new_fields(env):  # noqa: F811

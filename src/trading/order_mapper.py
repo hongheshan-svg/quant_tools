@@ -25,7 +25,8 @@ def signal_to_order_intent(
     min_lot: int = 100,
     budget: float = 100_000.0,
 ) -> OrderIntent | None:
-    if not code:
+    from src.utils.stock_code import resolve_identity
+    if not code or resolve_identity(code).market != "CN":
         return None
 
     norm_side = (side or "").lower().strip()
@@ -58,4 +59,3 @@ def signal_to_order_intent(
         source_strength=strength,
         raw_reason=reason or "",
     )
-

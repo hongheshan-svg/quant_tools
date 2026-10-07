@@ -29,7 +29,7 @@ from src.services.run_log import provider_attempt
 from src.utils.redaction import redact_text
 
 NATIVE_PROVIDERS = ("anthropic", "gemini", "ollama")   # 走 LiteLLM 原生通道的平台
-KEYLESS_PROVIDERS = ("ollama",)                        # 不需要 API Key
+KEYLESS_PROVIDERS = ("ollama", "codex_cli", "claude_code_cli", "opencode_cli", "hermes")                        # 不需要 API Key
 NO_JSON_MODE = ("anthropic", "ollama")                 # 不传 response_format，靠提示词和 chat_json 的修复
 
 
@@ -233,6 +233,13 @@ def build_route(cfg: dict) -> "LLMRoute | None":
         return None
     api_key = keys[0] if keys else ""
     base_url = str(cfg.get("base_url") or "").strip() or None
+    if provider in ("codex_cli", "claude_code_cli", "opencode_cli", "hermes"):
+        if keys:
+            raise ValueError("本地后端不接收模型 API Key，请使用本地登录或服务配置")
+        if provider == "hermes" and base_url:
+            from src.analyzers.local_runtime import validate_hermes_url
+            validate_hermes_url(base_url)
+        return LLMRoute(provider, model, model, "", base_url)
     if provider in NATIVE_PROVIDERS:
         return LLMRoute(provider, model, f"{provider}/{model}", api_key, base_url, tuple(keys))
     # 没填 Base URL 时用该平台预设的地址（只用环境变量配置平台和 Key 时常见），未知平台才回退 DeepSeek
@@ -249,6 +256,8 @@ def list_models(role_cfg: dict, timeout: float = 10) -> list[str]:
     from src.analyzers.llm_platforms import AI_PLATFORMS
 
     provider = str(role_cfg.get("provider") or "openai").lower()
+    if provider in ("codex_cli", "claude_code_cli", "opencode_cli", "hermes"):
+        return [str(role_cfg.get("model") or ("hermes-agent" if provider == "hermes" else "default"))]
     keys = parse_keys(role_cfg.get("api_key"))
     key = keys[0] if keys else ""
     base_url = str(role_cfg.get("base_url") or "").strip()
@@ -744,6 +753,9 @@ class LLMClient:
 
     def _stream_once(self, route: LLMRoute, kwargs: dict, usage: dict) -> Iterator[str]:
         """发起一次流式请求，产出 delta 文本；usage 字典在流末尾拿到用量时被填充。"""
+        from src.analyzers.local_runtime import PROVIDERS
+        if route.provider in PROVIDERS:
+            raise ValueError("此本地后端不支持流式生成，请使用普通生成")
         if self.backend != "openai" and self._litellm_available():
             extra = {"stream_options": {"include_usage": True}} if route.provider == "openai" or route.provider in NATIVE_PROVIDERS else {}
             stream = import_litellm().completion(model=route.target, api_key=route.api_key or None,
@@ -766,6 +778,11 @@ class LLMClient:
 
     def _complete(self, route: LLMRoute, kwargs: dict) -> tuple[str, dict]:
         """发起一次请求，返回 (文本, {"prompt_tokens", "completion_tokens"})。"""
+        from src.analyzers.local_runtime import PROVIDERS, generate
+        if route.provider in PROVIDERS:
+            if kwargs.get("tools") or kwargs.get("stream"):
+                raise ValueError("此后端仅支持文本生成，不支持原生工具或流式请求")
+            return generate(route.provider, route.model, kwargs["messages"], base_url=route.api_base), {}
         if self.backend != "openai" and self._litellm_available():
             resp = import_litellm().completion(model=route.target, api_key=route.api_key or None, api_base=route.api_base, **kwargs)
         else:
@@ -808,7 +825,7 @@ class LLMClient:
     def chat_with_tools(self, user_message: str, system_message: str, tools: list[dict], tool_results: list[dict] | None = None) -> dict:
         """原生函数协议；沿用主备路由、密钥轮换、用量记录与失败恢复。"""
         for route, cfg in ((self.primary_client, self.primary_cfg), (self.backup_client, self.backup_cfg)):
-            if route is None:
+            if route is None or route.provider in ("codex_cli", "claude_code_cli", "opencode_cli", "hermes"):
                 continue
             text = self._call(route, cfg, user_message, system_message, None, None, None, tools=tools, tool_results=tool_results)
             if text:

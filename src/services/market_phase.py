@@ -64,7 +64,8 @@ def _minutes_to_close(minute: int) -> int:
 
 def current_phase(now: datetime | None = None) -> dict[str, Any]:
     """当前所处的 A 股时段，区间左闭右开。"""
-    now = now or datetime.now()
+    from src.utils.timestamps import market_time
+    now = market_time(now)
     today = now.date()
     minute = now.hour * 60 + now.minute
     is_td = trading_calendar.is_trade_day(now)

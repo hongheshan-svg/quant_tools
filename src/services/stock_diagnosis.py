@@ -208,6 +208,9 @@ class StockDiagnosisService:
         """诊断一只股票；30 分钟内同语言、同决策风格的诊断结果直接复用（force=True 时重新诊断）。"""
         from src.utils.stock_code import resolve_identity, StockCodeError
         identity = resolve_identity(code)
+        if identity.market != "CN":
+            from src.services.overseas_research import OverseasResearchService
+            return OverseasResearchService(self.config).diagnose(identity.code, force)
         if identity.kind != "stock":
             raise StockCodeError("ETF/指数必须使用基金诊断入口")
         code = identity.code
@@ -243,7 +246,7 @@ class StockDiagnosisService:
             run_log.llm("分析员", model, True, (time.perf_counter() - analyst_start) * 1000)
         conflict = disagreement(opinions, lang)
         history_line = ("[Historical calibration] " + json.dumps(calibration, ensure_ascii=False)
-                        if lang == "en" and calibration else self._calibration_line(calibration, code))
+                        if lang in ("en", "ko") and calibration else self._calibration_line(calibration, code))
         if history_line:
             message += "\n" + history_line
         if opinions:
@@ -262,8 +265,8 @@ class StockDiagnosisService:
                           "\n[Strategy deliberation] Opposing directions or significant score differences remain unresolved. Preserve dissenting evidence and reduce confidence.")
         decision_start = time.perf_counter()
         budget.check("决策")
-        prompt = STOCK_SYSTEM_PROMPT_EN if lang == "en" else SYSTEM_PROMPT
-        addendum = DECISION_ADDENDUM_EN if lang == "en" else DECISION_ADDENDUM
+        prompt = STOCK_SYSTEM_PROMPT_EN if lang in ("en", "ko") else SYSTEM_PROMPT
+        addendum = DECISION_ADDENDUM_EN if lang in ("en", "ko") else DECISION_ADDENDUM
         raw = self.llm.chat_json(user_message=message, system_message=prompt + (addendum if opinions else "")
                                   + language_directive(lang, DIAGNOSIS_ENUMS))
         run_log.llm("决策", model, bool(raw), (time.perf_counter() - decision_start) * 1000)
@@ -349,9 +352,12 @@ class StockDiagnosisService:
         except Exception as e:
             logger.debug(f"读取历史信号复盘失败 [{code}]: {e}")
             return ""
-        if review.get("samples", 0) < 3:
+        if not review.get("total", review.get("samples", 0)):
             return ""
-        if lang == "en":
+        if review.get('confidence_adjustment') == 'observe':
+            return ('[Historical signal review] Observation only; insufficient or unreliable evidence. Do not adjust confidence. '
+                    + json.dumps({k: review.get(k) for k in ('total', 'completed', 'unable', 'pending', 'limitations')})) if lang == 'en' else f"【历史信号复盘】{review['text']}"
+        if lang in ("en", "ko"):
             facts = {k: v for k, v in review.items() if k != "text"}
             facts["bias"] = {"正常": "normal", "偏乐观": "optimistic", "偏悲观": "pessimistic"}.get(review.get("bias"), review.get("bias"))
             return "[Historical signal review] " + json.dumps(facts, ensure_ascii=False) + \
@@ -728,7 +734,7 @@ class StockDiagnosisService:
             "近 30 天公告": notices[:NOTICE_LIMIT], "AI舆情": sentiment_facts, "龙虎榜": dragon_facts,
             "持仓": {"paper": position, "real": real_position}, "数据完整度": data_quality,
             **({"Historical signal review": self._signal_review_section(code, "en")} if review_section else {}),
-        }) if report_language(self.config) == "en" else ""
+        }) if report_language(self.config) in ("en", "ko") else ""
         return {
             "code": code, "name": name, "quote": quote, "tech": tech, "role": role, "regime": regime,
             "position": position, "real_position": real_position, "text": "\n".join(sections), "text_en": text_en, "data_quality": data_quality,

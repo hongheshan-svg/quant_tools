@@ -18,6 +18,7 @@ from src.services.strategy_synthesis import synthesize
 from src.strategy.screener import StrategyScreener, Features, Pick
 from src.strategy.screening_pipeline import load_profiles, profile_rule, apply_risk, rerank, diversify
 from tests.test_screener import config, TRADE_DATE  # noqa: F401
+from tests.test_decision_signals import calendar  # noqa: F401
 
 
 def pick(code="600001", score=80):
@@ -136,6 +137,8 @@ def test_context_compression_keeps_current_scope_and_recent_anchor():
 
 
 def test_screening_full_metadata_round_trip(config, monkeypatch):
+    monkeypatch.setattr('src.services.market_phase.current_phase', lambda: {
+        'phase': 'postmarket', 'now': TRADE_DATE + ' 16:00', 'effective_daily_bar_date': TRADE_DATE})
     cfg = {**config, "screening": {"pipeline": {"enabled": True, "risk_veto_threshold": 100}, "profiles_file": "config/scoring_profiles.yaml"}}
     service = StrategyScreener(cfg)
     monkeypatch.setattr(service, "_regime", lambda *a: "均衡")

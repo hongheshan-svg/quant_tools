@@ -21,9 +21,9 @@ def test_get_notifier_settings_fields_and_masks(env):  # noqa: F811
     client, _, config = env
     _add(config)
     data = client.get("/api/v1/settings/notifier").json()
-    assert set(data["fields"]) == set(NEW)
+    assert set(data["fields"]) == set(NEW + ["feishu", "astrbot"])
     assert {"key", "label", "required", "secret", "placeholder", "type"} <= set(data["fields"]["telegram"][0])
-    assert len(data["channels"]) == 14 and data["channels"]["telegram"] == "Telegram"
+    assert len(data["channels"]) == 15 and data["channels"]["telegram"] == "Telegram"
     n = data["notifier"]
     assert n["telegram"]["bot_token"] == "******" and n["telegram"]["chat_id"] == "-100"
     assert n["pushplus"]["token"] == "******" and n["gotify"]["token"] == "******"

@@ -5,6 +5,8 @@ import type { AuthStatus } from './api/types'
 import { Layout } from './components/Layout'
 import { Toaster } from './components/Toaster'
 import { ErrorBox, Spinner } from './components/ui'
+const OverseasPage = lazy(() => import('./pages/OverseasPage').then((m) => ({ default: m.OverseasPage })))
+const IntegrationsPage = lazy(() => import('./pages/IntegrationsPage').then((m) => ({ default: m.IntegrationsPage })))
 const AlertsPage = lazy(() => import('./pages/AlertsPage').then((m) => ({ default: m.AlertsPage })))
 const ChatPage = lazy(() => import('./pages/ChatPage').then((m) => ({ default: m.ChatPage })))
 const DashboardPage = lazy(() => import('./pages/DashboardPage').then((m) => ({ default: m.DashboardPage })))
@@ -38,6 +40,8 @@ export function AppRoutes({ authEnabled }: { authEnabled: boolean }) {
     <Routes>
       <Route element={<Layout authEnabled={authEnabled} />}>
         <Route index element={<Suspense fallback={<Spinner text="加载页面…" />}><WorkspacePage /></Suspense>} />
+        <Route path="overseas" element={<Suspense fallback={<Spinner />}><OverseasPage /></Suspense>} />
+        <Route path="integrations" element={<Suspense fallback={<Spinner />}><IntegrationsPage /></Suspense>} />
         <Route path="market" element={<Suspense fallback={<Spinner text="加载页面…" />}><DashboardPage /></Suspense>} />
         <Route path="news" element={<Suspense fallback={<Spinner text="加载页面…" />}><NewsPage /></Suspense>} />
         <Route path="intelligence" element={<Suspense fallback={<Spinner text="加载页面…" />}><IntelligencePage /></Suspense>} />

@@ -395,12 +395,13 @@ class StrategyScreener:
                       "profiles": self.profiles, "pipeline": self.pipeline_cfg}
         return hashlib.sha256(json.dumps(definition, ensure_ascii=False, sort_keys=True, allow_nan=False).encode()).hexdigest()
 
-    def run(self, trade_date: str | None = None, save: bool = True, point_in_time: bool = False) -> ScreenResult:
+    def run(self, trade_date: str | None = None, save: bool = True, point_in_time: bool = False,
+            variant_seed: str | None = None) -> ScreenResult:
         from src.services.screening_sources import capture_sources
         from src.utils.redaction import redact_text
         with capture_sources() as capture:
             try:
-                result = self._run(trade_date, save, point_in_time)
+                result = self._run(trade_date, save, point_in_time, variant_seed)
             except Exception as error:
                 if save:
                     failed = ScreenResult(trade_date=trade_date or "", status="error", notes=[redact_text(error, 200)])
@@ -412,7 +413,8 @@ class StrategyScreener:
                 self._record_run(result, result.status)
             return result
 
-    def _run(self, trade_date: str | None = None, save: bool = True, point_in_time: bool = False) -> ScreenResult:
+    def _run(self, trade_date: str | None = None, save: bool = True, point_in_time: bool = False,
+             variant_seed: str | None = None) -> ScreenResult:
         """point_in_time=True 用于历史回测：只用 trade_date 当天及以前的数据，策略权重不生效。"""
         trading_calendar.load(self.db_path, refresh=False)
         from src.services.market_phase import current_phase
@@ -487,19 +489,28 @@ class StrategyScreener:
         if result.regime in ("", "未知"):
             result.notes.append("大盘环境未知，所有策略按适配处理")
         complete = len(snapshot) >= self.minimum_universe and history_complete and date_quality["status"] == "available"
-        result.picks = self._rank(features, result, result.weights, point_in_time=point_in_time, allow_llm=complete)
+        result.picks = self._rank(features, result, result.weights, point_in_time=point_in_time, allow_llm=complete,
+                                 retain_candidates=bool(variant_seed) and not point_in_time)
         result.status = "success" if complete else "partial"
         if not complete:
             result.notes.append("行情覆盖或历史质量不足，保留上次成功选股结果；本次候选不进入 AI 预测")
         if complete and not point_in_time and self.pipeline_cfg.get("post_analysis_top_k", 0):
             self._post_analysis(result)
+        if variant_seed and not point_in_time:
+            from uuid import uuid4
+            from src.strategy.selection_variant import select_variant
+            cfg = (self.config.get('screening') or {}).get('selection_variant') or {}
+            result.picks, result.pipeline['selection_variant'] = select_variant(
+                result.picks, self.max_total, variant_seed, f'{result.trade_date}:CN:{uuid4().hex}',
+                ratio=float(cfg.get('rotation_ratio', .5)), score_gap=float(cfg.get('max_score_gap', 1.5)),
+                require_analysis=bool(self.pipeline_cfg.get('post_analysis_top_k', 0)))
         if save:
             if complete:
                 self._save(result)
         logger.info(f"策略选股 {trade_date}：全市场 {len(snapshot)} 只 → 股票池 {len(pool)} → 入选 {len(result.picks)} 只")
         return result
 
-    def _rank(self, features: list[Features], result: ScreenResult, weights: dict[str, float] | None = None, *, point_in_time: bool = False, allow_llm: bool = True) -> list[Pick]:
+    def _rank(self, features: list[Features], result: ScreenResult, weights: dict[str, float] | None = None, *, point_in_time: bool = False, allow_llm: bool = True, retain_candidates: bool = False) -> list[Pick]:
         hits: dict[str, list[tuple[Strategy, float, str]]] = defaultdict(list)
         by_code = {f.code: f for f in features}
         for strategy in self.strategies:
@@ -530,6 +541,7 @@ class StrategyScreener:
             ))
         from src.database.models import FinanceNews, StockFundFlow
         from src.collectors.stock_news import classify_notice
+        from src.services.market_phase import current_phase
         cutoff = datetime.strptime(result.trade_date, "%Y-%m-%d") + timedelta(days=1)
         with get_db_session(self.db_path) as session:
             query = session.query(FinanceNews).filter(FinanceNews.news_time >= cutoff - timedelta(days=7), FinanceNews.news_time < cutoff)
@@ -545,7 +557,7 @@ class StrategyScreener:
             pick.event_risks = [item.title for item in related if classify_notice(item.title)[0]][:5]
             from src.services.research_artifact import build_context_pack
             pick.context_pack = build_context_pack({"code": pick.code, "name": pick.name,
-                "phase": {"trade_date": result.trade_date, "point_in_time": point_in_time}, "data_quality": {**pick.data_quality, "bar_count": by_code[pick.code].bars},
+                "phase": ({"trade_date": result.trade_date, "point_in_time": True, "effective_daily_bar_date": result.trade_date, "now": result.trade_date + "T23:59:59"} if point_in_time else current_phase()), "data_quality": {**pick.data_quality, "bar_count": by_code[pick.code].bars},
                 "quote": {"close": pick.close, "trade_date": result.trade_date, "source": pick.data_quality.get("source"), "fetched_at": pick.data_quality.get("fetched_at")},
                 "technical": asdict(by_code[pick.code]), "fundamentals": by_code[pick.code].fundamentals,
                 "flow": flows.get(pick.code), "news_evidence": [{"id": n.id, "title": n.title, "source": n.source, "news_time": str(n.news_time or ""), "collected_at": str(n.collected_at or ""), "url": n.url} for n in related]})
@@ -581,7 +593,7 @@ class StrategyScreener:
             picks = diversify(picks, self.pipeline_cfg)
         for pick in picks:
             pick.why_selected, pick.why_now = explanations(pick, by_code[pick.code], result.trade_date)
-        return picks[: self.max_total]
+        return picks if retain_candidates else picks[: self.max_total]
 
     def _enrich_candidate_context(self, picks: list[Pick], result: ScreenResult):
         """在固定预算内补候选公告和新闻，先做风险复核再交给模型。"""

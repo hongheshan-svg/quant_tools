@@ -379,6 +379,10 @@ class ExecutionService:
             if order.status != ORDER_STATUS_PENDING_CONFIRM:
                 return {"ok": False, "error": f"ORDER_STATUS_{order.status}"}
 
+            from src.utils.stock_code import resolve_identity
+            if resolve_identity(order.code).market != "CN":
+                return {"ok": False, "error": "OVERSEAS_RESEARCH_ONLY"}
+
             req = PlaceOrderRequest(
                 client_order_id=order.id,
                 code=order.code,

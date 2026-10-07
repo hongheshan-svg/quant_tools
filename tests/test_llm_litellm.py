@@ -146,7 +146,7 @@ def test_build_route_uses_platform_preset_base_url():
         assert (route.target, route.api_base) == ("openai/m", AI_PLATFORMS[provider]["base_url"])
     assert build_route({"provider": "openrouter", "api_key": "k", "model": "m", "base_url": "https://proxy/v1"}).api_base == "https://proxy/v1"
     assert build_route({"provider": "unknown-x", "api_key": "k", "model": "m"}).api_base == "https://api.deepseek.com"
-    assert all(p["base_url"].startswith("https://") for k, p in AI_PLATFORMS.items() if k not in ("anthropic", "gemini", "ollama", "custom"))
+    assert all(p["base_url"].startswith("https://") for k, p in AI_PLATFORMS.items() if k not in ("anthropic", "gemini", "ollama", "custom", "codex_cli", "claude_code_cli", "opencode_cli", "hermes"))
 
 
 def test_native_tool_ids_results_and_plain_answer_are_preserved(tmp_path, fake):

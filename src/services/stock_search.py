@@ -104,6 +104,9 @@ class StockSearch:
         query = normalize_name(text)
         if not query:
             return []
+        from src.utils.stock_code import overseas_identity
+        # 拼音检索保留原语义；海外裸 ticker 要大写或显式市场后缀。
+        foreign = overseas_identity(query) if (query.isupper() or any(mark in query for mark in (".", ":")) or query.lower().startswith("hk")) else None
         lowered = _NON_ALNUM.sub("", query.lower())
         code_query = bare_code(lowered) if lowered.isdigit() or (lowered[:2] in ("sh", "sz", "bj") and lowered[2:].isdigit()) else ""
         prefixed = lowered[:2] if code_query and lowered != code_query else ""  # 输入了交易所前缀
@@ -119,6 +122,8 @@ class StockSearch:
                     rank = 0
             if rank is not None:
                 scored.append((rank, kind != "stock", code, name, kind))
+        if foreign and (not scored or any(mark in query for mark in (".", ":")) or query.lower().startswith("hk")):
+            return [{"code": foreign.code, "name": foreign.code, "kind": foreign.kind, "market": foreign.market, "currency": foreign.currency}]
         scored.sort()
         return [{"code": code, "name": name, "kind": kind} for _, _, code, name, kind in scored[:limit]]
 

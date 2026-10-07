@@ -64,7 +64,7 @@ TOOL_LABELS = {t.name: t.label for t in TOOL_SPECS}
 
 
 def tools_prompt() -> str:
-    return "\n".join(f"- {t.name}({t.args})：{t.description}" for t in TOOL_SPECS)
+    return "\n".join(f"- {t.name}({t.args})：{t.description}" for t in TOOL_SPECS) + "\n宏观数据可使用原生 fxmacrodata_ 工具目录，保留数据时间与来源。"
 
 
 def native_tool_schemas() -> list[dict]:
@@ -77,7 +77,8 @@ def native_tool_schemas() -> list[dict]:
         required = [name for name in properties if name != "days" and "可选" not in spec.args]
         tools.append({"type": "function", "function": {"name": spec.name, "description": spec.description,
             "parameters": {"type": "object", "properties": properties, "required": required, "additionalProperties": False}}})
-    return tools
+    from src.services.macro_tools import schemas
+    return tools + schemas()
 
 
 class ChatTools:
@@ -95,6 +96,21 @@ class ChatTools:
 
     def call(self, name: str, args: dict[str, Any] | None) -> str:
         """执行一个工具，异常和未知工具都返回说明文字（交给 LLM 自己处理）。"""
+        if name in ("quote", "daily_bars", "technical", "position") and isinstance(args, dict):
+            from src.utils.stock_code import overseas_identity
+            identity = overseas_identity(str(args.get("code") or ""))
+            if identity:
+                from src.services.overseas_research import OverseasResearchService
+                snapshot = OverseasResearchService(self.config).snapshot(identity.code)
+                if name == "position":
+                    from src.services.overseas_portfolio import OverseasPortfolioService
+                    value = [p for p in OverseasPortfolioService(self.config).portfolio()["positions"] if p["code"] == identity.code]
+                else:
+                    value = {"quality": snapshot["quality"], "currency": identity.currency, "data": snapshot[{"quote": "quote", "daily_bars": "bars", "technical": "technical"}[name]]}
+                return json.dumps(value, ensure_ascii=False)[:12000]
+        if name.startswith("fxmacrodata_"):
+            from src.services.macro_tools import execute
+            return json.dumps(execute(self.config, name.removeprefix("fxmacrodata_"), args or {}), ensure_ascii=False)[:12000]
         handler = self._handlers.get(name)
         if handler is None:
             return f"没有名为 {name} 的工具，可用：{'、'.join(self._handlers)}"
@@ -117,7 +133,10 @@ class ChatTools:
                 raise ValueError("缺少股票代码")
             return "", "", "stock"
         from src.services.fund_registry import resolve_fund
-
+        from src.utils.stock_code import overseas_identity
+        foreign = overseas_identity(raw)
+        if foreign:
+            return foreign.code, foreign.code, "stock"
         fund = resolve_fund(raw, self.db_path)
         if fund:
             return fund["code"], fund["name"], fund["kind"]

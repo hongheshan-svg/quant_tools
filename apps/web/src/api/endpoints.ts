@@ -1,8 +1,25 @@
 // 各页面用到的接口，一个函数对应一个后端路由
 import { API_BASE, http } from './client'
 import type * as T from './types'
+import { screeningVariantSeed } from '@/utils/screeningVariant'
 
 export const api = {
+  integrationSettings: () => http.get<T.IntegrationSettings>('/settings/integrations'),
+  saveIntegrationSettings: (body: T.IntegrationSettings['settings']) => http.put<T.IntegrationSettings>('/settings/integrations', body),
+  macroOperations: () => http.get<T.MacroOperation[]>('/integrations/macro/operations'),
+  executeMacro: (operation: string, arguments_: Record<string, unknown>) => http.post<Record<string, unknown>>('/integrations/macro/execute', { operation, arguments: arguments_ }),
+  runtimeSessions: () => http.get<{ session_id: string; label: string; status: string }[]>('/integrations/runtime/sessions'),
+  runtimeSession: (id: string) => http.get<{ messages: { role: string; content: string }[]; last_run?: { status: string; tools: { name: string; success: boolean }[] } }>(`/integrations/runtime/sessions/${encodeURIComponent(id)}`),
+  runtimeStatus: () => http.get<T.RuntimeStatus[]>('/integrations/runtime'),
+  runtimeAsk: (question: string, session_id?: string) => http.post<T.Task<T.RuntimeAnswer> & { session_id: string }>('/integrations/runtime/chat', { question, session_id }),
+  runtimeCancel: (session_id: string) => http.post<{ ok: boolean }>('/integrations/runtime/cancel', { session_id }),
+  overseasSnapshot: (code: string) => http.get<T.OverseasSnapshot>(`/overseas/${encodeURIComponent(code)}`),
+  refreshOverseas: (code: string) => http.post<T.Task<T.OverseasSnapshot>>(`/overseas/${encodeURIComponent(code)}/refresh`),
+  overseasPortfolio: () => http.get<T.OverseasPortfolio>('/overseas/portfolio'),
+  refreshOverseasPortfolio: () => http.post<T.Task<T.OverseasPortfolio>>('/overseas/portfolio/refresh'),
+  importOverseasHoldings: (text: string, account: string, as_of: string, preview: boolean) => http.post<T.HoldingsImportResult>('/overseas/portfolio/import', { text, account, as_of, preview }),
+  futuSymbols: () => http.post<{ codes: string[]; skipped: number }>('/overseas/futu/symbols'),
+  overseasSocial: (code: string) => http.get<Record<string, unknown>>(`/overseas/${encodeURIComponent(code)}/social`),
   // 系统
   health: () => http.get<{ status: string }>('/health'),
   authStatus: () => http.get<T.AuthStatus>('/auth/status'),
@@ -116,7 +133,8 @@ export const api = {
     const qs = q.toString()
     return http.get<T.ScreeningPicks>(`/screening/picks${qs ? `?${qs}` : ''}`)
   },
-  runScreening: () => http.post<T.Task<T.ScreenResult>>('/screening/run'),
+  runScreening: () => http.post<T.Task<T.ScreenResult>>('/screening/run', { variant_seed: screeningVariantSeed() } satisfies T.ScreeningRequest),
+  screenSync: () => http.post<T.ScreenResult>('/screening/screen', { variant_seed: screeningVariantSeed() } satisfies T.ScreeningRequest),
   backtest: (days = 60) => http.post<T.Task<T.BacktestReport>>(`/screening/backtest?days=${days}`),
 
   // 问股

@@ -22,6 +22,7 @@ from src.services.skill_consult import SkillOpinionService, consensus
 from src.services.strategy_synthesis import synthesize
 from src.strategy.screening_rules import load_rules, matches
 from tests.test_api import _wait, env  # noqa: F401
+from tests.test_decision_signals import calendar  # noqa: F401
 
 
 def test_scoped_source_fetch_dedupes_and_records_error(env, monkeypatch):
@@ -153,8 +154,18 @@ def test_outcome_neutral_band_versions_and_completed_results_immutable(env):
 def test_repeated_opinions_are_one_independent_weight_sample(env):
     _, _, config = env
     with get_db_session(config["database"]["sqlite_path"]) as session:
+        import hashlib
+        from src.services.strategy_skills import get_skill
+        from src.database.models import ResearchOutcome
+        version = hashlib.sha256(get_skill('volume_breakout').instructions.encode()).hexdigest()
         for _ in range(40):
-            session.add(SkillOpinion(code="600519", skill="volume_breakout", stance="看多", score=70, trade_date="2026-09-25", hit=True, ret_5d=2))
+            row = SkillOpinion(code="600519", skill="volume_breakout", stance="看多", score=70,
+                               trade_date="2026-09-25", hit=True, ret_5d=2, skill_version=version)
+            session.add(row)
+            session.flush()
+            session.add(ResearchOutcome(owner_type='skill', owner_id=row.id, horizon=5,
+                engine_version=OutcomeEngine(config).version, status='evaluated', hit=True, return_pct=2,
+                data_quality_json='{"calendar_verified": true}'))
     row = SkillOpinionService(config).performance()[0]
     assert row["samples"] == 1 and row["weight"] == 1
 
@@ -323,9 +334,10 @@ def test_versioned_skill_weights_do_not_reuse_different_evaluation_version(env):
         opinion = session.query(SkillOpinion).first()
         opinion.hit, opinion.ret_5d = True, 2
         session.add(ResearchOutcome(owner_type="skill", owner_id=opinion.id, horizon=5, engine_version=OutcomeEngine(config).version,
-                                    status="evaluated", hit=True, return_pct=2))
+                                    status="evaluated", hit=True, return_pct=2, data_quality_json='{"calendar_verified": true}'))
     assert service.performance()[0]["samples"] == 1
-    assert SkillOpinionService({**config, "evaluation": {"neutral_band_pct": 2}}).performance() == []
+    changed = SkillOpinionService({**config, "evaluation": {"neutral_band_pct": 2}}).performance()[0]
+    assert changed["samples"] == 0 and changed["pending"] == 1 and changed["weight"] == 1
 
 
 def test_chat_trajectory_has_runtime_and_trace_for_sync_and_stream():

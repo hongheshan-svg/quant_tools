@@ -32,7 +32,7 @@ def test_profile_blocks(env):  # noqa: F811
 
     r = client.get(f"{P}/600519/profile").json()
     assert (r["code"], r["kind"], r["name"]) == ("600519", "stock", "贵州茅台")
-    assert r["quote"]["status"] == "partial" and r["quote"]["limitations"] == ["stale_quote"]     # 比全市场最新行情日早
+    assert r["quote"]["status"] == "partial" and "stale_quote" in r["quote"]["limitations"]     # 比全市场最新行情日早
     assert r["research"]["status"] == "fresh" and r["research"]["data"]["one_sentence"] == "放量突破"
     sig = r["signals"]
     assert sig["status"] == "fresh" and sig["data"]["active"][0]["stop_loss"] == 9.0

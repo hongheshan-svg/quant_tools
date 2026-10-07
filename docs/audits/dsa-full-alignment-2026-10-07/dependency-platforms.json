@@ -1,0 +1,60 @@
+{
+  "longbridge": {
+    "version": "5.2.0",
+    "requires_python": ">=3.8",
+    "wheel_platforms": [
+      "macosx_10_12_x86_64",
+      "macosx_11_0_arm64",
+      "manylinux_2_39_aarch64",
+      "manylinux_2_39_x86_64",
+      "musllinux_1_2_aarch64",
+      "musllinux_1_2_x86_64",
+      "win_amd64"
+    ]
+  },
+  "futu-api": {
+    "version": "10.8.6808",
+    "requires_python": null,
+    "wheel_platforms": []
+  },
+  "curl_cffi": {
+    "version": "0.13.0",
+    "requires_python": ">=3.9",
+    "wheel_platforms": [
+      "macosx_10_9_x86_64",
+      "macosx_11_0_arm64",
+      "manylinux_2_17_aarch64.manylinux2014_aarch64",
+      "manylinux_2_17_i686.manylinux2014_i686",
+      "manylinux_2_17_x86_64.manylinux2014_x86_64",
+      "musllinux_1_1_aarch64",
+      "musllinux_1_1_x86_64",
+      "win_amd64",
+      "win_arm64"
+    ]
+  },
+  "exchange-calendars": {
+    "version": "4.13.2",
+    "requires_python": "<4,>=3.10",
+    "wheel_platforms": [
+      "any"
+    ]
+  },
+  "selected_linux": {
+    "python": "3.11",
+    "longbridge": "0.2.74",
+    "desktop_base": "ubuntu-22.04",
+    "docker_base": "python:3.11-slim-bookworm",
+    "downloaded_compatible_wheels": [
+      "longbridge-0.2.74-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+      "longbridge-0.2.74-cp311-cp311-manylinux_2_28_aarch64.whl"
+    ]
+  },
+  "local_versions": {
+    "longbridge": "5.2.0",
+    "futu-api": "10.8.6808",
+    "yfinance": "0.2.66",
+    "exchange-calendars": "4.13.2",
+    "fxmacrodata-public-client": "0.1.0",
+    "curl_cffi": "0.16.3"
+  }
+}

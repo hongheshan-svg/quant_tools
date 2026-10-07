@@ -128,8 +128,10 @@ def diag_db(tmp_path, monkeypatch):
     path = str(tmp_path / "diag.db")
     _reset_db_engine()
     init_db(path)
-    monkeypatch.setattr(trading_calendar, "_trade_days", set())  # 按周一至周五判断
     days = ["2026-08-10", "2026-08-11", "2026-08-12", "2026-08-13", "2026-08-14", "2026-08-17"]
+    monkeypatch.setattr(trading_calendar, "_trade_days", set(days))
+    monkeypatch.setattr(trading_calendar, "_first_day", days[0])
+    monkeypatch.setattr(trading_calendar, "_last_day", days[-1])
     with get_db_session(path) as session:
         for code, closes in {"600001": [10.0, 10.5, 11.0, 10.8, 10.6, 10.4], "000002": [20.0, 19.0, 18.5, 18.0, 17.0, 16.0],
                              "000003": [5.0, 5.1, 5.2, 5.3, 5.4, 5.5]}.items():

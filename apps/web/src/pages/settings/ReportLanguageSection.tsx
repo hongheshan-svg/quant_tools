@@ -14,7 +14,7 @@ export function ReportLanguageSection() {
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    if (data) setLanguage(data.language === 'en' ? 'en' : 'zh')
+    if (data) setLanguage(data.language)
   }, [data])
 
   async function change(next: ReportLanguage) {
@@ -38,6 +38,7 @@ export function ReportLanguageSection() {
         <Select value={language} disabled={saving} onChange={(e) => void change(e.target.value as ReportLanguage)}>
           <option value="zh">{t('中文')}</option>
           <option value="en">English</option>
+          <option value="ko">한국어</option>
         </Select>
       </Field>
     </Card>

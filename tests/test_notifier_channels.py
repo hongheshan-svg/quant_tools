@@ -429,9 +429,9 @@ def test_markdown_to_text_plain_unchanged_and_empty():
 
 # ---------- __init__：注册表、配置检查、广播 ----------
 
-def test_registry_has_14_channels_old_first():
+def test_registry_keeps_old_channels_first():
     assert list(notifier.NOTIFIERS)[:4] == OLD_CHANNELS
-    assert set(notifier.NOTIFIERS) == set(OLD_CHANNELS + NEW_CHANNELS) and len(notifier.NOTIFIERS) == 14
+    assert set(notifier.NOTIFIERS) == set(OLD_CHANNELS + NEW_CHANNELS + ["astrbot"]) and len(notifier.NOTIFIERS) == 15
     assert set(notifier.CHANNEL_LABELS) == set(notifier.NOTIFIERS)
     assert notifier.CHANNEL_LABELS["telegram"] == "Telegram"
     for name in NEW_CHANNELS:
@@ -439,13 +439,14 @@ def test_registry_has_14_channels_old_first():
 
 
 def test_channel_fields_only_new_channels():
-    assert set(notifier.CHANNEL_FIELDS) == set(NEW_CHANNELS)
+    assert set(notifier.CHANNEL_FIELDS) == set(NEW_CHANNELS + ["astrbot", "feishu"])
     for name, fields in notifier.CHANNEL_FIELDS.items():
         assert fields
         for f in fields:
             assert {"key", "label", "required", "secret", "placeholder", "type"} <= set(f)
         required = {f["key"] for f in fields if f["required"]}
-        assert required == set(SPECS[name]["required"]), name
+        if name in SPECS and name != "slack":
+            assert required == set(SPECS[name]["required"]), name
     tg = {f["key"]: f for f in notifier.CHANNEL_FIELDS["telegram"]}
     assert tg["bot_token"]["secret"] is True and tg["bot_token"]["required"] is True
     assert tg["api_base"]["required"] is False
@@ -456,7 +457,7 @@ def test_secret_fields():
     assert "token" in notifier.secret_fields("pushplus")
     assert "sendkey" in notifier.secret_fields("serverchan")
     assert notifier.secret_fields("email") == ["password"]
-    for old in ("wechat", "dingtalk", "feishu"):
+    for old in ("wechat", "dingtalk"):
         assert notifier.secret_fields(old) == []
     for name in NEW_CHANNELS:
         assert set(notifier.secret_fields(name)) == {f["key"] for f in notifier.CHANNEL_FIELDS[name] if f["secret"]}

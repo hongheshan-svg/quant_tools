@@ -1,0 +1,52 @@
+{
+  "reference_commit": "ce364e457aab288863a5707e7b3df79786ad07f2",
+  "local_start_commit": "7593d76",
+  "backend": {
+    "passed": 2104,
+    "warnings": 6,
+    "seconds": 52.21
+  },
+  "web": {
+    "files": 45,
+    "passed": 192,
+    "lint": "passed",
+    "production_build": "passed",
+    "cancellation_regression_after_type_fix": "passed"
+  },
+  "desktop": {
+    "passed": 24
+  },
+  "browser": {
+    "settings_refresh": {
+      "slow_get_locks_fields_and_import": true,
+      "next_edit_preserved": "audit-next-model"
+    },
+    "korean_report_setting": "saved",
+    "integrations": {
+      "catalogue": 72,
+      "macro_query": true,
+      "session_reload_resume": true,
+      "cancel_without_history_pollution": true
+    },
+    "overseas": {
+      "preview_does_not_write": true,
+      "confirmed_positions": 1,
+      "missing_fx_blocks_total": true,
+      "converted_value_cny": 18531.0,
+      "futu_symbols": true,
+      "diagnosis_rendered": true,
+      "stock_route": true
+    },
+    "browser_errors": []
+  },
+  "static": {
+    "python_compile": "passed",
+    "yaml_parse": "passed",
+    "default_alignment_assets": "passed",
+    "pip_dependency_check": "passed",
+    "git_diff_check": "passed"
+  },
+  "live_services_verified": false,
+  "three_platform_bundles_built_this_turn": false,
+  "tests_use_temporary_databases": true
+}

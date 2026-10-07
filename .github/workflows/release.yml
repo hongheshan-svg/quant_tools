@@ -37,12 +37,16 @@ jobs:
         include:
           - os: windows-latest
             label: Windows
+            python: "3.12"
           - os: macos-15-intel
             label: macOS-x64
+            python: "3.12"
           - os: macos-15
             label: macOS-arm64
+            python: "3.12"
           - os: ubuntu-22.04
             label: Linux
+            python: "3.11"
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
@@ -53,7 +57,7 @@ jobs:
 
       - uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
           cache: pip
           cache-dependency-path: requirements.txt
 

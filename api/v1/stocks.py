@@ -163,6 +163,10 @@ def stock_profile(code: str, history_days: int = Query(90, ge=1, le=3650), pipel
 
 @router.get("/{code}/daily")
 def daily(code: str, limit: int | None = Query(None, ge=1, le=5000), pipeline: PipelineService = Depends(get_pipeline)) -> list[dict[str, Any]]:
+    from src.utils.stock_code import resolve_identity
+    if resolve_identity(code).market != "CN":
+        from src.services.overseas_research import OverseasResearchService
+        return OverseasResearchService(pipeline.config).snapshot(code)["bars"][-(limit or 5000):]
     fund = _fund(code, pipeline)
     if fund:
         from src.collectors import fund_data
@@ -181,6 +185,11 @@ def daily(code: str, limit: int | None = Query(None, ge=1, le=5000), pipeline: P
 @router.post("/{code}/history")
 def ensure_history(code: str, name: str = "", refresh: bool = False, pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
     """本地日线不足时联网补齐，返回新写入的根数。"""
+    from src.utils.stock_code import resolve_identity
+    if resolve_identity(code).market != "CN":
+        from src.services.overseas_research import OverseasResearchService
+        result = OverseasResearchService(pipeline.config).refresh(code)
+        return {"added": len(result["bars"]), "quality": result["quality"], "refresh_status": result.get("refresh_status", "available")}
     fund = _fund(code, pipeline)
     if fund:
         from src.collectors import fund_data
@@ -199,6 +208,9 @@ def ensure_history(code: str, name: str = "", refresh: bool = False, pipeline: P
 
 @router.get("/{code}/news")
 def news(code: str, refresh: bool = False, pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
+    from src.utils.stock_code import resolve_identity
+    if resolve_identity(code).market != "CN":
+        return {"news": [], "notices": [], "status": "not_supported", "limitations": ["use_social_evidence"]}
     if _fund(code, pipeline):  # ETF / 指数没有个股新闻和公告
         return {"news": [], "notices": []}
     return pipeline.stock_news(bare_code(code), refresh)

@@ -25,6 +25,7 @@ DEFAULT_EXE = ROOT / "dist" / "backend" / "quant_server" / ("quant_server.exe" i
 # 依次请求：健康检查 → 首页（行情采集器、AKShare）→ 大模型设置（平台预设）→ 问股策略（内置 YAML）→ 报告模板（内置 Jinja2）
 PATHS = ["/api/v1/health", "/api/v1/dashboard", "/api/v1/settings/llm", "/api/v1/chat/skills", "/api/v1/settings/templates", "/api/v1/screening/rotation/settings", "/api/v1/system/data-center", "/api/v1/alerts/rules", "/"]
 STARTUP_TIMEOUT = 180
+PATHS.extend(["/api/v1/integrations/macro/operations", "/api/v1/integrations/runtime", "/api/v1/overseas/AAPL"])
 
 
 def free_port() -> int:

@@ -144,8 +144,10 @@ function SkillPerformance() {
     { key: 'skill', title: t('策略'), render: (r) => r.display_name },
     { key: 'samples', title: t('样本'), align: 'right', render: (r) => <span className="num">{r.samples}</span> },
     { key: 'hits', title: t('命中'), align: 'right', render: (r) => <span className="num">{r.hits}</span> },
-    { key: 'rate', title: t('命中率'), align: 'right', render: (r) => <span className="num">{r.hit_rate.toFixed(1)}%</span> },
+    { key: 'rate', title: t('命中率'), align: 'right', render: (r) => <span className="num">{r.hit_rate == null ? '—' : `${r.hit_rate.toFixed(1)}%`}</span> },
     { key: 'ret', title: t('平均 5 日收益'), align: 'right', render: (r) => <Pct value={r.avg_ret} /> },
+    { key: 'coverage', title: '评估覆盖', render: (r) => `${r.samples}/${r.total ?? r.samples}；待评估 ${r.pending ?? 0}，无法评估 ${r.unable ?? 0}` },
+    { key: 'windows', title: '观察窗口', render: (r) => <span className="text-xs">{Object.entries(r.horizons ?? {}).map(([h, v]) => `${h}日 ${v.hit_rate == null ? '待评估' : v.hit_rate + '%'} (${v.samples}/${v.total})`).join(' · ')}</span> },
     { key: 'weight', title: t('当前权重'), align: 'right', render: (r) => <span className="num">{r.weight.toFixed(2)}</span> },
   ]
   if (perf.error) return <ErrorBox message={perf.error} onRetry={perf.reload} />
@@ -153,7 +155,7 @@ function SkillPerformance() {
   return (
     <Card bodyClassName="p-0">
       <DataTable columns={columns} rows={perf.data ?? []} rowKey={(r) => r.skill} empty={t('还没有策略会诊的后验样本，诊断 5 个交易日后开始统计')} />
-      <p className="border-t border-line p-3 text-xs text-muted">{t('统计近 90 天各策略在个股诊断中的观点：看多后 5 日上涨、看空后 5 日下跌算命中，中性不统计；样本不足 20 时权重为 1.00。')}</p>
+      <p className="border-t border-line p-3 text-xs text-muted">只统计当前策略版本与可靠当前后验；重复证券与日期去重。权重使用 5 日窗口，独立样本不足 30 或未完成/无法评估占比超过 50% 时保持 1.00。旧版本记录保留在原报告中。</p>
     </Card>
   )
 }

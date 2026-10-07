@@ -1,0 +1,11 @@
+{
+  "implementation": "installed Codex App Server",
+  "initialized": true,
+  "active_permission": {
+    "id": "quant_research",
+    "extends": null
+  },
+  "thread_created": true,
+  "model_turn_started": false,
+  "credentials_inherited": false
+}

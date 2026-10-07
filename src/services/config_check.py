@@ -32,7 +32,7 @@ TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 ENUMS = {
     ("diagnosis", "mode"): ("single", "standard", "full"),
     ("llm", "backend"): ("litellm", "openai"),
-    ("report", "language"): ("zh", "en"),
+    ("report", "language"): ("zh", "en", "ko"),
 }
 INT_RANGES = {("watchlist", "workers"): (1, 10), ("watchlist", "max_stocks"): (1, 500), ("web", "port"): (1, 65535),
               ("diagnosis", "timeout_seconds"): (1, 3600), ("diagnosis", "chat_context_chars"): (2000, 100000),
@@ -41,7 +41,11 @@ INT_RANGES = {("watchlist", "workers"): (1, 10), ("watchlist", "max_stocks"): (1
               ("diagnosis", "deliberation", "timeout_seconds"): (1, 180),
               ("evaluation", "neutral_band_pct"): (0, 100), ("screening", "minimum_universe"): (0, 10000),
               ("screening", "financial_cache_max_age_days"): (1, 3650),
-              ("intelligence", "max_items_per_source"): (1, 1000)}
+              ("intelligence", "max_items_per_source"): (1, 1000),
+              ("screening", "selection_variant", "rotation_ratio"): (0, 1),
+              ("screening", "selection_variant", "max_score_gap"): (0, 1.5),
+              ("integrations", "runtime", "timeout_seconds"): (1, 3600),
+              ("integrations", "futu", "port"): (1, 65535)}
 
 
 def _dot(path: tuple) -> str:
@@ -170,6 +174,11 @@ def _check_llm(config: dict, raw: dict | None, example: dict, issues: list[dict]
     from src.analyzers.llm_client import KEYLESS_PROVIDERS, parse_keys
 
     llm = config.get("llm") or {}
+    from src.analyzers.local_runtime import validate_model_settings
+    try:
+        validate_model_settings(llm)
+    except ValueError as error:
+        _err(issues, "llm", str(error))
     primary = llm.get("primary") or {}
     provider = str(primary.get("provider") or "openai").lower()
     if provider not in KEYLESS_PROVIDERS and not parse_keys(primary.get("api_key")):
@@ -197,6 +206,14 @@ def _check_data_sources(config: dict, raw: dict | None, example: dict, issues: l
         validate_settings(config.get("data_sources") or {})
     except (ValueError, TypeError) as error:
         _err(issues, "data_sources", str(error))
+
+
+def _check_integrations(config: dict, raw: dict | None, example: dict, issues: list[dict]) -> None:
+    from src.services.integration_settings import merge_settings
+    try:
+        merge_settings({}, config.get("integrations") or {})
+    except (ValueError, TypeError) as error:
+        _err(issues, "integrations", str(error))
 
 
 def _check_search(config: dict, raw: dict | None, example: dict, issues: list[dict]) -> None:
@@ -272,7 +289,7 @@ def _check_screening(config: dict, raw: dict | None, example: dict, issues: list
 
 
 CHECKS: list[tuple[str, Callable]] = [
-    ("类型与未知键", _check_types), ("格式与范围", _check_formats), ("主备模型", _check_llm),
+    ("类型与未知键", _check_types), ("格式与范围", _check_formats), ("主备模型", _check_llm), ("扩展接入", _check_integrations),
     ("推送渠道", _check_notifier), ("联网搜索", _check_search), ("聊天机器人", _check_bot),
     ("Web 服务", _check_web), ("交易", _check_trading), ("行情数据源", _check_data_sources), ("选股策略", _check_screening),
 ]

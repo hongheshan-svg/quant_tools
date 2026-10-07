@@ -179,7 +179,7 @@ function RoleEditor({ title, roleKey, role, platforms, onChange }: {
             value={role.provider ?? 'custom'}
             onChange={(e) => {
               const p = platforms[e.target.value]
-              onChange({ ...role, provider: e.target.value, base_url: p?.base_url ?? '', model: p?.default_model || role.model })
+              onChange({ ...role, ...(['codex_cli', 'claude_code_cli', 'opencode_cli', 'hermes'].includes(e.target.value) ? { api_key: '' } : {}), provider: e.target.value, base_url: p?.base_url ?? '', model: p?.default_model || role.model })
             }}
           >
             {Object.entries(platforms).map(([key, p]) => <option key={key} value={key}>{t(p.name)}</option>)}
@@ -429,7 +429,7 @@ export function NotifierForm() {
   }
   const setNested = (section: string, key: string, value: unknown) => setForm((f) => ({ ...f, [section]: { ...(f[section] ?? {}), [key]: value } }))
   const systemError = form.system_error ?? {}
-  const extraChannels = Object.keys(data.fields ?? {})
+  const extraChannels = Object.keys(data.fields ?? {}).filter((name) => name !== "feishu")
   const renderField = (ch: string, f: NotifierField) => {
     const value = form[ch]?.[f.key] ?? f.default ?? ''
     const common = { 'aria-label': `${t(data.channels[ch])}-${t(f.label)}`, placeholder: f.placeholder ? t(f.placeholder) : f.placeholder }
@@ -456,6 +456,7 @@ export function NotifierForm() {
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={!!form[ch]?.enabled} onChange={(e) => set(ch, 'enabled', e.target.checked)} /> {t('启用')}</label>
             <Field label="Webhook"><Input value={form[ch]?.webhook_url ?? ''} onChange={(e) => set(ch, 'webhook_url', e.target.value)} /></Field>
             {ch !== 'wechat' && <Field label={t('加签密钥（可空）')}><Input value={form[ch]?.secret ?? ''} onChange={(e) => set(ch, 'secret', e.target.value)} /></Field>}
+            {ch === "feishu" && (data.fields.feishu ?? []).filter((field) => !["webhook_url", "secret"].includes(field.key)).map((field) => renderField(ch, field))}
             <Button loading={busy === ch} onClick={async () => {
               setBusy(ch)
               const r = await api.testNotifier(ch, payload()).finally(() => setBusy(''))
