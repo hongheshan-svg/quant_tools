@@ -6,6 +6,23 @@ import { toast } from '@/stores/toast'
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
+it('shows OAuth capability and rechecks it after saving integration settings', async () => {
+  let checks = 0
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    let value: unknown = []
+    if (url.includes('/settings/integrations')) value = { settings: {}, groups: [] }
+    if (url.endsWith('/integrations/longbridge/status')) {
+      checks++
+      value = { status: 'oauth_unsupported', oauth_supported: false, legacy_configured: true, message: '当前 SDK 不支持 OAuth；可使用完整旧版凭据' }
+    }
+    return new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } })
+  }))
+  render(<MemoryRouter><IntegrationsPage /></MemoryRouter>)
+  expect(await screen.findByText('当前 SDK 不支持 OAuth；可使用完整旧版凭据')).toBeVisible()
+  fireEvent.click(await screen.findByRole('button', { name: '保存接入配置' }))
+  await waitFor(() => expect(checks).toBe(2))
+})
+
 it('handles a cancelled runtime task and keeps the page usable', async () => {
   const error = vi.spyOn(toast, 'error')
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {

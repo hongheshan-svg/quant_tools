@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 MASK = "[REDACTED]"
-_SECRET_KEY = r"(?:tickflow_api_key|tushare_token|api[_-]?key|access[_-]?token|refresh[_-]?token|bot[_-]?token|token|password|passwd|secret|authorization|webhook(?:_url)?)"
+_SECRET_KEY = r"(?:oauth_token_cache_b64|tickflow_api_key|tushare_token|api[_-]?key|access[_-]?token|refresh[_-]?token|bot[_-]?token|token|password|passwd|secret|authorization|webhook(?:_url)?)"
 _PAIR = re.compile(rf"(?i)([\"']?{_SECRET_KEY}[\"']?\s*[:=]\s*)(\"[^\"]*\"|'[^']*'|[^\s,;}}&]+)")
 _BEARER = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
 _KEY = re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b")

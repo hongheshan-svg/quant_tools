@@ -5,6 +5,7 @@ import { screeningVariantSeed } from '@/utils/screeningVariant'
 
 export const api = {
   integrationSettings: () => http.get<T.IntegrationSettings>('/settings/integrations'),
+  longbridgeStatus: () => http.get<T.LongbridgeStatus>('/integrations/longbridge/status'),
   saveIntegrationSettings: (body: T.IntegrationSettings['settings']) => http.put<T.IntegrationSettings>('/settings/integrations', body),
   macroOperations: () => http.get<T.MacroOperation[]>('/integrations/macro/operations'),
   executeMacro: (operation: string, arguments_: Record<string, unknown>) => http.post<Record<string, unknown>>('/integrations/macro/execute', { operation, arguments: arguments_ }),

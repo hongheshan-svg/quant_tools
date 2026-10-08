@@ -18,6 +18,7 @@ export function IntegrationsPage() {
 
 function IntegrationForm() {
   const { data, error, reload } = useApi(api.integrationSettings)
+  const longbridge = useApi(api.longbridgeStatus)
   const [form, setForm] = useState<IntegrationSettings['settings']>({})
   const [busy, setBusy] = useState(false)
   useEffect(() => { if (data) setForm(data.settings) }, [data])
@@ -25,7 +26,8 @@ function IntegrationForm() {
   if (!data) return <Spinner />
   return <Card><h2 className="mb-3 font-semibold">连接配置</h2><p className="mb-3 text-sm text-muted">公开宏观数据无需密钥。本地 CLI 使用已安装程序的登录配置；“AI 模型”中选择对应平台后用于报告生成。</p>
     <div className="grid gap-4 lg:grid-cols-2">{data.groups.map((group) => <fieldset key={group.key} className="space-y-2 rounded border border-line p-3"><legend>{group.label}</legend>{group.fields.map((field) => <Field key={field.key} label={field.label}><Input aria-label={`${group.label}-${field.label}`} type={field.secret ? 'password' : field.type} value={field.type === 'checkbox' ? undefined : String(form[group.key]?.[field.key] ?? '')} checked={field.type === 'checkbox' ? Boolean(form[group.key]?.[field.key]) : undefined} onChange={(e) => setForm((old) => ({ ...old, [group.key]: { ...old[group.key], [field.key]: field.type === 'checkbox' ? e.target.checked : field.type === 'number' ? Number(e.target.value) : e.target.value } }))} /></Field>)}</fieldset>)}</div>
-    <Button className="mt-3" loading={busy} onClick={async () => { setBusy(true); try { await api.saveIntegrationSettings(form); await reload(); toast.success('接入配置已保存') } catch (e) { toast.error(String(e)) } finally { setBusy(false) } }}>保存接入配置</Button>
+    <div className="mt-3 rounded border border-line p-3 text-sm"><h3 className="font-semibold">Longbridge 认证状态</h3><p className="my-2 text-muted">{longbridge.data?.message ?? '正在检查认证配置…'}</p>{longbridge.error && <ErrorBox message={longbridge.error} />}<Button onClick={() => void longbridge.reload()}>检查认证状态</Button></div>
+    <Button className="mt-3" loading={busy} onClick={async () => { setBusy(true); try { await api.saveIntegrationSettings(form); await reload(); await longbridge.reload(); toast.success('接入配置已保存') } catch (e) { toast.error(String(e)) } finally { setBusy(false) } }}>保存接入配置</Button>
   </Card>
 }
 

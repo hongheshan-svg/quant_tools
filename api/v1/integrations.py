@@ -45,6 +45,12 @@ def macro_execute(body: MacroRequest, config: dict = Depends(get_config)):
     return execute(config, body.operation, body.arguments)
 
 
+@router.get('/integrations/longbridge/status')
+def longbridge_status(config: dict = Depends(get_config)):
+    from src.services.longbridge_auth import diagnostics
+    return diagnostics(config)
+
+
 @router.get("/integrations/runtime")
 def runtime(config: dict = Depends(get_config)):
     from src.analyzers.local_runtime import diagnostics

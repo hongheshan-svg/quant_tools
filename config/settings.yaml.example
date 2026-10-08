@@ -593,6 +593,8 @@ integrations:
   adanos:
     api_key: ""
   longbridge:
+    oauth_client_id: ""
+    oauth_token_cache_b64: ""  # 首次导入的 SDK 缓存，建议用 QUANT__INTEGRATIONS__LONGBRIDGE__OAUTH_TOKEN_CACHE_B64 环境变量
     app_key: ""
     app_secret: ""
     access_token: ""

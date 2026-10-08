@@ -26,9 +26,17 @@
 
 持仓 CSV 支持 symbol/ticker/code/证券代码，quantity/qty/持仓数量，average_cost/cost_price/成本价，currency/币种，market/市场。提供富途、长桥及通用英文导出常用字段别名；带 side / 买卖方向表头的 CSV 作为成交明细处理，另需 trade_date / 成交日期、price / 成交价，可带 fee / 手续费和 trade_id / 成交编号。先预览再确认。相同账户/代码按日期更新、重复导入不叠加，数量 0 表示平仓；不删除 CSV 中未出现的其他证券。成交按日期回放平均成本，买入费用计入成本；成交编号或内容去重，冲突编号、超卖、错误币种会整批拒绝。快照与成交账本必须用不同账户名称，避免重复计仓。只有日期的同日交易按 CSV 行序处理，需按实际成交顺序导出。仅估值持仓，不包含现金及完整已实现损益。人民币合计要求每条价格及 FX 均可用，汇率日期超过 3 天或未来日期不进入合计。
 
-Futu 读取本机 OpenD 的真实 LONG 持仓标的；不解锁交易、不下单，不自动导入未知成本。Longbridge 需要 App Key、App Secret、Access Token。服务未安装、未登录或账户权限不足会给出失败状态。
+Futu 读取本机 OpenD 的真实 LONG 持仓标的；不解锁交易、不下单，不自动导入未知成本。Longbridge 优先使用 OAuth Client ID 与 SDK 本地缓存，也支持完整的 App Key、App Secret、Access Token 回退。服务未安装、未登录或账户权限不足会给出失败状态。
 
 Linux 桌面包保留 Ubuntu 22.04，Docker 保留 Debian 12；两者使用 Python 3.11 与 Longbridge 0.2.74 的兼容 wheel。Windows/macOS 使用新版 SDK。源码安装若选 Linux Python 3.12+，则要求 glibc 2.39+。适配器同时支持两代配置构造接口，发布自检会加载日历、宏观目录与券商 SDK 资源。
+
+### Longbridge OAuth
+
+在运行应用的同一系统用户下，执行 `python scripts/authorize_longbridge.py --client-id YOUR_CLIENT_ID` 完成交互式授权，再在“扩展接入”填写同一个 Client ID。SDK 使用 `~/.longbridge/openapi/tokens/<client_id>` 缓存。后台查询不会弹出授权页面，缓存失效时提示重新授权；旧版 SDK 不支持 OAuth，界面明确显示兼容限制。
+
+跨主机部署时，授权脚本可加 `--export-file /secure/new-file` 保存 Base64 缓存，文件权限为 0600。把文件内容配置为 `QUANT__INTEGRATIONS__LONGBRIDGE__OAUTH_TOKEN_CACHE_B64` 环境变量；Client ID 使用 `QUANT__INTEGRATIONS__LONGBRIDGE__OAUTH_CLIENT_ID`。也兼容上游的 `LONGBRIDGE_OAUTH_CLIENT_ID`、`LONGBRIDGE_OAUTH_TOKEN_CACHE_B64` 和旧版三个 `LONGBRIDGE_*` 凭据变量。环境变量不写回应用配置。
+
+同一份部署缓存只恢复一次，后续保留 SDK 续期后的 token。重新授权后需更换部署缓存；容器还需持久化 SDK 缓存目录及同目录的 `.seed.sha256` 标记，否则容器重建时可能恢复过期密钥。“检查认证状态”只读本地配置，不验证账户行情权限。不要把缓存文件或 Base64 内容提交到 Git。
 
 ## FXMacroData
 

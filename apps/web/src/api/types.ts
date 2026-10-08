@@ -2,6 +2,13 @@
 
 export type Dict<T = unknown> = Record<string, T>
 
+export interface LongbridgeStatus {
+  status: string
+  oauth_supported: boolean
+  legacy_configured: boolean
+  message: string
+}
+
 export interface ScreeningRequest { variant_seed?: string }
 
 export interface Task<R = unknown> {

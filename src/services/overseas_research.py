@@ -51,12 +51,11 @@ class OverseasResearchService:
         return rows
 
     def _longbridge(self, identity) -> list[dict]:
-        cfg = (self.config.get("integrations") or {}).get("longbridge") or {}
-        if identity.market not in ("US", "HK") or not all(cfg.get(k) for k in ("app_key", "app_secret", "access_token")):
+        from src.services.longbridge_auth import build_config, configured
+        if identity.market not in ("US", "HK") or not configured(self.config):
             return []
-        from longbridge.openapi import Config, QuoteContext, Period, AdjustType
-        factory = getattr(Config, "from_apikey", Config)
-        context = QuoteContext(factory(cfg["app_key"], cfg["app_secret"], cfg["access_token"]))
+        from longbridge.openapi import QuoteContext, Period, AdjustType
+        context = QuoteContext(build_config(self.config))
         try:
             symbol = identity.code if identity.market == "HK" else identity.code + ".US"
             candles = context.history_candlesticks_by_offset(symbol=symbol, period=Period.Day, adjust_type=AdjustType.NoAdjust,

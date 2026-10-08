@@ -5,6 +5,8 @@ FIELDS = {
     "fxmacrodata": {"label": "宏观数据", "fields": {"api_key": ("授权密钥（公开数据可留空）", "", True)}},
     "adanos": {"label": "美股社交情报", "fields": {"api_key": ("Adanos API Key", "", True)}},
     "longbridge": {"label": "Longbridge 港美行情", "fields": {
+        "oauth_client_id": ("OAuth Client ID", "", False),
+        "oauth_token_cache_b64": ("OAuth 部署缓存（Base64）", "", True),
         "app_key": ("App Key", "", True), "app_secret": ("App Secret", "", True),
         "access_token": ("Access Token", "", True)}},
     "futu": {"label": "Futu 持仓与基本面（只读）", "fields": {
@@ -53,9 +55,14 @@ def merge_settings(config: dict, body: dict) -> dict:
             elif isinstance(default, int):
                 if type(item) is not int or not 1 <= item <= (3600 if key == "timeout_seconds" else 65535):
                     raise ValueError("端口或超时超出范围")
-            elif not isinstance(item, str) or len(item) > 4096 or "\x00" in item:
+            elif not isinstance(item, str) or len(item) > (90000 if key == 'oauth_token_cache_b64' else 4096) or "\x00" in item:
                 raise ValueError("接入字段无效")
             value[group][key] = item
     from src.analyzers.local_runtime import validate_hermes_url
     validate_hermes_url(value["runtime"]["hermes_url"])
+    from src.services.longbridge_auth import validate_client_id, decode_seed
+    if value['longbridge']['oauth_client_id']:
+        validate_client_id(value['longbridge']['oauth_client_id'])
+    if value['longbridge']['oauth_token_cache_b64']:
+        decode_seed(value['longbridge']['oauth_token_cache_b64'])
     return value
