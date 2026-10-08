@@ -107,6 +107,10 @@ async def main():
             await page.goto(BASE + '/overseas')
             await expect(page.get_by_text('AAPL · US', exact=True)).to_be_visible()
             await expect(page.get_by_text('已核对完整日线', exact=True)).to_be_visible()
+            await page.get_by_role('button', name='更新财务与新闻', exact=True).click()
+            await expect(page.get_by_text('隔离验收公司财报', exact=True)).to_be_visible(timeout=20000)
+            await expect(page.get_by_text('1,000,000 USD', exact=True)).to_be_visible()
+            results['overseas_evidence'] = {'financial_currency': 'USD', 'news_link_visible': True}
             await page.locator('summary', has_text='导入券商持仓 / 成交 CSV').click()
             await page.get_by_label('券商持仓 CSV').fill('symbol,quantity,average_cost,currency\nAAPL,10,180,USD')
             await page.get_by_role('button', name='检查导入', exact=True).click()

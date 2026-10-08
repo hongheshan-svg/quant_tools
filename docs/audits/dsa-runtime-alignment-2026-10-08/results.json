@@ -1,0 +1,27 @@
+{
+  "settings_refresh": {
+    "slow_get_locks_fields_and_import": true,
+    "next_edit_preserved": "audit-next-model"
+  },
+  "korean_report_setting": "saved",
+  "integrations": {
+    "catalogue": 72,
+    "macro_query": true,
+    "session_reload_resume": true,
+    "cancel_without_history_pollution": true
+  },
+  "overseas_evidence": {
+    "financial_currency": "USD",
+    "news_link_visible": true
+  },
+  "overseas": {
+    "preview_does_not_write": true,
+    "confirmed_positions": 1,
+    "missing_fx_blocks_total": true,
+    "converted_value_cny": 18531.0,
+    "futu_symbols": true,
+    "diagnosis_rendered": true,
+    "stock_route": true
+  },
+  "browser_errors": []
+}

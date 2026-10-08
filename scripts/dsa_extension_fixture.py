@@ -21,6 +21,18 @@ def seed(app):
 
     OverseasResearchService._yahoo = lambda self, identity: bars(identity)
     OverseasResearchService._longbridge = lambda self, identity: []
+    from src.services import overseas_evidence
+    import pandas as pd
+    def evidence(code, part):
+        if part == 'info':
+            return {'longName': '隔离验收公司', 'currency': 'USD', 'financialCurrency': 'USD', 'trailingPE': 25, 'priceToBook': 3}
+        if part == 'statements':
+            return pd.DataFrame({pd.Timestamp('2026-06-30'): [1000000, 200000]}, index=['Total Revenue', 'Net Income'])
+        if part == 'dividends':
+            return pd.Series(dtype=float)
+        return [{'title': '隔离验收公司财报', 'providerPublishTime': datetime.now(timezone.utc).timestamp() - 60,
+                 'publisher': '验收新闻源', 'link': 'https://example.com/report'}]
+    overseas_evidence.fetch_part = evidence
     service = OverseasResearchService(app.state.pipeline.config)
     original_fx = OverseasResearchService.fx_rate
 

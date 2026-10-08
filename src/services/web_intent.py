@@ -77,8 +77,10 @@ def resolve(question, db_path, state=None, stock_context=None):
                 mentions.append((match.start(), match.end(), raw, exact[:1]))
         for code, name, _, kind in entries:
             for alias in (name, *ALIASES.get(code, ())):
-                if alias and len(alias) >= 2 and alias in clause:
-                    start = clause.index(alias)
+                pattern = (r'(?<![A-Za-z0-9])' + re.escape(alias) + r'(?![A-Za-z0-9])') if alias.isascii() else re.escape(alias)
+                match = re.search(pattern, clause, re.I) if alias and len(alias) >= 2 else None
+                if match:
+                    start = match.start()
                     candidates = [{"code": code, "name": name, "kind": kind}]
                     if alias != name:
                         candidates = [item for item in search.search(alias, 10) if item["kind"] == "stock" and (item["name"].startswith(alias) or alias in ALIASES.get(item["code"], ()))] or candidates

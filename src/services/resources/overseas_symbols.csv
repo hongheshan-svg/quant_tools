@@ -1,0 +1,81 @@
+code,name,aliases
+7203.T,丰田汽车,Toyota Motor Corporation|Toyota|Toyota Motor|丰田|トヨタ
+6758.T,索尼集团,Sony Group Corporation|Sony|Sony Group|索尼|ソニー
+9984.T,软银集团,SoftBank Group Corp.|SoftBank|SoftBank Group|软银|ソフトバンク
+8306.T,三菱日联金融集团,Mitsubishi UFJ Financial Group|MUFG|Mitsubishi UFJ|三菱日联|三菱UFJ
+6861.T,基恩士,Keyence Corporation|Keyence|キーエンス
+6501.T,日立,Hitachi Ltd.|Hitachi|日立制作所|日立製作所
+7974.T,任天堂,Nintendo Co. Ltd.|Nintendo|任天堂
+8035.T,东京电子,Tokyo Electron Limited|Tokyo Electron|東京エレクトロン
+9432.T,日本电信电话,Nippon Telegraph and Telephone Corporation|NTT|Nippon Telegraph and Telephone|日本电信电话
+9983.T,迅销,Fast Retailing Co. Ltd.|Fast Retailing|Uniqlo|优衣库|迅销
+8058.T,三菱商事,Mitsubishi Corporation|Mitsubishi Corp|三菱商事
+8001.T,伊藤忠商事,ITOCHU Corporation|ITOCHU|伊藤忠
+8031.T,三井物产,Mitsui and Co. Ltd.|Mitsui|三井物产|三井物産
+4502.T,武田药品,Takeda Pharmaceutical Company|Takeda|武田药品|武田薬品
+4568.T,第一三共,Daiichi Sankyo Company|Daiichi Sankyo|第一三共
+6098.T,Recruit Holdings,Recruit Holdings Co. Ltd.|Recruit|リクルート
+4063.T,信越化学工业,Shin-Etsu Chemical Co. Ltd.|Shin-Etsu|信越化学
+7741.T,HOYA,HOYA Corporation|HOYA|豪雅
+6954.T,发那科,FANUC Corporation|FANUC|发那科|ファナック
+6367.T,大金工业,Daikin Industries Ltd.|Daikin|大金|ダイキン
+6902.T,电装,DENSO Corporation|DENSO|电装|デンソー
+7267.T,本田汽车,Honda Motor Co. Ltd.|Honda|本田|ホンダ
+8316.T,三井住友金融集团,Sumitomo Mitsui Financial Group|SMFG|三井住友
+8411.T,瑞穗金融集团,Mizuho Financial Group|Mizuho|瑞穗|みずほ
+9433.T,KDDI,KDDI Corporation|KDDI|au
+9434.T,软银通信,SoftBank Corp.|SoftBank Corp|软银通信
+8766.T,东京海上控股,Tokio Marine Holdings|Tokio Marine|东京海上
+2914.T,日本烟草,Japan Tobacco Inc.|JT|Japan Tobacco|日本烟草
+3382.T,Seven & i 控股,Seven and i Holdings|Seven Eleven|7-Eleven|7&i
+4452.T,花王,Kao Corporation|Kao|花王
+005930.KS,三星电子,Samsung Electronics Co. Ltd.|Samsung|Samsung Electronics|三星|삼성전자
+000660.KS,SK海力士,SK hynix Inc.|SK Hynix|海力士|하이닉스
+373220.KS,LG新能源,LG Energy Solution Ltd.|LG Energy Solution|LGES|LG新能源
+005380.KS,现代汽车,Hyundai Motor Company|Hyundai|Hyundai Motor|现代|현대차
+035420.KS,NAVER,NAVER Corporation|Naver|NAVER|네이버
+051910.KS,LG化学,LG Chem Ltd.|LG Chem|LG化学
+006400.KS,三星SDI,Samsung SDI Co. Ltd.|Samsung SDI|三星SDI
+035720.KQ,Kakao,Kakao Corp.|Kakao|可可|카카오
+247540.KQ,Ecopro BM,Ecopro BM Co. Ltd.|Ecopro BM|ECOPRO BM|에코프로비엠
+091990.KQ,赛尔群医疗,Celltrion Healthcare Co. Ltd.|Celltrion Healthcare|Celltrion|셀트리온헬스케어
+000270.KS,起亚,Kia Corporation|Kia|起亚|기아
+068270.KS,赛尔群,Celltrion Inc.|Celltrion|셀트리온
+105560.KS,KB金融集团,KB Financial Group Inc.|KB Financial|KB금융
+055550.KS,新韩金融集团,Shinhan Financial Group Co. Ltd.|Shinhan Financial|신한지주
+012330.KS,现代摩比斯,Hyundai Mobis Co. Ltd.|Hyundai Mobis|现代Mobis|현대모비스
+028260.KS,三星物产,Samsung C&T Corporation|Samsung C&T|三星物产|삼성물산
+032830.KS,三星生命保险,Samsung Life Insurance Co. Ltd.|Samsung Life|三星生命|삼성생명
+066570.KS,LG电子,LG Electronics Inc.|LG Electronics|LG전자
+096770.KS,SK Innovation,SK Innovation Co. Ltd.|SK Innovation|SK이노베이션
+003550.KS,LG,LG Corp.|LG|LG集团
+034730.KS,SK,SK Inc.|SK|SK控股
+017670.KS,SK Telecom,SK Telecom Co. Ltd.|SK Telecom|SKT|SK텔레콤
+086790.KS,Hana Financial,Hana Financial Group|Hana|하나금융지주
+033780.KS,KT&G,KT&G Corporation|KT&G|韩国烟草
+009150.KS,三星电机,Samsung Electro-Mechanics Co. Ltd.|Samsung Electro-Mechanics|三星电机|삼성전기
+010130.KS,高丽亚铅,Korea Zinc Co. Ltd.|Korea Zinc|고려아연
+018260.KS,三星SDS,Samsung SDS Co. Ltd.|Samsung SDS|삼성에스디에스
+011200.KS,HMM,HMM Co. Ltd.|HMM|现代商船
+090430.KS,爱茉莉太平洋,Amorepacific Corporation|Amorepacific|아모레퍼시픽
+086520.KQ,Ecopro,Ecopro Co. Ltd.|Ecopro|에코프로
+AAPL,苹果,Apple|Apple Inc
+MSFT,微软,Microsoft
+NVDA,英伟达,Nvidia
+AMZN,亚马逊,Amazon
+GOOGL,谷歌,Google|Alphabet
+META,Meta,脸书|Facebook
+TSLA,特斯拉,Tesla
+BRK-B,伯克希尔B,Berkshire Hathaway|BRK.B
+TSM,台积电ADR,TSMC ADR
+00700.HK,腾讯控股,腾讯|Tencent
+09988.HK,阿里巴巴,阿里|Alibaba
+03690.HK,美团,Meituan
+01810.HK,小米集团,小米|Xiaomi
+00941.HK,中国移动,China Mobile
+00005.HK,汇丰控股,汇丰|HSBC
+02318.HK,中国平安,平安|Ping An
+2330.TW,台积电,台積電|TSMC
+2317.TW,鸿海,鴻海|Hon Hai|Foxconn
+2454.TW,联发科,聯發科|MediaTek
+2308.TW,台达电,台達電|Delta Electronics

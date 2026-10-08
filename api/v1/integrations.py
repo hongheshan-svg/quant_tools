@@ -168,6 +168,20 @@ def overseas_refresh(code: str, request: Request, config: dict = Depends(get_con
                                           dedupe_key="overseas:" + identity.code)
 
 
+@router.post("/overseas/{code}/evidence")
+def overseas_evidence(code: str, request: Request, config: dict = Depends(get_config)):
+    from src.services.overseas_evidence import OverseasEvidenceService
+    from src.utils.stock_code import resolve_identity
+    try:
+        identity = resolve_identity(code)
+        if identity.market == 'CN':
+            raise ValueError('请使用国内证券入口')
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    return request.app.state.tasks.submit('overseas_evidence', OverseasEvidenceService(config).refresh, identity.code,
+                                          dedupe_key='overseas_evidence:' + identity.code)
+
+
 @router.get("/overseas/{code}/social")
 def overseas_social(code: str, config: dict = Depends(get_config)):
     from src.services.social_sentiment import social_context

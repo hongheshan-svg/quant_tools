@@ -14,6 +14,7 @@ export const api = {
   runtimeAsk: (question: string, session_id?: string) => http.post<T.Task<T.RuntimeAnswer> & { session_id: string }>('/integrations/runtime/chat', { question, session_id }),
   runtimeCancel: (session_id: string) => http.post<{ ok: boolean }>('/integrations/runtime/cancel', { session_id }),
   overseasSnapshot: (code: string) => http.get<T.OverseasSnapshot>(`/overseas/${encodeURIComponent(code)}`),
+  refreshOverseasEvidence: (code: string) => http.post<T.Task<T.OverseasEvidence>>(`/overseas/${encodeURIComponent(code)}/evidence`),
   refreshOverseas: (code: string) => http.post<T.Task<T.OverseasSnapshot>>(`/overseas/${encodeURIComponent(code)}/refresh`),
   overseasPortfolio: () => http.get<T.OverseasPortfolio>('/overseas/portfolio'),
   refreshOverseasPortfolio: () => http.post<T.Task<T.OverseasPortfolio>>('/overseas/portfolio/refresh'),

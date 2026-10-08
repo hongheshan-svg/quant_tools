@@ -70,11 +70,15 @@ def build_context_pack(context: dict, run_log=None) -> dict[str, Any]:
         if key == "daily" and not (value.get("bars") or value.get("summary") or value.get("bar_count")):
             missing = True
         status = "missing" if missing else "available"
-        if identity.kind != "stock" and key in ("flow", "chips", "earnings", "notices", "fundamentals"):
+        if identity.market != 'CN' and key in ('flow', 'chips', 'earnings', 'notices'):
+            status = 'not_supported'
+        elif identity.market != 'CN' and key == 'news':
+            status = context.get('news_status', 'missing')
+        elif identity.kind != "stock" and key in ("flow", "chips", "earnings", "notices", "fundamentals"):
             status = "not_supported"
         elif step and not step["ok"]:
             status = "fetch_failed"
-        elif key == "fundamentals" and value and value.get("status") in ("partial", "stale", "fetch_failed"):
+        elif key == "fundamentals" and value and value.get("status") in ("missing", "partial", "stale", "fetch_failed"):
             status = value["status"]
         elif key == "news" and context.get("web_status") == "failed":
             status = "partial" if value else "fetch_failed"

@@ -77,14 +77,15 @@ class OverseasResearchService:
             if close:
                 close()
 
-    def refresh(self, code: str) -> dict:
+    def refresh(self, code: str, enrich: bool = False) -> dict:
         identity = resolve_identity(code)
         if identity.market == "CN":
             raise ValueError("请使用国内证券研究入口")
         attempts, rows = [], []
         for provider, fetch in (("Yahoo Finance", self._yahoo), ("Longbridge", self._longbridge)):
             try:
-                rows = fetch(identity)
+                from src.collectors.request_budget import bounded_call
+                rows = bounded_call(lambda fetch=fetch: fetch(identity), 15, quarantine_key=('overseas_bars', provider))
                 attempts.append({"provider": provider, "status": "available" if rows else "unavailable"})
                 if rows:
                     break
@@ -95,6 +96,9 @@ class OverseasResearchService:
             for i, row in enumerate(rows):
                 row["change_pct"] = round((row["close"] / rows[i-1]["close"] - 1) * 100, 4) if i else None
             self.save_cache("overseas:" + identity.code, {"bars": rows, "attempts": attempts})
+        if enrich:
+            from src.services.overseas_evidence import OverseasEvidenceService
+            OverseasEvidenceService(self.config).refresh(identity.code)
         result = self.snapshot(identity.code)
         result["attempts"] = attempts
         if not rows:
@@ -111,15 +115,22 @@ class OverseasResearchService:
         completed = [r for r in bars if state["effective_daily_bar_date"] and r["trade_date"] <= state["effective_daily_bar_date"]]
         quote = completed[-1] if completed else {}
         quality = quote_quality(quote, identity.market)
+        from src.services.overseas_evidence import OverseasEvidenceService
+        from src.services.overseas_symbols import name_for
+        evidence = OverseasEvidenceService(self.config).cached(identity.code)
+        name = (evidence.get('fundamentals', {}).get('profile') or {}).get('longName') or name_for(identity.code)
         technical = {}
         if completed:
             closes = [b["close"] for b in completed]
             technical = {f"ma{window}": round(sum(closes[-window:]) / window, 4) if len(closes) >= window else None for window in (5, 20, 60)}
         from src.services.research_artifact import build_context_pack
-        context = {**asdict(identity), "name": identity.code, "quote": quote, "phase": state,
+        context = {**asdict(identity), "name": name, "quote": quote, "phase": state,
+                   "fundamentals": evidence.get('fundamentals'),
+                   "news_evidence": evidence.get('news', {}).get('items', []),
+                   "news_status": evidence.get('news', {}).get('status', 'missing'),
                    "daily": {"bars": completed[-60:], "bar_count": len(completed)}, "technical": technical,
                    "data_quality": quality}
-        return {**asdict(identity), "name": identity.code, "quote": quote, "bars": bars, "phase": state,
+        return {**asdict(identity), "name": name, "quote": quote, "bars": bars, "phase": state, "evidence": evidence,
                 "quality": quality, "technical": technical, "context_pack": build_context_pack(context),
                 "attempts": cached.get("attempts", []), "research_only": True}
 
@@ -131,7 +142,7 @@ class OverseasResearchService:
         previous = StockDiagnosisService(self.config).latest(identity.code, max_age_minutes=30)
         if previous and not force and previous.get("language", "zh") == lang:
             return previous
-        snapshot = self.refresh(identity.code)
+        snapshot = self.refresh(identity.code, enrich=(self.config.get('diagnosis') or {}).get('fundamentals', True))
         if not snapshot["quote"]:
             return {"code": identity.code, "error": "海外行情不可用，请检查数据源后重试", "data_quality": snapshot["quality"]}
         from src.services.social_sentiment import social_context
@@ -153,15 +164,15 @@ class OverseasResearchService:
             action = "watch"
         labels = {"buy": "买入", "add": "加仓", "hold": "持有", "watch": "观望", "reduce": "减仓", "sell": "卖出", "avoid": "回避"}
         result = {**{key: str(raw.get(key) or "")[:6000] for key in ("one_sentence", "trend", "core_logic", "risk_warning", "invalidation", "operation_advice")},
-            "code": identity.code, "name": identity.code, "kind": "stock", "market": identity.market, "currency": identity.currency,
+            "code": identity.code, "name": snapshot['name'], "kind": "stock", "market": identity.market, "currency": identity.currency,
             "language": lang, "action": action, "action_label": labels[action], "score": score if score is not None else 50,
             "confidence": "低", "research_only": True, "trade_date": snapshot["quote"]["trade_date"], "quote": snapshot["quote"],
             "context_pack": snapshot["context_pack"], "social_evidence": social, "data_quality": snapshot["quality"],
-            "guardrails": ["海外研究仅供参考；新闻与财务覆盖不完整，信心保持低。"], "battle_plan": {},
+            "guardrails": ["海外研究仅供参考；轻量基本面与新闻不能替代完整尽调，信心保持低。"], "battle_plan": {},
             "created_at": datetime.now(timezone.utc).isoformat(), "operation_suggestions": {}}
         result["structured_report"] = build_research_artifact(result)
         with get_db_session(self.db_path) as session:
-            row = StockDiagnosis(code=identity.code, name=identity.code, trade_date=result["trade_date"], action=action,
+            row = StockDiagnosis(code=identity.code, name=snapshot['name'], trade_date=result["trade_date"], action=action,
                                  score=result["score"], result_json=json.dumps(result, ensure_ascii=False))
             session.add(row)
             session.flush()

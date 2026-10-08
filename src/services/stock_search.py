@@ -21,6 +21,7 @@ from sqlalchemy import func
 from src.database.db import get_db_session
 from src.database.models import StockDaily, StockInfo
 from src.utils.stock_code import bare_code, normalize_name
+from src.services.overseas_symbols import aliases as overseas_aliases, symbols as overseas_symbols
 
 INDEX_TTL_HOURS = 12
 # 常用简称（多数不是全称的连续子串，按名称包含匹配搜不到）；输入与简称完全一致时排在最前
@@ -31,6 +32,7 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "601088": ("神华",), "601857": ("石油",), "300059": ("东财",), "002415": ("海康",), "601012": ("隆基",),
     "601288": ("农行",), "002594": ("比亚",), "300750": ("宁德", "宁王"),
 }
+ALIASES.update(overseas_aliases())
 EMPTY_INDEX_TTL_SECONDS = 60   # 还没有个股（股票列表和行情都为空）时，1 分钟后重建，不缓存 12 小时
 MAX_INITIAL_VARIANTS = 8
 _NON_ALNUM = re.compile(r"[^0-9a-z]")
@@ -63,7 +65,7 @@ class StockSearch:
     def _ensure_index(self) -> list[tuple[str, str, tuple[str, ...], str]]:
         cls = StockSearch
         with cls._lock:
-            has_stocks = any(kind == "stock" for *_, kind in cls._entries)
+            has_stocks = any(kind == "stock" and len(code) == 6 and code.isdigit() for code, _, _, kind in cls._entries)
             ttl = timedelta(hours=INDEX_TTL_HOURS) if has_stocks else timedelta(seconds=EMPTY_INDEX_TTL_SECONDS)
             fresh = cls._built_at and datetime.now() - cls._built_at < ttl
             if cls._entries and fresh and cls._db_path == self.db_path:
@@ -89,6 +91,9 @@ class StockSearch:
             logger.warning(f"股票搜索索引构建失败: {e}")
         entries = [(code, name, name_initials(name), "stock") for code, name in sorted(names.items())
                    if len(code) == 6 and code.isdigit()]
+        entries.extend((row['code'], row['name'], (*name_initials(row['name']),
+                        *(_NON_ALNUM.sub('', a.casefold()) for a in row['aliases'])), 'stock')
+                       for row in overseas_symbols())
         try:
             from src.services.fund_registry import INDEX_CODES, list_funds
 
@@ -117,15 +122,26 @@ class StockSearch:
                     continue
                 rank = self._rank(query, lowered, code_query, code[2:], name, initials)
             else:
-                rank = self._rank(query, lowered, code_query, code, name, initials)
-                if kind == "stock" and query in ALIASES.get(code, ()):
+                foreign_code = overseas_identity(code)
+                rank = self._rank(query, lowered, code_query, code.split('.')[0] if foreign_code else code, name, initials)
+                if foreign_code and query.casefold() == code.casefold():
+                    rank = 0
+                if kind == "stock" and query.casefold() in {alias.casefold() for alias in ALIASES.get(code, ())}:
                     rank = 0
             if rank is not None:
                 scored.append((rank, kind != "stock", code, name, kind))
         if foreign and (not scored or any(mark in query for mark in (".", ":")) or query.lower().startswith("hk")):
-            return [{"code": foreign.code, "name": foreign.code, "kind": foreign.kind, "market": foreign.market, "currency": foreign.currency}]
+            from src.services.overseas_symbols import name_for
+            return [{"code": foreign.code, "name": name_for(foreign.code), "kind": foreign.kind, "market": foreign.market, "currency": foreign.currency}]
         scored.sort()
-        return [{"code": code, "name": name, "kind": kind} for _, _, code, name, kind in scored[:limit]]
+        results = []
+        for _, _, code, name, kind in scored[:limit]:
+            item = {"code": code, "name": name, "kind": kind}
+            identity = overseas_identity(code)
+            if identity:
+                item.update(market=identity.market, currency=identity.currency)
+            results.append(item)
+        return results
 
     @staticmethod
     def _rank(query: str, lowered: str, code_query: str, code: str, name: str, initials: tuple[str, ...]) -> int | None:

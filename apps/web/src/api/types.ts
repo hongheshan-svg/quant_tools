@@ -1497,12 +1497,20 @@ export interface MacroOperation {
 }
 export interface RuntimeStatus { provider: string; available: boolean | null; reason: string; capabilities: string[] }
 export interface OverseasSnapshot {
+  evidence?: OverseasEvidence
   code: string; name: string; market: string; currency: string; research_only: boolean
   bars: DailyBar[]; quote: Partial<DailyBar> & { source?: string }; technical: Record<string, number | null>
   quality: { status: string; limitations: string[] }
   phase: { timezone: string; now: string; phase: string; effective_daily_bar_date: string | null; calendar_verified: boolean }
   attempts: { provider: string; status: string }[]
   refresh_status?: string
+}
+export interface OverseasEvidence {
+  fundamentals?: { status: string; source: string; fetched_at: string; as_of: string | null; refresh_status?: string
+    profile: Record<string, string>; valuation: { pe_ttm: number | null; pb: number | null; market_cap: number | null; currency: string | null }
+    financial_report: { currency: string | null; as_of: string | null; revenue: number | null; net_profit: number | null; basic_eps: number | null }
+    missing_fields: string[]; limitations: string[]; dividends: { ex_date: string; cash_per_share: number; currency: string | null }[] }
+  news?: { status: string; source: string; fetched_at: string; refresh_status?: string; items: { title: string; source: string; date: string; url: string; summary: string }[] }
 }
 export interface OverseasPortfolio {
   positions: { account: string; code: string; currency: string; quantity: number; average_cost: number | null; price: number | null;

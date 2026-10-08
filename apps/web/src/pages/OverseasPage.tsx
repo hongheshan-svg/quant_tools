@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '@/api/endpoints'
-import type { Diagnosis, HoldingsImportResult, OverseasSnapshot, OverseasPortfolio } from '@/api/types'
+import type { Diagnosis, HoldingsImportResult, OverseasSnapshot, OverseasPortfolio, OverseasEvidence } from '@/api/types'
 import { Badge, Button, Card, ErrorBox, Field, Input, PageHeader, Spinner } from '@/components/ui'
 import { CandlestickChart, toCandles } from '@/components/CandlestickChart'
 import { DiagnosisView } from '@/components/DiagnosisView'
@@ -16,6 +16,7 @@ export function OverseasPage({ initialCode = 'AAPL' }: { initialCode?: string })
   const snapshot = useApi(() => api.overseasSnapshot(code), [code])
   const task = useTask<OverseasSnapshot>()
   const diagnosisTask = useTask<Diagnosis>()
+  const evidenceTask = useTask<OverseasEvidence>()
   const [report, setReport] = useState<Diagnosis | null>(null)
   const [social, setSocial] = useState<Record<string, unknown> | null>(null)
   const value = snapshot.data
@@ -29,10 +30,11 @@ export function OverseasPage({ initialCode = 'AAPL' }: { initialCode?: string })
   return <div className="space-y-4">
     <PageHeader title="海外研究" description="港美日韩台证券 · 原币行情 · 交易所日历 · 只读研究" />
     <Card>
-      <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); if (task.running || diagnosisTask.running) return; setCode(input.trim()); setReport(null); setSocial(null) }}>
+      <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); if (task.running || diagnosisTask.running || evidenceTask.running) return; setCode(input.trim()); setReport(null); setSocial(null) }}>
         <Field label="证券代码" hint="例如 AAPL、HK00700、7203.T、005930.KS、2330.TW"><Input aria-label="海外证券代码" value={input} onChange={(e) => setInput(e.target.value)} /></Field>
-        <Button type="submit" disabled={task.running || diagnosisTask.running}>查看</Button><Button loading={task.running} onClick={() => void refresh()}>更新行情</Button>
+        <Button type="submit" disabled={task.running || diagnosisTask.running || evidenceTask.running}>查看</Button><Button loading={task.running} onClick={() => void refresh()}>更新行情</Button>
         <Button loading={diagnosisTask.running} onClick={async () => { try { const r = await diagnosisTask.run(() => api.diagnose(code)); if (r && !r.error) setReport(r) } catch { /* useTask 已显示错误 */ } }}>生成研究报告</Button>
+        <Button loading={evidenceTask.running} onClick={async () => { try { await evidenceTask.run(() => api.refreshOverseasEvidence(code)) } catch { /* useTask 已显示错误 */ } finally { await snapshot.reload() } }}>更新财务与新闻</Button>
         <Link to="/integrations" className="text-sm text-accent">配置数据与模型</Link>
       </form>
     </Card>
@@ -44,11 +46,30 @@ export function OverseasPage({ initialCode = 'AAPL' }: { initialCode?: string })
         {value.quality.limitations.length > 0 && <p className="mt-2 text-sm text-warn">行情或日历不完整，报告会降低信心。可更新行情后重试。</p>}
         {value.bars.length ? <CandlestickChart candles={toCandles(value.bars)} /> : <p className="py-10 text-center text-muted">还没有行情，点击“更新行情”获取。</p>}
       </Card>
+      <OverseasEvidenceView evidence={value.evidence} />
       {value.market === 'US' && <Card><Button onClick={async () => { try { setSocial(await api.overseasSocial(code)) } catch (e) { toast.error(String(e)) } }}>读取 Reddit / X / Polymarket 情报</Button>{social && <details open className="mt-3"><summary>社交证据与来源（讨论不代表事实）</summary><pre className="max-h-80 overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify(social, null, 2)}</pre></details>}</Card>}
     </>}
     {report && <DiagnosisView d={report} />}
-    <OverseasHoldings onSymbol={(symbol) => { if (task.running || diagnosisTask.running) return; setSocial(null); setInput(symbol); setCode(symbol); setReport(null) }} />
+    <OverseasHoldings onSymbol={(symbol) => { if (task.running || diagnosisTask.running || evidenceTask.running) return; setSocial(null); setInput(symbol); setCode(symbol); setReport(null) }} />
   </div>
+}
+
+function OverseasEvidenceView({ evidence }: { evidence?: OverseasEvidence }) {
+  const fundamentals = evidence?.fundamentals
+  const statement = fundamentals?.financial_report
+  const news = evidence?.news
+  const metrics: [string, number | null | undefined][] = [['市盈率 TTM', fundamentals?.valuation.pe_ttm], ['市净率', fundamentals?.valuation.pb], ['营业收入', statement?.revenue], ['净利润', statement?.net_profit]]
+  return <Card><h2 className="font-semibold">公司基本面与新闻</h2>
+    <p className="my-2 text-sm text-muted">财务报告币种与股票交易币种可能不同。公告发布时间未核实的资料不用于历史时点回测。</p>
+    {!fundamentals && !news && <p className="text-sm text-muted">点击“更新财务与新闻”获取可用证据，未覆盖字段保持缺失。</p>}
+    {fundamentals && <><p className="text-sm">{fundamentals.profile.longName} · {fundamentals.profile.sector || '行业未覆盖'} · {fundamentals.source} · {fundamentals.status}</p>
+      <p className="mt-1 text-xs text-muted">采集时间：{fundamentals.fetched_at} · 报告期：{statement?.as_of || '未知'}</p>
+      <dl className="my-3 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">{metrics.map(([label, amount]) => <div key={label}><dt className="text-muted">{label}</dt><dd>{fmt(typeof amount === 'number' ? amount : null)}{['营业收入', '净利润'].includes(String(label)) ? ` ${statement?.currency || '币种未知'}` : ''}</dd></div>)}</dl>
+      <p className="text-xs text-muted">缺失字段：{fundamentals.missing_fields.join('、') || '无'} · 轻量数据不能替代完整尽调。</p>
+      {fundamentals.refresh_status === 'fetch_failed' && <p className="text-sm text-warn">本次财务更新失败，保留上次证据及原采集时间。</p>}
+    </>}
+    {news && <div className="mt-3 space-y-2"><h3 className="font-medium">相关报道 · {news.status}</h3>{news.items.map((item) => <div key={`${item.url}:${item.date}`}><a className="text-sm text-accent" href={item.url} target="_blank" rel="noreferrer">{item.title}</a><p className="text-xs text-muted">{item.source} · {item.date}</p></div>)}{news.refresh_status === 'fetch_failed' && <p className="text-sm text-warn">新闻更新失败，保留缓存。</p>}</div>}
+  </Card>
 }
 
 function OverseasHoldings({ onSymbol }: { onSymbol: (code: string) => void }) {

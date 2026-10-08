@@ -277,7 +277,7 @@ def test_overseas_diagnosis_is_saved_and_has_structured_currency(db_path, monkey
     from src.analyzers.llm_client import LLMClient
     service = OverseasResearchService(cfg(db_path))
     service.save_cache('overseas:AAPL', {'bars': bars()})
-    monkeypatch.setattr(service, 'refresh', service.snapshot)
+    monkeypatch.setattr(service, 'refresh', lambda code, **kwargs: service.snapshot(code))
     monkeypatch.setattr('src.services.social_sentiment.social_context', lambda *args: {'status': 'unavailable'})
     monkeypatch.setattr(LLMClient, '__init__', lambda self, config: None)
     monkeypatch.setattr(LLMClient, 'chat_json', lambda *args: {'score': 65, 'action': 'watch', 'one_sentence': '测试研究'})

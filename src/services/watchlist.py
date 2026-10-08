@@ -24,7 +24,7 @@ DEFAULT_MAX_STOCKS = 50
 _CODE = re.compile(r"(?<![0-9A-Za-z])(?:sh|sz|bj|SH|SZ|BJ)?(\d{6})(?:\.(?:SH|SZ|BJ|sh|sz|bj))?(?![0-9])")
 _SPLIT = re.compile(r"[\s,，;；、|\t]+")
 _NAME = re.compile(r"^[一-龥A-Za-z*]{2,12}$")
-CODE_HEADERS = ("证券代码", "股票代码", "代码", "code")
+CODE_HEADERS = ("证券代码", "股票代码", "代码", "code", "symbol", "ticker")
 NAME_HEADERS = ("证券名称", "股票名称", "名称", "name")
 HEADER_WORDS = {*CODE_HEADERS, *NAME_HEADERS, "备注", "持仓", "数量", "成本"}
 
@@ -48,8 +48,12 @@ def _table_tokens(text: str) -> tuple[list[str], list[str]] | None:
         for row in lines[i + 1:]:
             values = [c.strip().strip('"') for c in (row.split(delimiter) if delimiter else row.split())]
             code = values[code_idx] if code_idx < len(values) else ""
+            from src.utils.stock_code import overseas_identity
+            foreign = overseas_identity(code)
             match = _CODE.search(code)
-            if match:
+            if foreign:
+                codes.append(foreign.code)
+            elif match:
                 codes.append(diagnosis_code(match.group(0)))
             elif name_idx is not None and name_idx < len(values) and values[name_idx]:
                 names.append(values[name_idx])
@@ -63,8 +67,21 @@ def extract_tokens(text: str) -> tuple[list[str], list[str]]:
     table = _table_tokens(text)
     if table:
         return table
-    codes = list(dict.fromkeys(diagnosis_code(m.group(0)) for m in _CODE.finditer(text or "")))
-    stripped = _CODE.sub(" ", text or "")
+    from src.utils.stock_code import overseas_identity
+    matches = []
+    for match in re.finditer(r"(?<![A-Za-z0-9])(?:HK[.:]?\d{1,5}|(?:US|JP|KR|TW):[A-Za-z0-9.-]+|\d{4,6}\.(?:HK|T|KS|KQ|TW|TWO)|[A-Z]{1,5}(?:[-.][A-Z])?)(?![A-Za-z0-9])", text):
+        if match.group() in {'ETF', 'USD', 'HKD', 'CNY', 'JPY', 'KRW', 'TWD', 'CSV', 'US', 'HK', 'SH', 'SZ', 'BJ'}:
+            continue
+        identity = overseas_identity(match.group())
+        if identity:
+            matches.append((match.start(), match.end(), identity.code))
+    for match in _CODE.finditer(text):
+        if not any(start <= match.start() < end for start, end, _ in matches):
+            matches.append((match.start(), match.end(), diagnosis_code(match.group())))
+    codes = list(dict.fromkeys(code for _, _, code in sorted(matches)))
+    stripped = text
+    for start, end, _ in sorted(matches, reverse=True):
+        stripped = stripped[:start] + ' ' * (end - start) + stripped[end:]
     names = []
     for token in _SPLIT.split(stripped):
         token = token.strip().strip('"\'')
@@ -197,7 +214,10 @@ class WatchlistService:
             with get_db_session(self.db_path) as session:
                 name = (session.query(StockDaily.name).filter(StockDaily.code.in_(code_candidates(bare)))
                         .order_by(StockDaily.trade_date.desc()).limit(1).scalar())
-            return (bare, name or "") if name is not None else None
+            if name is not None:
+                return bare, name or ""
+            foreign = [item for item in found if item['code'].split('.')[0] == bare and '.' in item['code']]
+            return (foreign[0]['code'], foreign[0]['name']) if len(foreign) == 1 else None
         return (found[0]["code"], found[0]["name"]) if len(found) == 1 else None
 
     def add(self, text: str, note: str = "", include_funds: bool = True) -> dict[str, Any]:
