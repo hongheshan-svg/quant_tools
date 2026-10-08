@@ -136,6 +136,7 @@ def test_stock_search_handles_unnormalized_names(db_path):
         assert match[0]["name"] == "万科A", query
     assert [h["name"] for h in search.search("南玻")] == ["南玻A"]
     assert search.search("平安")[0]["name"] == "平安银行"
+    assert any(row['code'] == '02318.HK' for row in search.search('平安'))  # 海外别名保留，国内名称前缀优先
 
 
 def test_stock_search_daily_name_also_normalized(db_path):

@@ -127,7 +127,8 @@ class StockSearch:
                 if foreign_code and query.casefold() == code.casefold():
                     rank = 0
                 if kind == "stock" and query.casefold() in {alias.casefold() for alias in ALIASES.get(code, ())}:
-                    rank = 0
+                    alias_rank = 2 if foreign_code else 0
+                    rank = min(rank, alias_rank) if rank is not None else alias_rank
             if rank is not None:
                 scored.append((rank, kind != "stock", code, name, kind))
         if foreign and (not scored or any(mark in query for mark in (".", ":")) or query.lower().startswith("hk")):
