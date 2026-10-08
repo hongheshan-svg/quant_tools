@@ -1,0 +1,41 @@
+{
+  "baseline": "ce364e457aab288863a5707e7b3df79786ad07f2",
+  "verified_commit": "651206f",
+  "backend": {
+    "command": ".venv/bin/python -m pytest -q -p no:cacheprovider tests/",
+    "passed": 2146,
+    "warnings": 6,
+    "seconds": 50.71
+  },
+  "web": {
+    "commands": [
+      "npm run lint",
+      "npm test",
+      "npm run build"
+    ],
+    "test_files": 46,
+    "passed": 195,
+    "lint": "passed",
+    "build": "passed"
+  },
+  "desktop": {
+    "command": "npm test",
+    "passed": 24
+  },
+  "browser": {
+    "script": "scripts/dsa_extension_smoke.py",
+    "result": "../dsa-overseas-live-2026-10-08/results.json",
+    "uncaught_errors": 0,
+    "external_services": "mocked"
+  },
+  "syntax": {
+    "minimum_python": "3.11",
+    "changed_modules": "parsed successfully"
+  },
+  "remaining": [
+    "Longbridge OAuth cache authentication",
+    "Taiwan institutional flow evidence",
+    "packaged runtime verification"
+  ],
+  "pushed": false
+}
