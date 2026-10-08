@@ -1,0 +1,36 @@
+
+> quant-tools-desktop@1.2.0 test
+> node --test "tests/*.test.js"
+
+✔ findAvailablePort 跳过被占用的端口 (6.094708ms)
+✔ findAvailablePort 范围内都被占用时报错 (0.387459ms)
+✔ 开发模式在仓库根目录运行 server.py，优先用 .venv (0.391917ms)
+✔ 开发模式没有 .venv 时用系统 Python，QUANT_PYTHON 可以覆盖 (0.07575ms)
+✔ 打包后运行 resources 里的 quant_server，数据放在用户目录 (0.074792ms)
+✔ waitForHealth 等到健康检查返回 200 (27.797167ms)
+✔ waitForHealth 在后台进程退出时立即失败，超时也会失败 (84.154042ms)
+✔ stopBackend 先 SIGTERM，不退出再 SIGKILL (32.655417ms)
+✔ stopBackend 在 Windows 上用 taskkill 结束整个进程树 (0.391042ms)
+✔ stopBackend 对已退出的进程不做任何事 (0.187917ms)
+✔ isExternalUrl 只放行站外的 http(s) 链接 (0.172083ms)
+✔ 只有 Linux 的 AppImage 关闭 Chromium 沙箱 (0.089375ms)
+✔ 从启动参数读取桌面端版本 (0.3105ms)
+✔ 向页面暴露 quantDesktop，并通过 IPC 调用主进程 (0.349541ms)
+✔ compareVersions 按数字段比较 (0.426584ms)
+✔ compareVersions 支持 v 前缀与缺段 (0.07325ms)
+✔ compareVersions 预发布版本低于正式版 (0.049417ms)
+✔ shouldAutoCheck (0.068833ms)
+✔ canAutoInstall (0.046ms)
+✔ releasePageUrl (0.0475ms)
+✔ readPrefs / writePrefs (0.979292ms)
+✔ preload 暴露更新相关 IPC (0.315833ms)
+✔ package.json 声明 electron-updater 与 GitHub 发布源 (0.163167ms)
+✔ 发布工作流上传三个平台的安装包、latest*.yml 与 blockmap (0.455209ms)
+ℹ tests 24
+ℹ suites 0
+ℹ pass 24
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 253.034583

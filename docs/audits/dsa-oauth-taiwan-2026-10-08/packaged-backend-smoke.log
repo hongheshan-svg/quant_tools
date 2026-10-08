@@ -1,0 +1,27 @@
+ok    mini_racer
+ok    litellm_prices
+ok    pinyin
+ok    strategy_skills
+ok    report_templates
+ok    qr_code
+ok    overseas_extensions
+Self-check passed
+--run-job -> exit 2
+/api/v1/health -> 200
+/api/v1/dashboard -> 200
+/api/v1/settings/llm -> 200
+/api/v1/chat/skills -> 200
+/api/v1/settings/templates -> 200
+/api/v1/screening/rotation/settings -> 200
+/api/v1/system/data-center -> 200
+/api/v1/alerts/rules -> 200
+/ -> 200
+/api/v1/integrations/macro/operations -> 200
+/api/v1/integrations/runtime -> 200
+/api/v1/overseas/AAPL -> 200
+/api/v1/integrations/longbridge/status -> 200
+/api/v1/settings/market-review -> 200
+/api/v1/overseas/2330.TW -> 200
+/api/v1/screening/snapshot/check -> 200
+Bundled JP/KR/TW symbol search -> passed
+Smoke test passed

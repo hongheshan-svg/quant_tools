@@ -1,0 +1,20 @@
+[
+  {
+    "code": "2330.TW",
+    "requested_date": "2026-10-07",
+    "status": "available",
+    "source": "TWSE",
+    "as_of": "2026-10-07",
+    "limitations": [],
+    "unit": "shares"
+  },
+  {
+    "code": "6488.TWO",
+    "requested_date": "2026-10-07",
+    "status": "available",
+    "source": "TPEx",
+    "as_of": "2026-10-07",
+    "limitations": [],
+    "unit": "shares"
+  }
+]

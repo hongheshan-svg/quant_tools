@@ -1,0 +1,21 @@
+{
+  "/": {
+    "status": 200
+  },
+  "/api/v1/health": {
+    "status": 200
+  },
+  "/api/v1/integrations/longbridge/status": {
+    "status": 200,
+    "oauth_supported": false
+  },
+  "/api/v1/settings/market-review": {
+    "status": 200
+  },
+  "/api/v1/overseas/2330.TW": {
+    "status": 200
+  },
+  "/api/v1/stocks/search?q=%E5%8F%B0%E7%A9%8D%E9%9B%BB": {
+    "status": 200
+  }
+}

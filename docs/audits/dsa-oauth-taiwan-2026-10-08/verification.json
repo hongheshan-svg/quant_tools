@@ -1,0 +1,55 @@
+{
+  "date": "2026-10-08",
+  "upstream": "ZhuLinsen/daily_stock_analysis@ce364e457aab288863a5707e7b3df79786ad07f2",
+  "implementation_head": "f43f010",
+  "backend": {
+    "passed": 2185,
+    "warnings": 6,
+    "seconds": 59.75
+  },
+  "web": {
+    "files": 47,
+    "passed": 198,
+    "lint": "passed",
+    "build": "passed"
+  },
+  "desktop_tests": 24,
+  "python_compatibility": "19 changed modules parsed with Python 3.11 grammar",
+  "browser_errors": [],
+  "macos_arm64": {
+    "pyinstaller": "passed",
+    "backend_self_check": "passed",
+    "backend_api_smoke": "passed",
+    "symbol_index": "passed",
+    "electron_build": "passed",
+    "codesign_verify_deep_strict": "passed",
+    "actual_app_launch": "passed",
+    "temporary_data_dir": true,
+    "preload_bridge": "passed",
+    "backend_stopped_on_exit": true
+  },
+  "linux_arm64": {
+    "docker_build": "passed",
+    "image": "quant-tools:dsa-oct8-validation",
+    "image_manifest": "sha256:c59b9c465e1d39389def862506ccb592ee82239c7134271fef4d04b82f7dd83d",
+    "self_check_network_none": "passed",
+    "api_smoke": "passed",
+    "test_container_removed": true,
+    "oauth_supported_by_bundled_legacy_sdk": false
+  },
+  "live_public_sources": {
+    "TWSE": "passed",
+    "TPEx": "passed_after_transient_failure",
+    "as_of": "2026-10-07",
+    "account_data_used": false
+  },
+  "not_executed": [
+    "Windows runtime",
+    "macOS x64 runtime",
+    "Linux desktop runtime",
+    "real brokerage OAuth authorization",
+    "paid model calls",
+    "real notifications"
+  ],
+  "remote_mutations": []
+}

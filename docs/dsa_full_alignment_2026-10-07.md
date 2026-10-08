@@ -1,5 +1,7 @@
 # 本轮 DSA 对齐实现与验收
 
+> 后续运行入口补充与最终验证见 [2026-10-08 验收](dsa_runtime_alignment_2026-10-08.md)，涵盖海外财务／新闻、盘中快照、区域复盘、韩文固定报告、OAuth、台股法人资料及实际桌面／容器运行。下方保留本轮原始范围和测试数量。
+
 本轮完成[发布后复核](dsa_alignment_postrelease_2026-10-07.md)确认的 R01–R08，以及用户选择全部引入的 E1–E6。参考仓库固定为 [daily_stock_analysis `ce364e4`](https://github.com/ZhuLinsen/daily_stock_analysis/tree/ce364e457aab288863a5707e7b3df79786ad07f2)，本地起点为 `7593d76`。这里的“完成”指下表明确列出的功能、入口和离线验收；不等于对未来上游提交或所有付费服务作可用性保证。
 
 ## 八项质量修复

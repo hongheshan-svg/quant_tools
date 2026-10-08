@@ -1,0 +1,15 @@
+
+> quant-tools-web@1.2.0 test
+> vitest run
+
+
+ RUN  v5.0.2 <repository>/apps/web
+
+
+ Test Files  47 passed (47)
+      Tests  198 passed (198)
+   Start at  09:16:39
+   Duration  7.01s (tests 58%, environment 23%, import 11%, transform 4%, setup 4%)
+
+    Isolate  47 workers spawned · ~408ms startup each (spawn + environment, per file)
+             at least ~1.72s faster with isolate: false — reuses workers across files instead of one per file
