@@ -156,6 +156,7 @@ def overseas_snapshot(code: str, config: dict = Depends(get_config)):
 
 @router.post("/overseas/{code}/refresh")
 def overseas_refresh(code: str, request: Request, config: dict = Depends(get_config)):
+    from functools import partial
     from src.services.overseas_research import OverseasResearchService
     from src.utils.stock_code import resolve_identity
     try:
@@ -164,7 +165,7 @@ def overseas_refresh(code: str, request: Request, config: dict = Depends(get_con
             raise ValueError("请使用国内证券入口")
     except ValueError as error:
         raise HTTPException(400, str(error)) from error
-    return request.app.state.tasks.submit("overseas_quotes", OverseasResearchService(config).refresh, identity.code,
+    return request.app.state.tasks.submit("overseas_quotes", partial(OverseasResearchService(config).refresh, realtime=True), identity.code,
                                           dedupe_key="overseas:" + identity.code)
 
 

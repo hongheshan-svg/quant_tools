@@ -1,0 +1,16 @@
+2026-10-08 08:46:31.717 | INFO     | src.database.db:get_engine:45 - 数据库引擎已创建(WAL模式): sqlite:////var/folders/b0/p38nb74n1sdcprh59b9dpb8w0000gn/T/quant-alignment-ui-vys92ak4/preview.db
+2026-10-08 08:46:31.735 | INFO     | src.database.db:init_db:65 - 数据库表已创建/更新
+2026-10-08 08:46:32.055 | INFO     | src.database.db:init_db:65 - 数据库表已创建/更新
+2026-10-08 08:46:32.060 | INFO     | src.database.db:init_db:65 - 数据库表已创建/更新
+2026-10-08 08:46:32.066 | INFO     | src.database.db:init_db:65 - 数据库表已创建/更新
+2026-10-08 08:46:35.943 | ERROR    | api.tasks:_run:149 - 后台任务失败 [df0e9f53bbe04d04898b09577f64bd85]: 本地模型会话已取消
+Traceback (most recent call last):
+  File "[LOCAL_PATH]", line 144, in _run
+    result = jsonable_encoder(fn(*args, **kwargs))
+                              ~~^^^^^^^^^^^^^^^^^
+  File "[LOCAL_PATH]", line 225, in ask
+    answer = runtime.run(question, saved["messages"])
+  File "[LOCAL_PATH]", line 75, in run
+    raise RuntimeError('本地模型会话已取消')
+RuntimeError: 本地模型会话已取消
+

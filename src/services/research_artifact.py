@@ -58,6 +58,9 @@ def build_context_pack(context: dict, run_log=None) -> dict[str, Any]:
         "news": ("资讯", context.get("news_evidence") or [], "本地资讯与联网搜索", None),
         "notices": ("个股新闻公告", context.get("notices_evidence") or [], "东方财富公告", None),
     }
+    if identity.market != 'CN' and context.get('realtime_quote'):
+        realtime = context['realtime_quote']
+        specifications['realtime'] = ('盘中快照（可能延迟）', realtime, realtime.get('source'), realtime.get('provider_timestamp'))
     for key, (label, value, source, as_of) in specifications.items():
         raw_times = value if isinstance(value, dict) else {}
         if key in ("daily", "technical"):
@@ -70,7 +73,9 @@ def build_context_pack(context: dict, run_log=None) -> dict[str, Any]:
         if key == "daily" and not (value.get("bars") or value.get("summary") or value.get("bar_count")):
             missing = True
         status = "missing" if missing else "available"
-        if identity.market != 'CN' and key in ('flow', 'chips', 'earnings', 'notices'):
+        if key == 'realtime':
+            status = value.get('status', 'missing')
+        elif identity.market != 'CN' and key in ('flow', 'chips', 'earnings', 'notices'):
             status = 'not_supported'
         elif identity.market != 'CN' and key == 'news':
             status = context.get('news_status', 'missing')

@@ -1492,7 +1492,7 @@ export interface ScreeningSourceHistory {
 }
 
 export interface IntegrationSettings {
-  settings: Record<string, Record<string, string | number>>
+  settings: Record<string, Record<string, string | number | boolean>>
   groups: { key: string; label: string; fields: { key: string; label: string; secret: boolean; type: string }[] }[]
 }
 export interface MacroOperation {
@@ -1502,6 +1502,7 @@ export interface MacroOperation {
 }
 export interface RuntimeStatus { provider: string; available: boolean | null; reason: string; capabilities: string[] }
 export interface OverseasSnapshot {
+  realtime_quote?: { status: string; price?: number | null; currency?: string; provider_timestamp?: string; fetched_at?: string; source?: string; refresh_status?: string; limitations: string[] }
   evidence?: OverseasEvidence
   code: string; name: string; market: string; currency: string; research_only: boolean
   bars: DailyBar[]; quote: Partial<DailyBar> & { source?: string }; technical: Record<string, number | null>

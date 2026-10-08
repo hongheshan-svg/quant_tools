@@ -7,7 +7,8 @@ FIELDS = {
     "longbridge": {"label": "Longbridge 港美行情", "fields": {
         "app_key": ("App Key", "", True), "app_secret": ("App Secret", "", True),
         "access_token": ("Access Token", "", True)}},
-    "futu": {"label": "Futu 持仓标的（只读）", "fields": {
+    "futu": {"label": "Futu 持仓与基本面（只读）", "fields": {
+        "fundamentals_enabled": ("启用港股基本面", False, False),
         "host": ("OpenD 主机", "127.0.0.1", False), "port": ("OpenD 端口", 11111, False)}},
     "runtime": {"label": "本地模型运行", "fields": {
         "timeout_seconds": ("超时（秒）", 300, False),
@@ -31,7 +32,7 @@ def settings(config: dict, *, masked: bool = True) -> dict:
 
 def metadata() -> list[dict]:
     return [{"key": group, "label": spec["label"], "fields": [
-        {"key": key, "label": label, "secret": secret, "type": "number" if isinstance(default, int) else "text"}
+        {"key": key, "label": label, "secret": secret, "type": "checkbox" if isinstance(default, bool) else "number" if isinstance(default, int) else "text"}
         for key, (label, default, secret) in spec["fields"].items()]} for group, spec in FIELDS.items()]
 
 
@@ -46,7 +47,10 @@ def merge_settings(config: dict, body: dict) -> dict:
             _, default, secret = FIELDS[group]["fields"][key]
             if secret and item == "******":
                 continue
-            if isinstance(default, int):
+            if isinstance(default, bool):
+                if type(item) is not bool:
+                    raise ValueError('开关必须是布尔值')
+            elif isinstance(default, int):
                 if type(item) is not int or not 1 <= item <= (3600 if key == "timeout_seconds" else 65535):
                     raise ValueError("端口或超时超出范围")
             elif not isinstance(item, str) or len(item) > 4096 or "\x00" in item:

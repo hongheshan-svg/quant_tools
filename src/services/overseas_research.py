@@ -77,7 +77,7 @@ class OverseasResearchService:
             if close:
                 close()
 
-    def refresh(self, code: str, enrich: bool = False) -> dict:
+    def refresh(self, code: str, enrich: bool = False, realtime: bool = False) -> dict:
         identity = resolve_identity(code)
         if identity.market == "CN":
             raise ValueError("请使用国内证券研究入口")
@@ -99,11 +99,40 @@ class OverseasResearchService:
         if enrich:
             from src.services.overseas_evidence import OverseasEvidenceService
             OverseasEvidenceService(self.config).refresh(identity.code)
+        if realtime:
+            self.refresh_realtime(identity.code)
         result = self.snapshot(identity.code)
         result["attempts"] = attempts
         if not rows:
             result["refresh_status"] = "fetch_failed"
         return result
+
+    def refresh_realtime(self, code: str) -> dict:
+        from src.collectors.request_budget import bounded_call
+        from src.services.overseas_realtime import fetch_quote, normalize
+        identity = resolve_identity(code)
+        if identity.market == 'CN':
+            raise ValueError('仅支持海外证券快照')
+        try:
+            info = bounded_call(lambda: fetch_quote(identity.code), 8, quarantine_key=('overseas_realtime', 'yahoo'))
+            quote = normalize(info if isinstance(info, dict) else {}, identity.code)
+            if quote['price'] is None or 'unknown_provider_time' in quote['limitations'] or 'future_timestamp' in quote['limitations']:
+                raise ValueError('报价或供应商时间不可用')
+            previous = self.cached('overseas:realtime:' + identity.code)
+            if previous.get('provider_timestamp') and quote['provider_timestamp'] < previous['provider_timestamp']:
+                raise ValueError('供应商返回较旧快照')
+            self.save_cache('overseas:realtime:' + identity.code, quote)
+            return quote
+        except Exception:
+            previous = self.cached('overseas:realtime:' + identity.code)
+            if previous:
+                self.save_cache('overseas:realtime:' + identity.code, {**previous, 'refresh_status': 'fetch_failed'})
+            return {**self.realtime(identity.code), 'refresh_status': 'fetch_failed'}
+
+    def realtime(self, code: str) -> dict:
+        from src.services.overseas_realtime import quality
+        cached = self.cached('overseas:realtime:' + code)
+        return quality(cached) if cached else {'status': 'missing', 'limitations': ['missing_quote']}
 
     def snapshot(self, code: str) -> dict:
         identity = resolve_identity(code)
@@ -118,6 +147,7 @@ class OverseasResearchService:
         from src.services.overseas_evidence import OverseasEvidenceService
         from src.services.overseas_symbols import name_for
         evidence = OverseasEvidenceService(self.config).cached(identity.code)
+        realtime_quote = self.realtime(identity.code)
         name = (evidence.get('fundamentals', {}).get('profile') or {}).get('longName') or name_for(identity.code)
         technical = {}
         if completed:
@@ -125,12 +155,14 @@ class OverseasResearchService:
             technical = {f"ma{window}": round(sum(closes[-window:]) / window, 4) if len(closes) >= window else None for window in (5, 20, 60)}
         from src.services.research_artifact import build_context_pack
         context = {**asdict(identity), "name": name, "quote": quote, "phase": state,
+                   "realtime_quote": realtime_quote,
                    "fundamentals": evidence.get('fundamentals'),
                    "news_evidence": evidence.get('news', {}).get('items', []),
                    "news_status": evidence.get('news', {}).get('status', 'missing'),
                    "daily": {"bars": completed[-60:], "bar_count": len(completed)}, "technical": technical,
                    "data_quality": quality}
         return {**asdict(identity), "name": name, "quote": quote, "bars": bars, "phase": state, "evidence": evidence,
+                "realtime_quote": realtime_quote,
                 "quality": quality, "technical": technical, "context_pack": build_context_pack(context),
                 "attempts": cached.get("attempts", []), "research_only": True}
 
@@ -142,7 +174,7 @@ class OverseasResearchService:
         previous = StockDiagnosisService(self.config).latest(identity.code, max_age_minutes=30)
         if previous and not force and previous.get("language", "zh") == lang:
             return previous
-        snapshot = self.refresh(identity.code, enrich=(self.config.get('diagnosis') or {}).get('fundamentals', True))
+        snapshot = self.refresh(identity.code, enrich=(self.config.get('diagnosis') or {}).get('fundamentals', True), realtime=True)
         if not snapshot["quote"]:
             return {"code": identity.code, "error": "海外行情不可用，请检查数据源后重试", "data_quality": snapshot["quality"]}
         from src.services.social_sentiment import social_context

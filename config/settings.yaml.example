@@ -597,6 +597,7 @@ integrations:
     app_secret: ""
     access_token: ""
   futu:
+    fundamentals_enabled: false  # 开启后港股财务优先使用本机 OpenD，Yahoo 补同报告期同币种缺项
     host: "127.0.0.1"
     port: 11111
   runtime:

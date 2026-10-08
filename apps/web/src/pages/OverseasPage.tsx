@@ -43,6 +43,9 @@ export function OverseasPage({ initialCode = 'AAPL' }: { initialCode?: string })
     {value && <>
       <Card><div className="flex flex-wrap gap-4"><strong>{value.code} · {value.market}</strong><span>{fmt(value.quote.close)} {value.currency}</span><Badge tone={value.quality.status === 'available' ? 'default' : 'warn'}>{value.quality.status === 'available' ? '已核对完整日线' : '数据受限'}</Badge></div>
         <p className="mt-2 text-sm text-muted">行情日期：{value.quote.trade_date ?? '暂无'} · 来源：{value.quote.source ?? '暂无'} · 市场时区：{value.phase.timezone} · 最近完整交易日：{value.phase.effective_daily_bar_date ?? '未知'}</p>
+        <p className="mt-2 text-sm">盘中快照：{fmt(value.realtime_quote?.price)} {value.realtime_quote?.currency || value.currency} · {value.realtime_quote?.status === 'available' ? '15 分钟内报价，可能延迟' : '报价缺失或已过时'}</p>
+        {value.realtime_quote?.provider_timestamp && <p className="mt-1 text-xs text-muted">报价时间：{value.realtime_quote.provider_timestamp} · 采集时间：{value.realtime_quote.fetched_at} · {value.realtime_quote.source}</p>}
+        {value.realtime_quote?.refresh_status === 'fetch_failed' && <p className="text-sm text-warn">快照更新失败，保留原报价和时间。</p>}
         {value.quality.limitations.length > 0 && <p className="mt-2 text-sm text-warn">行情或日历不完整，报告会降低信心。可更新行情后重试。</p>}
         {value.bars.length ? <CandlestickChart candles={toCandles(value.bars)} /> : <p className="py-10 text-center text-muted">还没有行情，点击“更新行情”获取。</p>}
       </Card>

@@ -33,6 +33,12 @@ def seed(app):
         return [{'title': '隔离验收公司财报', 'providerPublishTime': datetime.now(timezone.utc).timestamp() - 60,
                  'publisher': '验收新闻源', 'link': 'https://example.com/report'}]
     overseas_evidence.fetch_part = evidence
+    from src.services import overseas_realtime
+    overseas_realtime.fetch_quote = lambda code: {'currency': 'HKD' if code.endswith('.HK') else 'USD',
+        'regularMarketPrice': 263.5, 'regularMarketTime': datetime.now(timezone.utc).timestamp() - 60, 'exchangeDataDelayedBy': 0}
+    from src.services import futu_evidence
+    futu_evidence.fetch = lambda config, code: {'profile': {'longName': '隔离验收 Futu 公司'}, 'dividends': [], 'failed_blocks': [],
+        'financial_report': {'as_of': '2026-06-30', 'currency': 'CNY', 'revenue': 1000000, 'net_profit': 200000, 'basic_eps': None, 'gross_profit': None}}
     from src.services import overseas_market_review
     overseas_market_review.fetch_index = lambda symbol, region, expected: {
         'symbol': symbol, 'status': 'available', 'trade_date': expected, 'close': 31200, 'change_pct': 1.25,

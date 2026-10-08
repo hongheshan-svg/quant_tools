@@ -80,6 +80,12 @@ async def main():
 
             await page.goto(BASE + '/integrations')
             await expect(page.get_by_text('72 项', exact=True)).to_be_visible()
+            await page.get_by_label('Futu 持仓与基本面（只读）-启用港股基本面', exact=True).check()
+            await page.get_by_role('button', name='保存接入配置', exact=True).click()
+            await expect(page.get_by_role('button', name='保存接入配置', exact=True)).to_be_enabled()
+            futu_settings = await (await context.request.get(BASE + '/api/v1/settings/integrations')).json()
+            assert futu_settings['settings']['futu']['fundamentals_enabled'] is True
+            results['futu_fundamentals_setting'] = True
             await page.get_by_label('宏观查询内容').select_option('health')
             await page.get_by_role('button', name='查询宏观数据').click()
             await expect(page.get_by_text('隔离验收宏观服务', exact=False)).to_be_visible()
@@ -107,6 +113,9 @@ async def main():
             await page.goto(BASE + '/overseas')
             await expect(page.get_by_text('AAPL · US', exact=True)).to_be_visible()
             await expect(page.get_by_text('已核对完整日线', exact=True)).to_be_visible()
+            await page.get_by_role('button', name='更新行情', exact=True).click()
+            await expect(page.get_by_text('盘中快照：263.5 USD', exact=False)).to_be_visible(timeout=20000)
+            results['overseas_realtime'] = {'provider_time_visible': True, 'daily_bar_separate': True}
             await page.get_by_role('button', name='更新财务与新闻', exact=True).click()
             await expect(page.get_by_text('隔离验收公司财报', exact=True)).to_be_visible(timeout=20000)
             await expect(page.get_by_text('1,000,000 USD', exact=True)).to_be_visible()

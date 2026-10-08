@@ -117,12 +117,20 @@ class OverseasEvidenceService:
         seconds = min(20., float((self.config.get('data_sources') or {}).get('stage_timeout_seconds', 20)))
         def fetch(part):
             try:
-                value = bounded_call(lambda: fetch_part(identity.code, part), min(8., deadline.remaining()),
+                if part == 'futu':
+                    from src.services.futu_evidence import fetch as fetch_futu
+                    value = bounded_call(lambda: fetch_futu(self.config, identity.code), min(12., deadline.remaining()),
+                                         quarantine_key=('overseas_evidence', 'futu'))
+                else:
+                    value = bounded_call(lambda: fetch_part(identity.code, part), min(8., deadline.remaining()),
                                      quarantine_key=('overseas_evidence', part))
                 return part, value, None
             except Exception:
                 return part, None, 'fetch_failed'
-        values = {key: (value, error) for key, value, error in deadline.parallel(fetch, ['info', 'statements', 'dividends', 'news'], seconds=seconds)}
+        parts = ['info', 'statements', 'dividends', 'news']
+        if identity.market == 'HK' and ((self.config.get('integrations') or {}).get('futu') or {}).get('fundamentals_enabled'):
+            parts.append('futu')
+        values = {key: (value, error) for key, value, error in deadline.parallel(fetch, parts, seconds=seconds)}
         now = datetime.now(timezone.utc)
         result = financials(*(values.get(key, (None, None))[0] for key in ('info', 'statements', 'dividends')), identity, now)
         failed = [key for key in ('info', 'statements', 'dividends') if key not in values or values[key][1]]
@@ -130,6 +138,13 @@ class OverseasEvidenceService:
         if failed:
             result['limitations'].extend('fetch_failed:' + key for key in failed)
             if result['status'] == 'missing': result['status'] = 'fetch_failed'
+        if 'futu' in parts:
+            if values.get('futu', (None, 'fetch_failed'))[0]:
+                from src.services.futu_evidence import merge
+                result = merge(result, values['futu'][0])
+            else:
+                result['failed_blocks'].append('futu')
+                result['limitations'].append('fetch_failed:futu')
         news = news_rows(values.get('news', (None, None))[0], now)
         news_failed = 'news' not in values or bool(values['news'][1])
         evidence = {'fundamentals': result, 'news': {'status': 'fetch_failed' if news_failed else 'available' if news else 'missing',

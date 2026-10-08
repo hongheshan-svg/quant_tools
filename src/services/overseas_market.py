@@ -29,6 +29,9 @@ def phase(market: str, now: datetime | None = None) -> dict:
         phase_name = "intraday" if live else "pre_market" if stamp < opened else "post_market"
         if live and calendar.is_break_minute(stamp.floor('min')):
             phase_name = "midday_break"
+        elif live and ((market == 'JP' and now.date().isoformat() >= '2024-11-05' and closed - stamp <= pd.Timedelta(minutes=5))
+                       or (market == 'KR' and closed - stamp <= pd.Timedelta(minutes=10))):
+            phase_name = 'closing_auction'
         elif session.date() != now.date():
             phase_name = "non_trading_day"
         return {**result, "calendar_verified": True, "phase": phase_name,
