@@ -26,6 +26,7 @@ DEFAULT_EXE = ROOT / "dist" / "backend" / "quant_server" / ("quant_server.exe" i
 PATHS = ["/api/v1/health", "/api/v1/dashboard", "/api/v1/settings/llm", "/api/v1/chat/skills", "/api/v1/settings/templates", "/api/v1/screening/rotation/settings", "/api/v1/system/data-center", "/api/v1/alerts/rules", "/"]
 STARTUP_TIMEOUT = 180
 PATHS.extend(["/api/v1/integrations/macro/operations", "/api/v1/integrations/runtime", "/api/v1/overseas/AAPL"])
+PATHS.extend(['/api/v1/integrations/longbridge/status', '/api/v1/settings/market-review', '/api/v1/overseas/2330.TW'])
 
 
 def free_port() -> int:
@@ -106,6 +107,16 @@ def main() -> int:
             except Exception as error:
                 print(f'Snapshot diagnostics failed: {error}')
                 failures.append('snapshot')
+            try:
+                from urllib.parse import quote
+                for name, code in [('丰田', '7203.T'), ('台積電', '2330.TW'), ('삼성전자', '005930.KS')]:
+                    with urllib.request.urlopen(base + '/api/v1/stocks/search?q=' + quote(name), timeout=30) as response:
+                        matches = json.load(response)
+                    assert matches and matches[0]['code'] == code, f'Bundled symbol index missing: {code}'
+                print('Bundled JP/KR/TW symbol search -> passed')
+            except Exception as error:
+                print(f'Bundled symbol search failed: {error}')
+                failures.append('symbol_search')
             ok = not failures
     finally:
         proc.terminate()

@@ -33,6 +33,10 @@ def seed(app):
         return [{'title': '隔离验收公司财报', 'providerPublishTime': datetime.now(timezone.utc).timestamp() - 60,
                  'publisher': '验收新闻源', 'link': 'https://example.com/report'}]
     overseas_evidence.fetch_part = evidence
+    from src.collectors import tw_institutional
+    tw_institutional.fetch = lambda code: {'status': 'available', 'source': 'TWSE', 'unit': 'shares',
+        'as_of': phase('TW')['effective_daily_bar_date'], 'fetched_at': datetime.now(timezone.utc).isoformat(),
+        'foreign_net': -1234000, 'trust_net': 0, 'dealer_net': 234000, 'total_net': -1000000, 'limitations': []}
     from src.services import overseas_realtime
     overseas_realtime.fetch_quote = lambda code: {'currency': 'HKD' if code.endswith('.HK') else 'USD',
         'regularMarketPrice': 263.5, 'regularMarketTime': datetime.now(timezone.utc).timestamp() - 60, 'exchangeDataDelayedBy': 0}
@@ -55,6 +59,7 @@ def seed(app):
     OverseasResearchService.fx_rate = fx
     service.refresh('AAPL')
     service.refresh('HK00700')
+    service.refresh('2330.TW')
     LLMClient.chat_json = lambda *args, **kwargs: {'score': 64, 'action': 'watch', 'confidence': '低',
         'headline': '隔离验收区域复盘', 'trend': '指数按各自市场交易日统计。', 'emotion': '保持观察', 'main_lines': '市场证据待跟踪',
         'focus': ['下一交易日指数变化'], 'avoid': [], 'watch_points': ['公开新闻与波动变化'],

@@ -80,6 +80,11 @@ async def main():
 
             await page.goto(BASE + '/integrations')
             await expect(page.get_by_text('72 项', exact=True)).to_be_visible()
+            await expect(page.get_by_role('heading', name='Longbridge 认证状态')).to_be_visible()
+            await expect(page.get_by_text('尚未配置 Longbridge 认证', exact=True)).to_be_visible()
+            await page.get_by_role('heading', name='Longbridge 认证状态').scroll_into_view_if_needed()
+            await page.screenshot(path=str(OUT / 'longbridge-auth.png'), full_page=True)
+            results['longbridge_auth'] = {'status_visible': True, 'oauth_configuration_visible': True}
             await page.get_by_label('Futu 持仓与基本面（只读）-启用港股基本面', exact=True).check()
             await page.get_by_role('button', name='保存接入配置', exact=True).click()
             await expect(page.get_by_role('button', name='保存接入配置', exact=True)).to_be_enabled()
@@ -138,6 +143,17 @@ async def main():
             await page.get_by_role('button', name='生成研究报告', exact=True).click()
             await expect(page.get_by_text('隔离验收研究：使用原币行情，缺少新闻与财务证据。', exact=False).first).to_be_visible(timeout=20000)
             await page.screenshot(path=str(OUT / 'overseas.png'), full_page=True)
+            await page.get_by_label('海外证券代码').fill('2330.TW')
+            await page.get_by_role('button', name='查看', exact=True).click()
+            await expect(page.get_by_text('2330.TW · TW', exact=True)).to_be_visible()
+            await page.get_by_role('button', name='更新财务与新闻', exact=True).click()
+            await expect(page.get_by_text('-1,234,000 股', exact=True)).to_be_visible(timeout=20000)
+            await expect(page.get_by_text('0 股', exact=True)).to_be_visible()
+            await page.get_by_role('button', name='生成研究报告', exact=True).click()
+            await expect(page.get_by_role('button', name='生成研究报告', exact=True)).to_be_enabled(timeout=20000)
+            await page.get_by_role('heading', name='台股三大法人净买卖超').scroll_into_view_if_needed()
+            await page.screenshot(path=str(OUT / 'taiwan-institution.png'), full_page=True)
+            results['taiwan_institution'] = {'negative_and_zero_preserved': True, 'unit': 'shares', 'source': 'TWSE'}
             await page.goto(BASE + '/stocks/00700.HK')
             await expect(page.get_by_text('00700.HK · HK', exact=True)).to_be_visible()
             results['overseas'] = {'preview_does_not_write': True, 'confirmed_positions': 1, 'missing_fx_blocks_total': True,

@@ -144,6 +144,16 @@ def self_check() -> int:
         assert callable(Config) and callable(QuoteContext)
         # Futu 导入会在用户目录创建日志；自检只查包，实际连接时才初始化 SDK。
         assert find_spec("futu") is not None
+        from src.services.overseas_symbols import name_for
+        from src.collectors.tw_institutional import parse_date, shares
+        from src.services.longbridge_auth import validate_client_id
+        from src.services.report_language import tr
+        assert name_for('7203.T') != '7203.T'
+        assert name_for('2330.TW') != '2330.TW'
+        assert parse_date('1150930', minguo=True) == '2026-09-30'
+        assert shares('-1,234') == -1234
+        assert validate_client_id('packaging-check') == 'packaging-check'
+        assert tr('ko', '### 操作建议', '### Position advice') != '### 操作建议'
 
     failed = 0
     for check in (mini_racer, litellm_prices, pinyin, strategy_skills, report_templates, qr_code, overseas_extensions):
