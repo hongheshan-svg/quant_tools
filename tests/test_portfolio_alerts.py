@@ -60,7 +60,8 @@ def _add_series(path: str, code: str, closes: list[float], name: str = ""):
         prev = None
         for day, c in zip(DAYS[-len(closes):], closes):
             change = (c / prev - 1) * 100 if prev else 0.0
-            session.add(StockDaily(code=code, name=name or code, trade_date=day, close=c, high=c * 1.005, low=c * 0.995, change_pct=change))
+            session.add(StockDaily(code=code, name=name or code, trade_date=day, close=c, high=c * 1.005, low=c * 0.995, change_pct=change,
+                                   updated_at=datetime.strptime(day, '%Y-%m-%d').replace(hour=16)))
             prev = c
 
 
