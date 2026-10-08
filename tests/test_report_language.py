@@ -608,3 +608,14 @@ def test_report_settings_api_roundtrip(tmp_path, monkeypatch):
         assert client.put("/api/v1/settings/report", json={"language": "zh"}).json()["language"] == "zh"
     _reset_db_engine()
     config_loader.reload_config()
+
+
+def test_korean_chat_language_applies_to_sync_and_streaming_protocol():
+    from src.services.stock_chat import StockChatSession
+    class Tools:
+        def call(self, name, args): return 'evidence'
+    llm = RecLLM({'answer': '관망'})
+    result = StockChatSession({'report': {'language': 'ko'}}, llm=llm, tools=Tools()).ask('分析苹果')
+    assert result.answer == '관망'
+    assert 'Korean' in llm.systems[0] and '"tool_calls"' in llm.systems[0]
+    assert '학습 및 연구용' in llm.systems[0]

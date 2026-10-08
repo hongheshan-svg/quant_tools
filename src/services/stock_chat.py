@@ -232,9 +232,15 @@ class StockChatSession:
         return self._llm
 
     def _language_note(self) -> str:
-        """英文模式下追加的回答语言指令（JSON 协议的键和工具名不变）。"""
-        if report_language(self.config) != "en":
+        """回答语言与报告设置一致，JSON 协议和工具名不变。"""
+        lang = report_language(self.config)
+        if lang not in ("en", "ko"):
             return ""
+        if lang == "ko":
+            return ('\n\nAnswer in Korean (한국어): write the "answer" markdown, conclusion, risks, action points '
+                    'and disclaimer in Korean. Keep JSON keys ("thought", "tool_calls", "answer", "name", "args"), '
+                    'tool names, stock codes and numeric values unchanged. '
+                    'Use the disclaimer "학습 및 연구용이며 투자 조언이 아닙니다".')
         return ("\n\nAnswer in English: write the \"answer\" markdown (conclusion, key data, risks, action points and the "
                 "disclaimer \"For study and research only; not investment advice\") in English. Keep the JSON keys "
                 "(\"thought\", \"tool_calls\", \"answer\", \"name\", \"args\") and tool names unchanged.")

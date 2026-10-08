@@ -708,9 +708,19 @@ class LLMClient:
                     produced = False
                     usage: dict = {}
                     try:
-                        for text in self._stream_once(dataclasses.replace(route, api_key=key), kwargs, usage):
+                        from src.analyzers.local_runtime import PROVIDERS
+                        selected = dataclasses.replace(route, api_key=key)
+                        if route.provider in PROVIDERS:
+                            # 本地生成收齐后返回一块文本，界面仍复用任务进度；不向后端伪造流式能力。
+                            text, usage = self._complete(selected, {k: v for k, v in kwargs.items() if k != "stream"})
+                            if not text:
+                                raise RuntimeError("本地模型返回空回答")
                             produced = True
                             yield text
+                        else:
+                            for text in self._stream_once(selected, kwargs, usage):
+                                produced = True
+                                yield text
                         self._record_stream(route, cfg, feature, started, usage, True)
                         return
                     except GeneratorExit:

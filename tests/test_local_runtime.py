@@ -188,3 +188,23 @@ def test_app_server_queued_cancellation_does_not_start_process(db_path, monkeypa
     assert session not in codex_runtime._active
     saved = codex_runtime.OverseasResearchService(config).cached('runtime-chat:' + session)
     assert saved['messages'] == [] and saved['last_run']['status'] == 'cancelled'
+
+
+@pytest.mark.parametrize('provider', local_runtime.PROVIDERS)
+def test_chat_ui_uses_buffered_generation_for_local_providers(tmp_path, monkeypatch, provider):
+    from src.services.stock_chat import StockChatSession
+    captured = []
+    def generate(name, model, messages, **kwargs):
+        captured.append((name, messages, kwargs))
+        return '{"answer":"증거가 부족하므로 관망합니다."}'
+    monkeypatch.setattr(local_runtime, 'generate', generate)
+    llm = LLMClient({'primary': {'provider': provider, 'model': 'default'}, 'cache_enabled': False,
+                     'cache_path': str(tmp_path / 'cache.db'), 'usage_path': str(tmp_path / 'usage.db')})
+    class Tools:
+        def call(self, name, args): return 'cached evidence'
+    events = list(StockChatSession({'report': {'language': 'ko'}}, llm=llm, tools=Tools()).ask_stream('AAPL 연구'))
+    assert events[-1]['type'] == 'done'
+    assert '관망' in events[-1]['turn']['answer']
+    assert len(captured) == 1 and captured[0][0] == provider
+    assert 'Korean' in captured[0][1][0]['content']
+    assert 'stream' not in captured[0][2] and 'tools' not in captured[0][2]
