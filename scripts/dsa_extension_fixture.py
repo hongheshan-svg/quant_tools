@@ -33,6 +33,10 @@ def seed(app):
         return [{'title': '隔离验收公司财报', 'providerPublishTime': datetime.now(timezone.utc).timestamp() - 60,
                  'publisher': '验收新闻源', 'link': 'https://example.com/report'}]
     overseas_evidence.fetch_part = evidence
+    from src.services import overseas_market_review
+    overseas_market_review.fetch_index = lambda symbol, region, expected: {
+        'symbol': symbol, 'status': 'available', 'trade_date': expected, 'close': 31200, 'change_pct': 1.25,
+        'unit': 'points', 'source': '隔离验收指数', 'fetched_at': datetime.now(timezone.utc).isoformat()}
     service = OverseasResearchService(app.state.pipeline.config)
     original_fx = OverseasResearchService.fx_rate
 
@@ -46,6 +50,8 @@ def seed(app):
     service.refresh('AAPL')
     service.refresh('HK00700')
     LLMClient.chat_json = lambda *args, **kwargs: {'score': 64, 'action': 'watch', 'confidence': '低',
+        'headline': '隔离验收区域复盘', 'trend': '指数按各自市场交易日统计。', 'emotion': '保持观察', 'main_lines': '市场证据待跟踪',
+        'focus': ['下一交易日指数变化'], 'avoid': [], 'watch_points': ['公开新闻与波动变化'],
         'one_sentence': '隔离验收研究：使用原币行情，缺少新闻与财务证据。', 'core_logic': '合成行情用于界面验证。'}
     macro_tools.execute = lambda config, name, arguments: {'status': 'available', 'operation': name,
         'source': '隔离验收宏观服务', 'fetched_at': datetime.now(timezone.utc).isoformat(), 'arguments': arguments}

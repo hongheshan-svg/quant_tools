@@ -67,11 +67,14 @@ class MarketReviewService:
             self._llm = LLMClient(self.config.get("llm", {}))
         return self._llm
 
-    def generate(self, overview: dict | None = None, force: bool = False) -> dict[str, Any]:
+    def generate(self, overview: dict | None = None, force: bool = False, region: str = 'CN') -> dict[str, Any]:
         """生成复盘；该交易日已有收盘后的复盘时直接复用（force=True 重新生成）。
 
         返回 {"trade_date", "stance", "markdown", ...}，失败时含 error。
         """
+        if region != 'CN':
+            from src.services.overseas_market_review import OverseasMarketReviewService
+            return OverseasMarketReviewService(self.config, self._llm).generate(region, force)
         lang = report_language(self.config)
         facts = build_market_facts(self.config, overview)
         trade_date = facts.regime.trade_date if facts.regime else datetime.now().strftime("%Y-%m-%d")
@@ -96,8 +99,11 @@ class MarketReviewService:
         self._save(result)
         return result
 
-    def get(self, trade_date: str | None = None) -> dict[str, Any] | None:
+    def get(self, trade_date: str | None = None, region: str = 'CN') -> dict[str, Any] | None:
         """某天（默认最近一天）的复盘。"""
+        if region != 'CN':
+            from src.services.overseas_market_review import OverseasMarketReviewService
+            return OverseasMarketReviewService(self.config, self._llm).get(region, trade_date)
         with get_db_session(self.db_path) as session:
             query = session.query(MarketReview)
             if trade_date:

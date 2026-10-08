@@ -123,10 +123,20 @@ class DailyReportService:
         """当天已生成的 LLM 大盘复盘（定时任务在推送前生成，这里只读取）。"""
         from src.services.market_review import MarketReviewService
 
-        review = MarketReviewService(self.config).get(self._regime_date or date.today().strftime("%Y-%m-%d"))
-        if not review or review.get("error"):
-            return ""
-        return tr(self.lang, "### AI 复盘与次日计划", "### AI Review and Next-day Plan") + "\n" + review["markdown"]
+        from src.services.overseas_market_review import regions
+        from src.services.overseas_market import phase
+        sections = []
+        service = MarketReviewService(self.config)
+        for region in regions((self.config.get('market_review') or {}).get('regions')):
+            day = (self._regime_date or date.today().strftime('%Y-%m-%d')) if region == 'CN' else phase(region).get('effective_daily_bar_date')
+            if not day:
+                continue
+            review = service.get(day) if region == 'CN' else service.get(day, region=region)
+            if review and not review.get('error') and review.get('language', 'zh') == self.lang:
+                sections.append(review['markdown'])
+        if not sections:
+            return ''
+        return tr(self.lang, "### AI 复盘与次日计划", "### AI Review and Next-day Plan") + '\n' + '\n\n'.join(sections)
 
     def _theme_section(self) -> str:
         from src.analyzers.theme_tracker import ThemeTracker

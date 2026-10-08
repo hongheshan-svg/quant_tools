@@ -163,7 +163,12 @@ export interface Regime {
   summary: string
 }
 
+export type ReviewRegion = 'CN' | 'HK' | 'US' | 'JP' | 'KR' | 'TW'
+export interface ReviewSettings { enabled: boolean; regions: ReviewRegion[] }
+
 export interface MarketReview {
+  region?: ReviewRegion
+  quality?: { status: string; limitations: string[] }
   trade_date: string
   created_at: string
   headline: string

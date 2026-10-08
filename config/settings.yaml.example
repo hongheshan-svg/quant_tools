@@ -511,6 +511,7 @@ watchlist:
 # 定时任务在每日报告推送前生成并写进日报；界面【大盘复盘】页可手动生成
 market_review:
   enabled: true
+  regions: "cn"           # cn,hk,us,jp,kr,tw；both = cn,hk,us,jp,kr。海外按最近已完成交易日复盘
 
 # --- 盘中提醒 ---
 # 交易时段内每次采集行情后检查：今日信号股、模拟盘持仓、自选股，以及下面 watchlist 中的股票

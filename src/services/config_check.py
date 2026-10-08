@@ -111,6 +111,8 @@ def _walk_raw(raw: Any, example: Any, path: tuple, issues: list[dict]) -> None:
         if value is None or default is None or default == "":
             continue
         want, got = _kind(default), _kind(value)
+        if sub == ('market_review', 'regions') and got in ('list', 'str'):
+            continue
         if want == "number" and got == "number" or want == got == "bool":
             continue
         if want == "str" and got == "number":  # 纯数字的 Key、ID 会被 YAML 解析成数字
@@ -216,6 +218,14 @@ def _check_integrations(config: dict, raw: dict | None, example: dict, issues: l
         _err(issues, "integrations", str(error))
 
 
+def _check_market_review(config: dict, raw: dict | None, example: dict, issues: list[dict]) -> None:
+    from src.services.overseas_market_review import regions
+    try:
+        regions((config.get('market_review') or {}).get('regions'))
+    except (ValueError, TypeError) as error:
+        _err(issues, 'market_review.regions', str(error))
+
+
 def _check_search(config: dict, raw: dict | None, example: dict, issues: list[dict]) -> None:
     from src.collectors.news_search import configured_providers
 
@@ -290,7 +300,7 @@ def _check_screening(config: dict, raw: dict | None, example: dict, issues: list
 
 CHECKS: list[tuple[str, Callable]] = [
     ("类型与未知键", _check_types), ("格式与范围", _check_formats), ("主备模型", _check_llm), ("扩展接入", _check_integrations),
-    ("推送渠道", _check_notifier), ("联网搜索", _check_search), ("聊天机器人", _check_bot),
+    ("推送渠道", _check_notifier), ("联网搜索", _check_search), ("聊天机器人", _check_bot), ("复盘地区", _check_market_review),
     ("Web 服务", _check_web), ("交易", _check_trading), ("行情数据源", _check_data_sources), ("选股策略", _check_screening),
 ]
 

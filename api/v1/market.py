@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
 
@@ -12,6 +12,7 @@ from api.tasks import TaskManager, business_result_error, collection_result_erro
 from src.services.pipeline_service import PipelineService
 
 router = APIRouter(tags=["market"])
+ReviewRegion = Literal['CN', 'HK', 'US', 'JP', 'KR', 'TW']
 
 
 def _query(pipeline: PipelineService):
@@ -59,21 +60,23 @@ def market_regime(pipeline: PipelineService = Depends(get_pipeline)) -> dict[str
 
 
 @router.get("/market/review")
-def latest_review(pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any] | None:
-    return pipeline.latest_market_review()
+def latest_review(region: ReviewRegion = 'CN', pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any] | None:
+    return pipeline.latest_market_review(region=region) if region != 'CN' else pipeline.latest_market_review()
 
 
 @router.get("/market/review/image")
-def review_image(trade_date: str | None = None, pipeline: PipelineService = Depends(get_pipeline),
+def review_image(trade_date: str | None = None, region: ReviewRegion = 'CN', pipeline: PipelineService = Depends(get_pipeline),
                  config: dict = Depends(get_config)) -> Response:
     """大盘复盘分享图 PNG（带品牌配置）；没有复盘 404，渲染失败 503。"""
     from src.services import report_image
     from src.services.market_review import MarketReviewService
 
-    review = MarketReviewService(pipeline.config).get(trade_date)
+    service = MarketReviewService(pipeline.config)
+    review = service.get(trade_date, region=region) if region != 'CN' else service.get(trade_date)
     if not review or not review.get("markdown"):
         raise HTTPException(status_code=404, detail="没有大盘复盘")
-    title = f"{review.get('trade_date') or trade_date or ''} 大盘复盘".strip()
+    label = '大盘复盘' if region == 'CN' else f'{region} 大盘复盘'
+    title = f"{review.get('trade_date') or trade_date or ''} {label}".strip()
     try:
         png = report_image.render_markdown_image(title, review["markdown"], **report_image.share_options(config))
     except RuntimeError as e:
@@ -83,8 +86,34 @@ def review_image(trade_date: str | None = None, pipeline: PipelineService = Depe
 
 
 @router.post("/market/review")
-def generate_review(tasks: TaskManager = Depends(get_tasks), pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
-    return tasks.submit("market_review", pipeline.market_review, True, dedupe_key="market_review", label="生成大盘复盘")
+def generate_review(region: ReviewRegion = 'CN', tasks: TaskManager = Depends(get_tasks), pipeline: PipelineService = Depends(get_pipeline)) -> dict[str, Any]:
+    args = (True, region) if region != 'CN' else (True,)
+    return tasks.submit("market_review", pipeline.market_review, *args,
+                        dedupe_key=f"market_review:{region}", label=f"生成 {region} 大盘复盘", result_error=business_result_error)
+
+
+@router.get('/settings/market-review')
+def review_settings(config: dict = Depends(get_config)) -> dict:
+    from src.services.overseas_market_review import regions
+    value = config.get('market_review') or {}
+    return {'enabled': value.get('enabled', True), 'regions': regions(value.get('regions'))}
+
+
+@router.put('/settings/market-review')
+def save_review_settings(request: Request, body: dict = Body(...), config: dict = Depends(get_config)) -> dict:
+    from src.services.overseas_market_review import regions
+    from src.settings_store import save_section
+    from api.app import apply_config
+    if set(body) != {'enabled', 'regions'} or not isinstance(body['enabled'], bool):
+        raise HTTPException(422, '请提供 enabled 布尔值及 regions 地区列表')
+    try:
+        selected = regions(body['regions'])
+    except (ValueError, TypeError) as error:
+        raise HTTPException(422, str(error)) from error
+    value = {'enabled': body['enabled'], 'regions': ','.join(selected).lower()}
+    save_section('market_review', value, merge=True)
+    apply_config(request.app, {**config, 'market_review': {**(config.get('market_review') or {}), **value}})
+    return {'enabled': value['enabled'], 'regions': selected}
 
 
 @router.get("/market/themes")

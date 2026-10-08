@@ -351,9 +351,32 @@ def _run_signal_generation(config: dict):
 
 def _run_daily_report(config: dict):
     """LLM 大盘复盘 + 每日报告推送（大盘复盘 + 信号 + 订单 + 模拟盘 + 信号绩效）。"""
+    from src.services.overseas_market_review import regions
+    selected = regions((config.get('market_review') or {}).get('regions'))
+    foreign_reviews = []
+    if (config.get('market_review') or {}).get('enabled', True):
+        from src.services.market_review import MarketReviewService
+        from src.services.overseas_market import phase
+        for region in selected:
+            if region == 'CN':
+                continue
+            state = phase(region)
+            if state['calendar_verified'] and state['phase'] == 'non_trading_day':
+                continue
+            try:
+                result = MarketReviewService(config).generate(region=region)
+                if not result.get('error'):
+                    foreign_reviews.append(result)
+                else:
+                    logger.warning(f"{region} 复盘未生成：{result['error']}")
+            except Exception as error:
+                logger.warning(f"{region} 复盘失败，继续其他市场：{type(error).__name__}")
     if _skip_non_trade_day(config, "每日报告推送"):
+        if foreign_reviews and config.get('notifier', {}).get('daily_report_enabled', True):
+            from src.notifier import broadcast
+            broadcast(config, '海外市场复盘', '\n\n'.join(r['markdown'] for r in foreign_reviews), kind='daily_report')
         return
-    if config.get("market_review", {}).get("enabled", True):
+    if config.get("market_review", {}).get("enabled", True) and 'CN' in selected:
         from src.services.market_review import MarketReviewService
 
         try:

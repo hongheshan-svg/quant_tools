@@ -149,20 +149,22 @@ class PipelineService:
 
         return get_stock_news(code, refresh=refresh)
 
-    def market_review(self, force: bool = False) -> dict[str, Any]:
+    def market_review(self, force: bool = False, region: str = 'CN') -> dict[str, Any]:
         """LLM 大盘复盘（趋势/情绪/主线 → 次日姿态、仓位、关注与回避方向）。"""
         from src.services.market_review import MarketReviewService
 
         try:
-            return MarketReviewService(self.config).generate(force=force)
+            service = MarketReviewService(self.config)
+            return service.generate(force=force, region=region) if region != 'CN' else service.generate(force=force)
         except Exception as e:
             logger.error(f"大盘复盘异常: {e}")
             return {"error": str(e)}
 
-    def latest_market_review(self) -> dict[str, Any] | None:
+    def latest_market_review(self, region: str = 'CN') -> dict[str, Any] | None:
         from src.services.market_review import MarketReviewService
 
-        return MarketReviewService(self.config).get()
+        service = MarketReviewService(self.config)
+        return service.get(region=region) if region != 'CN' else service.get()
 
     def screen_stocks(self, variant_seed: str | None = None) -> dict[str, Any]:
         """全市场策略选股（放量突破、强势未板、龙回头、主线补涨、缩量回踩、超跌反弹）。"""

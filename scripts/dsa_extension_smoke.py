@@ -133,6 +133,24 @@ async def main():
             await expect(page.get_by_text('00700.HK · HK', exact=True)).to_be_visible()
             results['overseas'] = {'preview_does_not_write': True, 'confirmed_positions': 1, 'missing_fx_blocks_total': True,
                 'converted_value_cny': updated['market_value_cny'], 'futu_symbols': True, 'diagnosis_rendered': True, 'stock_route': True}
+            await page.goto(BASE + '/review')
+            await page.get_by_label('复盘市场', exact=True).select_option('JP')
+            await page.get_by_role('button', name='生成复盘', exact=True).click()
+            await expect(page.get_by_role('heading', name='JP ·', exact=False).first).to_be_visible(timeout=20000)
+            await expect(page.get_by_text('추세 구조', exact=True)).to_be_visible()
+            assert 'region=JP' in await page.get_by_role('link', name='分享图', exact=True).get_attribute('href')
+            await page.get_by_label('定时复盘-日股', exact=True).check()
+            await page.get_by_label('定时复盘-韩股', exact=True).check()
+            await page.get_by_role('button', name='保存复盘范围', exact=True).click()
+            await expect(page.get_by_role('button', name='保存复盘范围', exact=True)).to_be_enabled()
+            settings = await (await context.request.get(BASE + '/api/v1/settings/market-review')).json()
+            assert set(settings['regions']) == {'CN', 'JP', 'KR'}
+            await page.screenshot(path=str(OUT / 'regional-review.png'), full_page=True)
+            await page.get_by_label('复盘市场', exact=True).select_option('KR')
+            await expect(page.get_by_text('还没有复盘。', exact=False)).to_be_visible()
+            await page.get_by_role('button', name='生成复盘', exact=True).click()
+            await expect(page.get_by_text('KOSPI', exact=False)).to_be_visible(timeout=20000)
+            results['regional_review'] = {'jp_and_kr_generated': True, 'korean_labels': True, 'separate_cache': True, 'settings': settings}
             await page.set_viewport_size({'width': 390, 'height': 844})
             await page.goto(BASE + '/overseas')
             await expect(page.get_by_text('AAPL · US', exact=True)).to_be_visible()
