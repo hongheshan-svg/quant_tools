@@ -50,11 +50,25 @@ export function OverseasPage({ initialCode = 'AAPL' }: { initialCode?: string })
         {value.bars.length ? <CandlestickChart candles={toCandles(value.bars)} /> : <p className="py-10 text-center text-muted">还没有行情，点击“更新行情”获取。</p>}
       </Card>
       <OverseasEvidenceView evidence={value.evidence} />
+      {value.market === 'TW' && <TaiwanInstitutionView data={value.evidence?.institution} />}
       {value.market === 'US' && <Card><Button onClick={async () => { try { setSocial(await api.overseasSocial(code)) } catch (e) { toast.error(String(e)) } }}>读取 Reddit / X / Polymarket 情报</Button>{social && <details open className="mt-3"><summary>社交证据与来源（讨论不代表事实）</summary><pre className="max-h-80 overflow-auto whitespace-pre-wrap text-xs">{JSON.stringify(social, null, 2)}</pre></details>}</Card>}
     </>}
     {report && <DiagnosisView d={report} />}
     <OverseasHoldings onSymbol={(symbol) => { if (task.running || diagnosisTask.running || evidenceTask.running) return; setSocial(null); setInput(symbol); setCode(symbol); setReport(null) }} />
   </div>
+}
+
+export function TaiwanInstitutionView({ data }: { data?: OverseasEvidence['institution'] }) {
+  const labels = [['foreign_net', '外资（不含外资自营商）'], ['trust_net', '投信'], ['dealer_net', '自营商'], ['total_net', '三大法人合计']] as const
+  return <Card><h2 className="font-semibold">台股三大法人净买卖超</h2><p className="my-2 text-sm text-muted">单位：股（不是张或金额）。正数为净买超，负数为净卖超。</p>
+    {!data?.as_of ? <p className="text-sm text-muted">尚无对应交易日的法人资料，点击“更新财务与新闻”获取。{data?.status === 'fetch_failed' ? '当前来源不可用。' : ''}</p> : <>
+      <p className="text-sm">{data.as_of} · {data.source} · {data.status === 'available' ? '资料可用' : data.status === 'stale' ? '历史资料，非当前完整交易日' : '资料不完整'}</p>
+      <dl className="my-3 grid grid-cols-2 gap-3 text-sm md:grid-cols-4">{labels.map(([key, label]) => <div key={key}><dt className="text-muted">{label}</dt><dd>{data[key] == null ? '—' : `${data[key]! > 0 ? '+' : ''}${fmt(data[key])} 股`}</dd></div>)}</dl>
+      <p className="text-xs text-muted">采集时间：{data.fetched_at || '未知'}</p>
+    </>}
+    {data?.refresh_status && <p className="mt-2 text-sm text-warn">本次未取得新资料，保留历史数值及原日期。</p>}
+    <p className="mt-2 text-xs text-muted">资料来源：台湾证券交易所（三大法人买卖超日报）／证券柜台买卖中心（三大法人买卖超），日期见上方。依<a href="https://data.gov.tw/license" target="_blank" rel="noreferrer" className="text-accent">政府资料开放授权条款第 1 版</a>使用。</p>
+  </Card>
 }
 
 function OverseasEvidenceView({ evidence }: { evidence?: OverseasEvidence }) {

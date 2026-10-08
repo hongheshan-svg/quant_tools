@@ -1519,6 +1519,8 @@ export interface OverseasSnapshot {
   refresh_status?: string
 }
 export interface OverseasEvidence {
+  institution?: { status: string; as_of?: string; source?: string; source_url?: string; unit?: string; fetched_at?: string; refresh_status?: string
+    foreign_net?: number | null; trust_net?: number | null; dealer_net?: number | null; total_net?: number | null; limitations: string[] }
   fundamentals?: { status: string; source: string; fetched_at: string; as_of: string | null; refresh_status?: string
     profile: Record<string, string>; valuation: { pe_ttm: number | null; pb: number | null; market_cap: number | null; currency: string | null }
     financial_report: { currency: string | null; as_of: string | null; revenue: number | null; net_profit: number | null; basic_eps: number | null }

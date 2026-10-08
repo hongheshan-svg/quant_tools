@@ -930,6 +930,9 @@ def _phase_markdown(result: dict[str, Any]) -> list[str]:
 
 def render_markdown(result: dict[str, Any]) -> str:
     """诊断结果转为 markdown（机器人回复、Markdown 下载、分享图的内置格式）。"""
+    if result.get('research_only') and result.get('market') in ('US', 'HK', 'JP', 'KR', 'TW'):
+        from src.services.overseas_report import render_markdown as render_overseas
+        return render_overseas(result)
     lang = result.get("language") or "zh"
     if result.get("error"):
         return tr(lang, f"**诊断失败**：{result['error']}", f"**Diagnosis failed**: {result['error']}", f"**진단 실패**: {result['error']}")

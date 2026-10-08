@@ -121,6 +121,10 @@ class OverseasEvidenceService:
                     from src.services.futu_evidence import fetch as fetch_futu
                     value = bounded_call(lambda: fetch_futu(self.config, identity.code), min(12., deadline.remaining()),
                                          quarantine_key=('overseas_evidence', 'futu'))
+                elif part == 'institution':
+                    from src.collectors.tw_institutional import fetch as fetch_institution
+                    value = bounded_call(lambda: fetch_institution(identity.code), min(10., deadline.remaining()),
+                                         quarantine_key=('overseas_institution', identity.code.rsplit('.', 1)[-1]))
                 else:
                     value = bounded_call(lambda: fetch_part(identity.code, part), min(8., deadline.remaining()),
                                      quarantine_key=('overseas_evidence', part))
@@ -128,6 +132,8 @@ class OverseasEvidenceService:
             except Exception:
                 return part, None, 'fetch_failed'
         parts = ['info', 'statements', 'dividends', 'news']
+        if identity.market == 'TW':
+            parts.append('institution')
         if identity.market == 'HK' and ((self.config.get('integrations') or {}).get('futu') or {}).get('fundamentals_enabled'):
             parts.append('futu')
         values = {key: (value, error) for key, value, error in deadline.parallel(fetch, parts, seconds=seconds)}
@@ -150,14 +156,21 @@ class OverseasEvidenceService:
         evidence = {'fundamentals': result, 'news': {'status': 'fetch_failed' if news_failed else 'available' if news else 'missing',
                     'source': 'Yahoo Finance', 'items': news, 'fetched_at': now.isoformat()}}
         previous = self.cached(identity.code)
+        if identity.market == 'TW':
+            institution = values.get('institution', (None, 'fetch_failed'))[0]
+            evidence['institution'] = institution or {'status': 'fetch_failed', 'limitations': ['source_unavailable']}
         for key, block in evidence.items():
-            if block['status'] == 'fetch_failed' and previous.get(key):
-                evidence[key] = {**previous[key], 'refresh_status': 'fetch_failed'}
+            if (block['status'] == 'fetch_failed' or key == 'institution' and block['status'] == 'missing') and previous.get(key):
+                evidence[key] = {**previous[key], 'refresh_status': block['status']}
         self.store.save_cache('overseas:evidence:' + identity.code, evidence)
         return evidence
 
     def cached(self, code: str) -> dict:
         result = self.store.cached('overseas:evidence:' + code)
+        if result.get('institution'):
+            from src.collectors.tw_institutional import quality
+            from src.services.overseas_market import phase
+            result['institution'] = quality(result['institution'], phase('TW')['effective_daily_bar_date'])
         for key, hours in [('fundamentals', 24), ('news', 6)]:
             block = result.get(key)
             if not block:

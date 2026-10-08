@@ -106,6 +106,10 @@ def render_item_brief(it: dict[str, Any], lang: str = "zh") -> str:
         lines.append(tr(lang, "- 风险：", "- Risks: ") + "；".join(it["risks"][:3]))
     if it.get("change"):
         lines.append(f"- {it['change']}")
+    from src.services.overseas_report import institution_markdown
+    institution = institution_markdown(it, lang)
+    if institution:
+        lines.append(institution)
     lines.append(tr(lang, "\n> 仅供学习研究，不构成投资建议", "\n> For study and research only; not investment advice"))
     return "\n\n".join(lines)
 
@@ -147,6 +151,10 @@ def render_dashboard(trade_date: str, items: list[dict[str, Any]], failed: list[
             detail.append(tr(lang, "- 风险：", "- Risks: ") + "；".join(it["risks"][:3]))
         if it.get("guardrails"):
             detail.append(tr(lang, "- 护栏：", "- Guardrails: ") + "；".join(it["guardrails"]))
+        from src.services.overseas_report import institution_markdown
+        institution = institution_markdown(it, lang)
+        if institution:
+            detail.append(institution)
         lines.append("\n".join(detail))
     if failed:
         lines.append(tr(lang, "### ⚠️ 未完成", "### ⚠️ Incomplete") + "\n" + "\n".join(f"- {f['name'] or f['code']}：{f['error']}" for f in failed))
@@ -334,6 +342,7 @@ class WatchlistReportService:
             "battle_plan": result.get("battle_plan") or {}, "catalysts": result.get("catalysts") or [],
             "risks": result.get("risks") or [], "guardrails": result.get("guardrails") or [],
             "created_at": result.get("created_at", ""), "reused": reused,
+            "context_pack": result.get('context_pack') or {},
             "change": change_text(result, previous, report_language(self.config)),
         }
 

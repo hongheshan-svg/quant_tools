@@ -12,6 +12,8 @@ from src.services.opinion_validity import valid_score
 from src.services.data_freshness import iso_timestamp
 
 EVIDENCE_LABELS = {
+    'institution': '台股三大法人', 'foreign_net': '外资净买卖超（股）', 'trust_net': '投信净买卖超（股）',
+    'dealer_net': '自营商净买卖超（股）', 'total_net': '三大法人合计（股）',
     "quote": "行情", "daily": "日线", "technical": "技术面", "flow": "资金流", "chips": "筹码",
     "earnings": "业绩", "fundamentals": "季度财务", "market": "大盘", "news": "资讯", "notices": "公告",
     "close": "收盘价", "open": "开盘价", "high": "最高价", "low": "最低价", "change_pct": "涨跌幅（%）",
@@ -61,6 +63,9 @@ def build_context_pack(context: dict, run_log=None) -> dict[str, Any]:
     if identity.market != 'CN' and context.get('realtime_quote'):
         realtime = context['realtime_quote']
         specifications['realtime'] = ('盘中快照（可能延迟）', realtime, realtime.get('source'), realtime.get('provider_timestamp'))
+    if identity.market == 'TW':
+        institution = context.get('institution') or {'status': 'missing'}
+        specifications['institution'] = ('台股三大法人', institution, institution.get('source'), institution.get('as_of'))
     for key, (label, value, source, as_of) in specifications.items():
         raw_times = value if isinstance(value, dict) else {}
         if key in ("daily", "technical"):
@@ -73,7 +78,7 @@ def build_context_pack(context: dict, run_log=None) -> dict[str, Any]:
         if key == "daily" and not (value.get("bars") or value.get("summary") or value.get("bar_count")):
             missing = True
         status = "missing" if missing else "available"
-        if key == 'realtime':
+        if key in ('realtime', 'institution'):
             status = value.get('status', 'missing')
         elif identity.market != 'CN' and key in ('flow', 'chips', 'earnings', 'notices'):
             status = 'not_supported'

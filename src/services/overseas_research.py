@@ -156,6 +156,7 @@ class OverseasResearchService:
         context = {**asdict(identity), "name": name, "quote": quote, "phase": state,
                    "realtime_quote": realtime_quote,
                    "fundamentals": evidence.get('fundamentals'),
+                   "institution": evidence.get('institution'),
                    "news_evidence": evidence.get('news', {}).get('items', []),
                    "news_status": evidence.get('news', {}).get('status', 'missing'),
                    "daily": {"bars": completed[-60:], "bar_count": len(completed)}, "technical": technical,
@@ -168,7 +169,7 @@ class OverseasResearchService:
     def diagnose(self, code: str, force: bool = False) -> dict:
         identity = resolve_identity(code)
         from src.services.stock_diagnosis import StockDiagnosisService
-        from src.services.report_language import report_language, language_directive
+        from src.services.report_language import report_language, language_directive, tr
         lang = report_language(self.config)
         previous = StockDiagnosisService(self.config).latest(identity.code, max_age_minutes=30)
         if previous and not force and previous.get("language", "zh") == lang:
@@ -185,6 +186,11 @@ class OverseasResearchService:
                   'one_sentence, trend, core_logic, risk_warning, invalidation, operation_advice。保持 JSON 键和枚举。'
                   '只作海外证券研究，价格使用原币。不要套用 A 股涨跌停、T+1 或交易日规则；新闻和财务缺失要说明，'
                   '不得编造未提供的数据，社交讨论仅代表观点。' + language_directive(lang, 'action; confidence=高/中/低'))
+        if identity.market == 'TW':
+            prompt += ('台股价格为新台币 TWD。三大法人证据单位为股数（不是张数或金额），正为净买超、负为净卖超。'
+                       '外资（不含外资自营商）、投信、自营商与官方合计分别保留；缺失或过期资料不能当作当日流向。'
+                       '使用台股市场语义，不把三大法人叫作北向资金或龙虎榜。普通股票通常适用±10%涨跌停，'
+                       '新上市及特殊证券可能例外，未经核实不要据此计算具体涨跌停价。')
         raw = LLMClient(self.config.get("llm") or {}).chat_json(json.dumps({"research": snapshot, "social": social}, ensure_ascii=False), prompt)
         if not isinstance(raw, dict) or not raw:
             return {"code": identity.code, "error": "模型未返回海外研究结果"}
@@ -199,8 +205,14 @@ class OverseasResearchService:
             "language": lang, "action": action, "action_label": labels[action], "score": score if score is not None else 50,
             "confidence": "低", "research_only": True, "trade_date": snapshot["quote"]["trade_date"], "quote": snapshot["quote"],
             "context_pack": snapshot["context_pack"], "social_evidence": social, "data_quality": snapshot["quality"],
-            "guardrails": ["海外研究仅供参考；轻量基本面与新闻不能替代完整尽调，信心保持低。"], "battle_plan": {},
+            "guardrails": [tr(lang, '海外研究仅供参考；轻量基本面与新闻不能替代完整尽调，信心保持低。',
+                              'Overseas research uses limited evidence and does not replace due diligence; confidence remains low.',
+                              '해외 연구의 제한된 자료는 실사를 대체하지 않으며 확신도를 낮게 유지합니다.')], "battle_plan": {},
             "created_at": datetime.now(timezone.utc).isoformat(), "operation_suggestions": {}}
+        result.update(position_advice={'no_position': result['operation_advice'], 'has_position': result['operation_advice']},
+                      risks=[result['risk_warning']] if result['risk_warning'] else [], catalysts=[], checklist=[],
+                      analysis='\n\n'.join(filter(None, [result['trend'], result['core_logic'], result['invalidation']])),
+                      theme_role={}, market_regime='', agents=[])
         result["structured_report"] = build_research_artifact(result)
         with get_db_session(self.db_path) as session:
             row = StockDiagnosis(code=identity.code, name=snapshot['name'], trade_date=result["trade_date"], action=action,

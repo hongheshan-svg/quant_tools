@@ -66,7 +66,7 @@ class AnalysisContextPack(BaseModel):
     @field_validator("blocks")
     @classmethod
     def valid_blocks(cls, value):
-        allowed = {"quote", "realtime", "daily", "technical", "flow", "chips", "earnings", "fundamentals", "market", "news", "notices"}
+        allowed = {"quote", "realtime", "institution", "daily", "technical", "flow", "chips", "earnings", "fundamentals", "market", "news", "notices"}
         if set(value) - allowed:
             raise ValueError("上下文包含未知证据块")
         return value
