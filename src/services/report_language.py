@@ -50,13 +50,19 @@ def language_directive(lang: str, enums: str = "") -> str:
     return text
 
 
-def tr(lang: str, zh: str, en: str) -> str:
-    """按语言选文案。"""
-    return en if lang in ("en", "ko") else zh
+def tr(lang: str, zh: str, en: str, ko: str | None = None) -> str:
+    """按语言选文案；动态韩文由调用方显式插值，静态文案取固定词典。"""
+    if lang == 'ko':
+        from src.services.report_language_ko import TEXTS
+        return ko if ko is not None else TEXTS.get(en, en)
+    return en if lang == 'en' else zh
 
 
 def display(lang: str, value: Any) -> Any:
     """枚举值的显示名：en 时查 LABELS_EN，查不到原样返回。"""
-    if lang != "en" or not isinstance(value, str):
+    if not isinstance(value, str):
         return value
-    return LABELS_EN.get(value, value)
+    if lang == 'ko':
+        from src.services.report_language_ko import LABELS
+        return LABELS.get(value, value)
+    return LABELS_EN.get(value, value) if lang == 'en' else value

@@ -189,8 +189,8 @@ def _latest_data(name: str, config: dict | None) -> tuple[dict[str, Any], str] |
             counts = {label: 0 for _, label, _ in BUCKETS}
             for it in report["items"]:
                 counts[bucket_of(it["action"])[1]] += 1
-            data = {"trade_date": report["trade_date"], "items": report["items"], "failed": report["failed"], "counts": counts}
-            return data, render_dashboard(report["trade_date"], report["items"], report["failed"])
+            data = {"trade_date": report["trade_date"], "items": report["items"], "failed": report["failed"], "counts": counts, 'language': report.get('language', 'zh')}
+            return data, render_dashboard(report["trade_date"], report["items"], report["failed"], data['language'])
         if name == "market_review":
             from src.services.market_review import MarketReviewService, render_markdown
 
@@ -209,7 +209,7 @@ def _sample_fallback(name: str, data: dict[str, Any]) -> str:
             return render_markdown(data)
         if name == "watchlist":
             from src.services.watchlist_report import render_dashboard
-            return render_dashboard(data["trade_date"], data["items"], data["failed"])
+            return render_dashboard(data["trade_date"], data["items"], data["failed"], data.get('language', 'zh'))
         if name == "market_review":
             from src.services.market_review import render_markdown
             return render_markdown(data)

@@ -125,7 +125,7 @@ class MarketReviewService:
                     f"量化大盘环境为「{regime.regime}」（{regime.score:.0f}分），姿态由「{stance}」下调为「{cap}」",
                     f"Quantitative market regime is \"{display(lang, regime.regime)}\" ({regime.score:.0f} pts); "
                     f"stance downgraded from \"{display(lang, stance)}\" to \"{display(lang, cap)}\"",
-                ))
+                 f'정량적 시장 국면은 "{display(lang, regime.regime)}" ({regime.score:.0f}점)이며 태도를 "{display(lang, stance)}"에서 "{display(lang, cap)}"(으)로 낮춥니다.'))
                 stance = cap
         position = str(raw.get("position", "")).strip() if not guardrails else STANCE_POSITION[stance]
         as_list = lambda v: [str(x) for x in v if x] if isinstance(v, list) else ([str(v)] if v else [])  # noqa: E731
@@ -137,7 +137,8 @@ class MarketReviewService:
             "emotion": str(raw.get("emotion", "")),
             "main_lines": str(raw.get("main_lines", "")),
             "stance": stance,
-            "position": position or STANCE_POSITION[stance],
+            "position": ({'进攻': '70~100%', '均衡': '40~60%', '防守': '0~30%'}[stance]
+                         if lang == 'ko' and (not position or guardrails) else position or STANCE_POSITION[stance]),
             "focus": as_list(raw.get("focus")),
             "avoid": as_list(raw.get("avoid")),
             "watch_points": as_list(raw.get("watch_points")),
@@ -161,11 +162,11 @@ class MarketReviewService:
 def render_markdown(result: dict[str, Any]) -> str:
     lang = result.get("language") or "zh"
     if result.get("error"):
-        return tr(lang, f"**复盘失败**：{result['error']}", f"**Review failed**: {result['error']}")
+        return tr(lang, f"**复盘失败**：{result['error']}", f"**Review failed**: {result['error']}", f"**복기 실패**: {result['error']}")
     icon = {"进攻": "🔴", "均衡": "🟡", "防守": "🟢"}.get(result["stance"], "")
     lines = [f"**{result['headline']}**" if result.get("headline") else "",
              tr(lang, f"{icon} 次日姿态：**{result['stance']}**，建议仓位 {result['position']}",
-                f"{icon} Next-day stance: **{display(lang, result['stance'])}**, suggested position {result['position']}")]
+                f"{icon} Next-day stance: **{display(lang, result['stance'])}**, suggested position {result['position']}", f"{icon} 다음 거래일 태도: **{display(lang, result['stance'])}**, 제안 비중 {result['position']}")]
     if result.get("guardrails"):
         lines.append(tr(lang, "> 护栏：", "> Guardrails: ") + "；".join(result["guardrails"]))
     for label, key in ((tr(lang, "趋势结构", "Trend"), "trend"), (tr(lang, "资金情绪", "Sentiment"), "emotion"),

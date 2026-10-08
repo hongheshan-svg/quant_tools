@@ -73,7 +73,7 @@ class DailyReportService:
             "source_health": self._source_health_section(),
             "disclaimer": tr(self.lang, "> 仅供学习研究，不构成投资建议", "> For study and research only; not investment advice"),
         }
-        title = tr(self.lang, f"A股量化日报 {today}", f"A-share Quant Daily {today}")
+        title = tr(self.lang, f"A股量化日报 {today}", f"A-share Quant Daily {today}", f'중국 A주 퀀트 일보 {today}')
         body = "\n\n".join(s for s in named.values() if s)
         data = {"title": title, "date": today, "sections": [s for s in named.values() if s], "language": self.lang, **named}
         return title, render_report("daily_report", data, body)
@@ -179,7 +179,7 @@ class DailyReportService:
             key = r["verdict"] or "评分信号"
             verdicts[key] = verdicts.get(key, 0) + 1
         dates = "、".join(sorted({r["date"] for r in rows}))
-        lines = [tr(self.lang, f"### 交易信号（{dates}）", f"### Trading Signals ({dates})"), "共 {} 条 | {}".format(len(rows), " · ".join(f"{k} {v}" for k, v in verdicts.items()))]
+        lines = [tr(self.lang, f"### 交易信号（{dates}）", f"### Trading Signals ({dates})", f'### 매매 신호 ({dates})'), "共 {} 条 | {}".format(len(rows), " · ".join(f"{k} {v}" for k, v in verdicts.items()))]
         for i, r in enumerate(rows[:MAX_SIGNALS], 1):
             kind = "AI预测" if r["type"] == "premarket" else "评分信号"
             head = f"{i}. **{r['name']}({r['code']})** {kind}"

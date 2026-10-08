@@ -901,7 +901,7 @@ def _phase_markdown(result: dict[str, Any]) -> list[str]:
     pd = result.get("phase_decision") or {}
     body = []
     if pd.get("phase_label"):
-        body.append(tr(lang, f"- 阶段：{pd['phase_label']}", f"- Phase: {display(lang, pd['phase_label'])}"))
+        body.append(tr(lang, f"- 阶段：{pd['phase_label']}", f"- Phase: {display(lang, pd['phase_label'])}", f"- 시장 단계: {display(lang, pd['phase_label'])}"))
     for key, label in (("trading_window", tr(lang, "操作窗口", "Trading window")), ("immediate_action", tr(lang, "立即行动", "Immediate action"))):
         if pd.get(key):
             body.append(f"- {label}{tr(lang, '：', ': ')}{pd[key]}")
@@ -909,7 +909,7 @@ def _phase_markdown(result: dict[str, Any]) -> list[str]:
         body.append(tr(lang, "- 观察条件：", "- Watch conditions:"))
         body += [f"  - {c}" for c in pd["watch_conditions"]]
     if pd.get("next_check_time"):
-        body.append(tr(lang, f"- 下次检查：{pd['next_check_time']}", f"- Next check: {pd['next_check_time']}"))
+        body.append(tr(lang, f"- 下次检查：{pd['next_check_time']}", f"- Next check: {pd['next_check_time']}", f"- 다음 점검: {pd['next_check_time']}"))
     if pd.get("data_limitations"):
         body.append(tr(lang, "- 数据限制：", "- Data limitations: ") + "；".join(pd["data_limitations"]))
     if len(body) > 1 or (body and not pd.get("phase_label")):
@@ -920,9 +920,9 @@ def _phase_markdown(result: dict[str, Any]) -> list[str]:
     if parts:
         abody.append(tr(lang, "- 贡献度：", "- Contribution: ") + "，".join(parts))
     if attr.get("strongest_bullish"):
-        abody.append(tr(lang, f"- 最强看多：{attr['strongest_bullish']}", f"- Strongest bullish: {attr['strongest_bullish']}"))
+        abody.append(tr(lang, f"- 最强看多：{attr['strongest_bullish']}", f"- Strongest bullish: {attr['strongest_bullish']}", f"- 가장 강한 상승 근거: {attr['strongest_bullish']}"))
     if attr.get("strongest_bearish"):
-        abody.append(tr(lang, f"- 最强看空：{attr['strongest_bearish']}", f"- Strongest bearish: {attr['strongest_bearish']}"))
+        abody.append(tr(lang, f"- 最强看空：{attr['strongest_bearish']}", f"- Strongest bearish: {attr['strongest_bearish']}", f"- 가장 강한 하락 근거: {attr['strongest_bearish']}"))
     if abody:
         lines += [tr(lang, "### 信号归因", "### Signal attribution"), "\n".join(abody)]
     return lines
@@ -932,28 +932,30 @@ def render_markdown(result: dict[str, Any]) -> str:
     """诊断结果转为 markdown（机器人回复、Markdown 下载、分享图的内置格式）。"""
     lang = result.get("language") or "zh"
     if result.get("error"):
-        return tr(lang, f"**诊断失败**：{result['error']}", f"**Diagnosis failed**: {result['error']}")
+        return tr(lang, f"**诊断失败**：{result['error']}", f"**Diagnosis failed**: {result['error']}", f"**진단 실패**: {result['error']}")
     icon = {"buy": "🟢", "add": "🟢", "hold": "🟡", "watch": "🟡", "reduce": "🟠", "sell": "🔴", "avoid": "🔴"}.get(result["action"], "⚪")
     lines = [
         tr(lang,
            f"## {icon} {result['name']}({result['code']})：{result['action_label']}｜评分 {result['score']}｜信心 {result['confidence'] or '-'}",
            f"## {icon} {result['name']}({result['code']}): {display(lang, result['action_label'])} | Score {result['score']} | "
-           f"Confidence {display(lang, result['confidence']) or '-'}"),
+           f"Confidence {display(lang, result['confidence']) or '-'}", f"## {icon} {result['name']}({result['code']}): {display(lang, result['action_label'])} | 점수 {result['score']} | 확신도 {display(lang, result['confidence']) or '-'}"),
         f"**{result['one_sentence']}**" if result["one_sentence"] else "",
         tr(lang, f"诊断时间 {result['created_at']}（行情 {result['trade_date']}）" + ("，复用 30 分钟内的结果" if result.get("cached") else ""),
-           f"Diagnosed at {result['created_at']} (quote date {result['trade_date']})" + (", reusing a result from the last 30 minutes" if result.get("cached") else "")),
+           f"Diagnosed at {result['created_at']} (quote date {result['trade_date']})" + (", reusing a result from the last 30 minutes" if result.get("cached") else ""),
+           f"진단 시간 {result['created_at']} (시세 기준일 {result['trade_date']})" + (', 최근 30분 이내 결과 재사용' if result.get('cached') else '')),
     ]
     quality = result.get("data_quality") or {}
     if quality:
         lines.append(tr(lang, f"数据完整度 {quality['score']}%" + (f"（缺少：{'、'.join(quality['missing'])}）" if quality.get("missing") else ""),
-                        f"Data completeness {quality['score']}%" + (f" (missing: {', '.join(quality['missing'])})" if quality.get("missing") else "")))
+                        f"Data completeness {quality['score']}%" + (f" (missing: {', '.join(quality['missing'])})" if quality.get("missing") else ""),
+                        f"데이터 완전성 {quality['score']}%" + (f" (누락: {', '.join(quality['missing'])})" if quality.get('missing') else '')))
     if result["guardrails"]:
         lines.append(tr(lang, "> 护栏：", "> Guardrails: ") + "；".join(result["guardrails"]))
     advice = result["position_advice"]
     if advice:
         lines += [tr(lang, "### 操作建议", "### Position advice"),
-                  tr(lang, f"- 空仓：{advice.get('no_position', '-')}", f"- No position: {advice.get('no_position', '-')}"),
-                  tr(lang, f"- 持仓：{advice.get('has_position', '-')}", f"- Holding: {advice.get('has_position', '-')}")]
+                  tr(lang, f"- 空仓：{advice.get('no_position', '-')}", f"- No position: {advice.get('no_position', '-')}", f"- 미보유: {advice.get('no_position', '-')}"),
+                  tr(lang, f"- 持仓：{advice.get('has_position', '-')}", f"- Holding: {advice.get('has_position', '-')}", f"- 보유 중: {advice.get('has_position', '-')}")]
     plan = result["battle_plan"]
     plan_items = [f"{label} {plan[key]:.2f}" for key, label in (
         ("buy_price", tr(lang, "买入", "Buy")), ("stop_loss", tr(lang, "止损", "Stop loss")), ("target_price", tr(lang, "目标", "Target"))) if plan.get(key)]
@@ -964,8 +966,8 @@ def render_markdown(result: dict[str, Any]) -> str:
     if result["theme_role"]:
         role = result["theme_role"]
         lines.append(tr(lang, f"**主线地位**：{role['theme']}（{role['phase']}）{role['role']}",
-                        f"**Theme position**: {role['theme']} ({role['phase']}) {role['role']}"))
-    lines.append(tr(lang, f"**大盘**：{result['market_regime']}", f"**Market**: {result['market_regime']}"))
+                        f"**Theme position**: {role['theme']} ({role['phase']}) {role['role']}", f"**테마 내 위치**: {role['theme']} ({role['phase']}) {role['role']}"))
+    lines.append(tr(lang, f"**大盘**：{result['market_regime']}", f"**Market**: {result['market_regime']}", f"**시장**: {result['market_regime']}"))
     from src.collectors.fundamentals import describe_chips
 
     for label, text in ((tr(lang, "资金", "Fund flow"), result.get("fund_flow")), (tr(lang, "筹码", "Chips"), describe_chips(result.get("chips"))),
@@ -977,9 +979,9 @@ def render_markdown(result: dict[str, Any]) -> str:
     if agents:
         lines += [tr(lang, "### 分析员观点", "### Analyst views"),
                   *[tr(lang, f"- {a['label']}：{a['view']} {a['score']}分（信心{a['confidence']}）",
-                       f"- {a['label']}: {display(lang, a['view'])} {a['score']} pts (confidence {display(lang, a['confidence'])})")
+                       f"- {a['label']}: {display(lang, a['view'])} {a['score']} pts (confidence {display(lang, a['confidence'])})", f"- {a['label']}: {display(lang, a['view'])} {a['score']}점 (확신도 {display(lang, a['confidence'])})")
                     + (f"；{'；'.join(a['key_points'])}" if a["key_points"] else "") for a in agents]]
-        lines.append((tr(lang, f"**分歧**：{result['disagreement']}", f"**Disagreement**: {result['disagreement']}")
+        lines.append((tr(lang, f"**分歧**：{result['disagreement']}", f"**Disagreement**: {result['disagreement']}", f"**의견 차이**: {result['disagreement']}")
                       if result.get("disagreement") else tr(lang, "**分歧**：观点基本一致", "**Disagreement**: views are broadly aligned")))
     if result.get("calibration"):
         lines.append(result["calibration"].replace("【历史表现】", tr(lang, "**历史表现**：", "**Track record**: ")))

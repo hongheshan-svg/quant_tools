@@ -1,3 +1,6 @@
+{% if language | default('zh') == 'ko' %}
+{{ default }}
+{% else %}
 {# 个股诊断模板（Jinja2）。
 可用变量：name 名称、code 代码、action 操作建议（buy/add/hold/watch/reduce/sell/avoid）、action_label 操作建议文字、
 score 评分、confidence 信心、one_sentence 一句话结论、created_at 诊断时间、trade_date 行情日、
@@ -27,3 +30,5 @@ default 内置格式的完整原文（可在前后加内容）。 #}
 
 {% endif %}
 > 仅供学习研究，不构成投资建议
+
+{% endif %}

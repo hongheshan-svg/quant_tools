@@ -1,3 +1,6 @@
+{% if language | default('zh') == 'ko' %}
+{{ default }}
+{% else %}
 {# 自选股决策仪表盘模板（Jinja2）。
 可用变量：trade_date 交易日、items 诊断完成的股票列表（code、name、action、action_label、score、one_sentence、
 battle_plan、catalysts、risks、guardrails、change）、failed 未完成列表（code、name、error）、
@@ -18,3 +21,5 @@ counts 各档数量（键为「买入/加仓」「持有/观望」「减仓/卖�
 {% endif %}
 
 > 仅供学习研究，不构成投资建议
+
+{% endif %}

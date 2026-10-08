@@ -1,3 +1,6 @@
+{% if language | default('zh') == 'ko' %}
+{{ default }}
+{% else %}
 {# 大盘复盘模板（Jinja2）。
 可用变量：trade_date 交易日、headline 标题、trend 趋势结构、emotion 资金情绪、main_lines 主线板块、
 stance 次日姿态（进攻/均衡/防守）、position 建议仓位、focus 次日关注列表、avoid 回避方向列表、watch_points 观察要点列表、
@@ -32,4 +35,6 @@ guardrails 护栏列表、regime 量化大盘环境、default 内置格式的完
 {% for x in avoid %}
 - {{ x }}
 {% endfor %}
+{% endif %}
+
 {% endif %}

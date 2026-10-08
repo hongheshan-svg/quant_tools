@@ -160,6 +160,16 @@ def _has_immediate_trade_en(text: str) -> bool:
     return False
 
 
+def _has_immediate_trade_ko(text: str) -> bool:
+    """韩文即刻买卖，同时识别动词后的否定，保留「不要立即买入」等风险说明。"""
+    for match in re.finditer(r'(?:지금|즉시|바로)\s*(?:당장\s*)?(?:(?:추가|일부|전량)\s*)?(?:매수|매도|추매|포지션\s*(?:확대|축소))', text):
+        before = text[max(0, match.start() - 12):match.start()]
+        after = re.split(r'[.!?;\n]', text[match.end():match.end() + 24])[0]
+        if not re.search(r'하지\s*마|금지|불가|피하|않|안\s*하|보류|하면\s*안|해서는\s*안|말아', after) and not re.search(r'금지|절대\s*안', before):
+            return True
+    return False
+
+
 def phase_guardrails(action: str, confidence: str, phase_decision: Any, ctx: dict,
                      quote_trade_date: str, lang: str = "zh", *, fetched_at=None) -> tuple[str, str, dict, list[str]]:
     """阶段护栏：返回（action, confidence, 规范化的 phase_decision, 护栏说明）。"""
@@ -176,7 +186,8 @@ def phase_guardrails(action: str, confidence: str, phase_decision: Any, ctx: dic
     }
     notes: list[str] = []
     immediate = _has_immediate_trade(decision["immediate_action"]) or (
-        lang == "en" and _has_immediate_trade_en(decision["immediate_action"]))
+        lang in ('en', 'ko') and _has_immediate_trade_en(decision["immediate_action"])) or (
+        lang == 'ko' and _has_immediate_trade_ko(decision['immediate_action']))
     if phase in ("premarket", "non_trading") and immediate:
         decision["immediate_action"] = tr(
             lang, PREMARKET_REPLACEMENT if phase == "premarket" else NON_TRADING_REPLACEMENT,
@@ -184,7 +195,7 @@ def phase_guardrails(action: str, confidence: str, phase_decision: Any, ctx: dic
         if confidence == "高":
             confidence = "中"
         notes.append(tr(lang, f"当前为{decision['phase_label']}，不支持立即买卖，已改为开盘后确认",
-                        f"Current phase is {display(lang, decision['phase_label'])}; immediate buy/sell is not supported, changed to confirm after the open"))
+                        f"Current phase is {display(lang, decision['phase_label'])}; immediate buy/sell is not supported, changed to confirm after the open", f"현재 단계는 {display(lang, decision['phase_label'])}입니다. 즉시 매매 대신 개장 후 확인으로 변경합니다."))
     limits = decision["data_limitations"]
     if phase in PARTIAL_BAR_PHASES and _is_today(ctx, quote_trade_date):
         limits.append(tr(lang, "今日 K 线尚未走完，涨跌幅、成交额为盘中数据",
@@ -195,12 +206,12 @@ def phase_guardrails(action: str, confidence: str, phase_decision: Any, ctx: dic
         eff = ctx.get("effective_daily_bar_date") or '未知'
         limits.extend(freshness['limitations'])
         limits.append(tr(lang, f"行情停留在 {quote_trade_date}（最近完整交易日 {eff}）",
-                         f"Quotes are stuck at {quote_trade_date} (latest complete trading day {eff})"))
+                         f"Quotes are stuck at {quote_trade_date} (latest complete trading day {eff})", f'시세 기준일은 {quote_trade_date}입니다 (최근 완료 거래일 {eff}).'))
         if confidence == "高":
             confidence = "中"
         if action in BULLISH_ACTIONS:
             action = "watch"
             notes.append(tr(lang, f"行情数据停留在 {quote_trade_date}，未满足最近完整交易日 {eff} 的时效要求，无法确认买点，降级为观望",
                             f"Quote data is stuck at {quote_trade_date}, not valid for the latest complete trading day {eff}; "
-                            "entry cannot be confirmed, downgraded to Watch"))
+                            "entry cannot be confirmed, downgraded to Watch", f'시세가 {quote_trade_date}에 머물러 최근 완료 거래일 {eff}의 요건을 충족하지 못합니다. 진입을 확인할 수 없어 관망합니다.'))
     return action, confidence, decision, notes

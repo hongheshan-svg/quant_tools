@@ -75,6 +75,8 @@ def normalize_profile(value: Any) -> str:
 
 def profile_label(profile: str, lang: str = "zh") -> str:
     profile = normalize_profile(profile)
+    if lang == 'ko':
+        return {'conservative': '보수적', 'balanced': '균형적', 'aggressive': '공격적'}[profile]
     return PROFILE_LABELS_EN[profile] if lang == "en" else PROFILE_LABELS[profile]
 
 
@@ -95,18 +97,20 @@ def decide_with_phase(inputs: dict, profile: str, lang: str = "zh") -> tuple[str
     confidence = str(inputs.get("confidence") or "")
     guardrails: list[str] = []
 
-    def downgrade(zh: str, en: str, zh_styled: str = "", en_styled: str = "") -> None:
+    def downgrade(zh: str, en: str, zh_styled: str = "", en_styled: str = "", ko: str = '', ko_styled: str = '') -> None:
         if styled and zh_styled:
-            guardrails.append(tr(lang, f"{PROFILE_LABELS[profile]}风格：{zh_styled}", f"{plabel} style: {en_styled}"))
+            guardrails.append(tr(lang, f"{PROFILE_LABELS[profile]}风格：{zh_styled}", f"{plabel} style: {en_styled}", f'{plabel} 스타일: {ko_styled}'))
         else:
-            guardrails.append(tr(lang, zh, en))
+            guardrails.append(tr(lang, zh, en, ko))
 
     min_score = rules["min_score"]
     if action in BULLISH_ACTIONS and score < min_score:
         downgrade(f"评分 {score:.0f} 与「{ACTION_LABELS[action]}」不一致，降级为观望",
                   f"Score {score:.0f} is inconsistent with \"{display(lang, ACTION_LABELS[action])}\", downgraded to Watch",
                   f"评分 {score:.0f} 低于 {min_score}，降级为观望",
-                  f"score {score:.0f} is below {min_score}, downgraded to Watch")
+                  f"score {score:.0f} is below {min_score}, downgraded to Watch",
+                  f'점수 {score:.0f}이(가) {display(lang, ACTION_LABELS[action])} 의견과 맞지 않아 관망합니다.',
+                  f'점수 {score:.0f}이(가) 기준 {min_score} 미만이므로 관망합니다.')
         action = "watch"
     regime = inputs.get("regime") or {}
     regime_name = regime.get("regime")
@@ -117,17 +121,17 @@ def decide_with_phase(inputs: dict, profile: str, lang: str = "zh") -> tuple[str
         action = "watch"
     elif action in BULLISH_ACTIONS and regime_name == "防守":
         if rules["defensive_blocks"]:
-            downgrade("", "", "大盘防守，不开新仓，降级为观望", "market is defensive; no new positions, downgraded to Watch")
+            downgrade("", "", "大盘防守，不开新仓，降级为观望", "market is defensive; no new positions, downgraded to Watch", ko_styled='방어적 시장에서 신규 진입을 중단하고 관망합니다.')
             action = "watch"
         else:
             guardrails.append(tr(lang, f"大盘防守，新开仓仓位按 ×{factor:.1f} 控制",
-                                 f"Market is defensive; new position size scaled by x{factor:.1f}"))
+                                 f"Market is defensive; new position size scaled by x{factor:.1f}", f'방어적 시장에서 신규 포지션 규모를 {factor:.1f}배로 조정합니다.'))
 
     quality = inputs.get("data_quality") or {}
     q_score, missing, bar_count = quality.get("score", 0), quality.get("missing") or [], quality.get("bar_count", 0)
     if action in BULLISH_ACTIONS and not quality.get("core_ok"):
         guardrails.append(tr(lang, f"行情或日线数据不足（日线 {bar_count} 根），无法确认买点，降级为观望",
-                             f"Quote or daily data insufficient ({bar_count} daily bars); entry cannot be confirmed, downgraded to Watch"))
+                             f"Quote or daily data insufficient ({bar_count} daily bars); entry cannot be confirmed, downgraded to Watch", f'시세 또는 일봉 데이터가 부족합니다 ({bar_count}개 일봉). 진입을 확인할 수 없어 관망합니다.'))
         action = "watch"
     min_quality = rules["min_data_quality"]
     if q_score < min_quality:
@@ -136,24 +140,28 @@ def decide_with_phase(inputs: dict, profile: str, lang: str = "zh") -> tuple[str
             downgrade(f"数据完整度 {q_score}%（缺少{'、'.join(missing)}），不足以支撑买入，降级为观望",
                       f"Data completeness {q_score}% (missing: {', '.join(missing)}) is not enough to support a buy, downgraded to Watch",
                       f"数据完整度 {q_score}%（缺少{'、'.join(missing)}）低于 {min_quality}%，降级为观望",
-                      f"data completeness {q_score}% (missing: {', '.join(missing)}) is below {min_quality}%, downgraded to Watch")
+                      f"data completeness {q_score}% (missing: {', '.join(missing)}) is below {min_quality}%, downgraded to Watch",
+                      f'데이터 완전성 {q_score}% (누락: {", ".join(missing)})로 매수를 뒷받침할 수 없어 관망합니다.',
+                      f'데이터 완전성 {q_score}%가 기준 {min_quality}% 미만이므로 관망합니다 (누락: {", ".join(missing)}).')
             action = "watch"
     flow_ratio = inputs.get("flow_ratio")
     if action in BULLISH_ACTIONS and flow_ratio is not None and flow_ratio <= rules["flow_outflow_ratio"]:
         downgrade(f"资金净流出占成交额 {abs(flow_ratio):.1f}%，与买入建议矛盾，降级为观望",
                   f"Net fund outflow is {abs(flow_ratio):.1f}% of turnover, contradicting the buy advice, downgraded to Watch",
                   f"资金净流出占成交额 {abs(flow_ratio):.1f}%，超过 {abs(rules['flow_outflow_ratio']):.0f}%，降级为观望",
-                  f"net fund outflow is {abs(flow_ratio):.1f}% of turnover, above {abs(rules['flow_outflow_ratio']):.0f}%, downgraded to Watch")
+                  f"net fund outflow is {abs(flow_ratio):.1f}% of turnover, above {abs(rules['flow_outflow_ratio']):.0f}%, downgraded to Watch",
+                  f'순유출이 거래대금의 {abs(flow_ratio):.1f}%로 매수 의견과 상충하여 관망합니다.',
+                  f'순유출 {abs(flow_ratio):.1f}%가 기준 {abs(rules["flow_outflow_ratio"]):.0f}%를 넘으므로 관망합니다.')
         action = "watch"
     severe = inputs.get("severe_notice")
     if action in BULLISH_ACTIONS and severe:
         guardrails.append(tr(lang, f"近 30 天公告含「{severe['risk']}」（{severe['date']} {severe['title'][:40]}），不建议买入，降级为观望",
-                             f"A notice in the past 30 days contains \"{severe['risk']}\" ({severe['date']} {severe['title'][:40]}); buying not advised, downgraded to Watch"))
+                             f"A notice in the past 30 days contains \"{severe['risk']}\" ({severe['date']} {severe['title'][:40]}); buying not advised, downgraded to Watch", f'''최근 30일 공시에 "{severe['risk']}"이(가) 포함되어 있습니다 ({severe['date']} {severe['title'][:40]}). 매수를 권하지 않으며 관망으로 하향합니다.'''))
         action = "watch"
     disagreement = inputs.get("disagreement")
     if disagreement and confidence == "高":
         guardrails.append(tr(lang, f"分析员观点分歧（{disagreement}），信心下调为中",
-                             f"Analysts disagree ({disagreement}); confidence lowered to Medium"))
+                             f"Analysts disagree ({disagreement}); confidence lowered to Medium", f'분석가 의견이 다릅니다 ({disagreement}). 확신도를 중간으로 낮춥니다.'))
         confidence = "中"
     bullish_history = inputs.get("calibration_bullish") or {}
     if (action in BULLISH_ACTIONS and bullish_history.get("n", 0) >= MIN_CALIBRATION_SAMPLES
@@ -161,7 +169,7 @@ def decide_with_phase(inputs: dict, profile: str, lang: str = "zh") -> tuple[str
         lowered = {"高": "中", "中": "低"}.get(confidence, "低")
         guardrails.append(tr(lang, f"近 90 天看多诊断 3 日准确率仅 {bullish_history['accuracy']}%（{bullish_history['n']} 次），信心下调为{lowered}",
                              f"Bullish diagnoses in the past 90 days hit only {bullish_history['accuracy']}% at 3 days ({bullish_history['n']} runs); "
-                             f"confidence lowered to {display(lang, lowered)}"))
+                             f"confidence lowered to {display(lang, lowered)}", f"최근 90일 상승 진단의 3일 적중률은 {bullish_history['accuracy']}%입니다 ({bullish_history['n']}건). 확신도를 {display(lang, lowered)}(으)로 낮춥니다."))
         confidence = lowered
     previous = inputs.get("previous")
     if previous:
@@ -171,7 +179,7 @@ def decide_with_phase(inputs: dict, profile: str, lang: str = "zh") -> tuple[str
         if (flipped_up or flipped_down) and abs(score - prev_score) < STABILITY_SCORE_DELTA:
             note = tr(lang, f"与 {previous.get('created_at')} 的诊断（{previous.get('action_label')}，{prev_score:.0f}分）方向相反，但评分变化不足 {STABILITY_SCORE_DELTA} 分",
                       f"Opposite direction to the {previous.get('created_at')} diagnosis ({display(lang, previous.get('action_label'))}, {prev_score:.0f} pts), "
-                      f"but the score changed by less than {STABILITY_SCORE_DELTA} pts")
+                      f"but the score changed by less than {STABILITY_SCORE_DELTA} pts", f"{previous.get('created_at')} 진단 ({display(lang, previous.get('action_label'))}, {prev_score:.0f}점)과 방향이 반대지만 점수 변화가 {STABILITY_SCORE_DELTA}점 미만입니다.")
             if flipped_up:
                 guardrails.append(note + tr(lang, "，暂按观望处理，避免反复", "; treated as Watch to avoid flip-flopping"))
                 action = "watch"
@@ -188,12 +196,12 @@ def decide_with_phase(inputs: dict, profile: str, lang: str = "zh") -> tuple[str
 
     # 风格专属规则放在安全护栏之后，只作用于仍然看多的建议
     if action in BULLISH_ACTIONS and rules["low_confidence_blocks"] and confidence == "低":
-        downgrade("", "", "信心为低，不建议买入，降级为观望", "confidence is Low; buying not advised, downgraded to Watch")
+        downgrade("", "", "信心为低，不建议买入，降级为观望", "confidence is Low; buying not advised, downgraded to Watch", ko_styled='확신도가 낮아 매수를 권하지 않으며 관망합니다.')
         action = "watch"
     if action in BULLISH_ACTIONS and rules["require_invalidation"] and not (
             str(inputs.get("invalidation") or "").strip() or inputs.get("stop_loss")):
         downgrade("", "", "买入建议缺少失效条件和止损价，降级为观望",
-                  "the buy advice has neither an invalidation condition nor a stop-loss price, downgraded to Watch")
+                  "the buy advice has neither an invalidation condition nor a stop-loss price, downgraded to Watch", ko_styled='매수 의견에 무효화 조건과 손절가가 없어 관망합니다.')
         action = "watch"
     if action in BULLISH_ACTIONS and rules["position_note"]:
         guardrails.append(tr(lang, CONSERVATIVE_POSITION_NOTE, CONSERVATIVE_POSITION_NOTE_EN))

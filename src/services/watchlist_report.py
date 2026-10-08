@@ -42,8 +42,8 @@ BUCKET_LABELS_EN = {"买入/加仓": "Buy/Add", "持有/观望": "Hold/Watch", "
 def _title(it: dict[str, Any], lang: str = "zh") -> str:
     """名称(代码)，ETF/指数在后面标注类型。"""
     tag = FUND_TAGS.get(it.get("kind", "stock"))
-    if tag and lang == "en":
-        tag = "Index" if tag == "指数" else tag
+    if tag and lang in ('en', 'ko'):
+        tag = ('지수' if lang == 'ko' else 'Index') if tag == "指数" else tag
         return f"{it['name']}({it['code']}) [{tag}]"
     return f"{it['name']}({it['code']})" + (f"「{tag}」" if tag else "")
 
@@ -71,18 +71,19 @@ def change_text(current: dict[str, Any], previous: dict[str, Any] | None, lang: 
         parts.append(f"{display(lang, previous.get('action_label', ''))}→{display(lang, current.get('action_label', ''))}")
     delta = (current.get("score") or 0) - (previous.get("score") or 0)
     if delta:
-        parts.append(tr(lang, f"评分 {previous.get('score')}→{current.get('score')}", f"score {previous.get('score')}→{current.get('score')}"))
+        parts.append(tr(lang, f"评分 {previous.get('score')}→{current.get('score')}", f"score {previous.get('score')}→{current.get('score')}", f"점수 {previous.get('score')}→{current.get('score')}"))
     if not parts:
         return tr(lang, "与上次一致", "Same as last time")
     return tr(lang, "较上次（" + previous.get("created_at", "")[5:] + "）：" + "，".join(parts),
-              "Since last (" + previous.get("created_at", "")[5:] + "): " + ", ".join(parts))
+              "Since last (" + previous.get("created_at", "")[5:] + "): " + ", ".join(parts),
+              '이전 진단 (' + previous.get('created_at', '')[5:] + ') 대비: ' + ', '.join(parts))
 
 
 def _plan_text(it: dict[str, Any], lang: str = "zh") -> str:
     """价格计划（买入/止损/目标）文字，没有时为空。"""
     plan = it.get("battle_plan") or {}
     return tr(lang, "，", ", ").join(
-        f"{label}{plan[k]:.2f}" if lang != "en" else f"{label} {plan[k]:.2f}"
+        f"{label}{plan[k]:.2f}" if lang == "zh" else f"{label} {plan[k]:.2f}"
         for k, label in (("buy_price", tr(lang, "买入", "Buy")), ("stop_loss", tr(lang, "止损", "Stop loss")),
                          ("target_price", tr(lang, "目标", "Target"))) if plan.get(k))
 
@@ -95,7 +96,7 @@ def single_title(it: dict[str, Any], lang: str = "zh") -> str:
 def render_item_brief(it: dict[str, Any], lang: str = "zh") -> str:
     """单只股票的简版（逐只推送用）：结论、评分、一句话、作战计划、主要风险。"""
     lines = [tr(lang, f"**{_title(it)}** {it['action_label']} {it['score']}分",
-                f"**{_title(it, lang)}** {display(lang, it['action_label'])} {it['score']} pts")]
+                f"**{_title(it, lang)}** {display(lang, it['action_label'])} {it['score']} pts", f"**{_title(it, lang)}** {display(lang, it['action_label'])} {it['score']}점")]
     if it.get("one_sentence"):
         lines.append(it["one_sentence"])
     plan_text = _plan_text(it, lang)
@@ -116,8 +117,8 @@ def render_dashboard(trade_date: str, items: list[dict[str, Any]], failed: list[
         counts[label] = counts.get(label, 0) + 1
     bucket_name = lambda label: tr(lang, label, BUCKET_LABELS_EN.get(label, label))  # noqa: E731
     lines = [
-        tr(lang, f"## 🎯 {trade_date} 自选股决策仪表盘", f"## 🎯 {trade_date} Watchlist Decision Dashboard"),
-        tr(lang, f"共分析 {len(items) + len(failed)} 只 | ", f"{len(items) + len(failed)} analyzed | ")
+        tr(lang, f"## 🎯 {trade_date} 自选股决策仪表盘", f"## 🎯 {trade_date} Watchlist Decision Dashboard", f'## 🎯 {trade_date} 관심 종목 의사결정 대시보드'),
+        tr(lang, f"共分析 {len(items) + len(failed)} 只 | ", f"{len(items) + len(failed)} analyzed | ", f'{len(items) + len(failed)}개 분석 | ')
         + " ".join(f"{icon}{bucket_name(label)} {counts[label]}" for icon, label, _ in BUCKETS),
         tr(lang, "### 📊 结论摘要", "### 📊 Summary"),
     ]
@@ -127,13 +128,16 @@ def render_dashboard(trade_date: str, items: list[dict[str, Any]], failed: list[
         if lang == "en":
             lines.append(f"- {icon} **{_title(it, lang)}**: {display(lang, it['action_label'])} | Score {it['score']} | "
                          f"{it['one_sentence'] or '-'} ({it['change']})")
+        elif lang == 'ko':
+            lines.append(f"- {icon} **{_title(it, lang)}**: {display(lang, it['action_label'])} | 점수 {it['score']} | "
+                         f"{it['one_sentence'] or '-'} ({it['change']})")
         else:
             lines.append(f"- {icon} **{_title(it)}**：{it['action_label']}｜评分 {it['score']}｜{it['one_sentence'] or '-'}"
                          f"（{it['change']}）")
     lines.append(tr(lang, "### 🔎 个股要点", "### 🔎 Stock Details"))
     for it in ordered:
         detail = [tr(lang, f"**{_title(it)}** {it['action_label']} {it['score']}分",
-                     f"**{_title(it, lang)}** {display(lang, it['action_label'])} {it['score']} pts")]
+                     f"**{_title(it, lang)}** {display(lang, it['action_label'])} {it['score']} pts", f"**{_title(it, lang)}** {display(lang, it['action_label'])} {it['score']}점")]
         plan_text = _plan_text(it, lang)
         if plan_text:
             detail.append(tr(lang, "- 价格计划：", "- Price plan: ") + plan_text)
@@ -147,7 +151,7 @@ def render_dashboard(trade_date: str, items: list[dict[str, Any]], failed: list[
     if failed:
         lines.append(tr(lang, "### ⚠️ 未完成", "### ⚠️ Incomplete") + "\n" + "\n".join(f"- {f['name'] or f['code']}：{f['error']}" for f in failed))
     lines.append(tr(lang, f"\n> 生成时间 {datetime.now():%Y-%m-%d %H:%M}，仅供学习研究，不构成投资建议",
-                    f"\n> Generated at {datetime.now():%Y-%m-%d %H:%M}. For study and research only; not investment advice"))
+                    f"\n> Generated at {datetime.now():%Y-%m-%d %H:%M}. For study and research only; not investment advice", f'\n> 생성 시간 {datetime.now():%Y-%m-%d %H:%M}. 학습과 연구 목적이며 투자 조언이 아닙니다.'))
     return "\n\n".join(lines)
 
 
@@ -248,7 +252,7 @@ class WatchlistReportService:
             self._push_groups(trade_date, items, failed, groups, lang)
         logger.info(f"自选股决策仪表盘 {trade_date}：{len(items)} 只完成，{len(failed)} 只失败，推送 {pushed}")
         return {"trade_date": trade_date, "total": len(stocks), "done": len(items), "failed": failed,
-                "counts": counts, "markdown": markdown, "pushed": pushed, "timed_out": timed_out}
+                "counts": counts, "markdown": markdown, "pushed": pushed, "timed_out": timed_out, 'language': lang}
 
     def _email_groups(self) -> list[dict[str, Any]]:
         from src.notifier import email_groups
@@ -285,7 +289,7 @@ class WatchlistReportService:
             if not sub_items and not sub_failed:
                 continue
             try:
-                title = tr(lang, f"自选股决策仪表盘 {trade_date}", f"Watchlist Decision Dashboard {trade_date}")
+                title = tr(lang, f"自选股决策仪表盘 {trade_date}", f"Watchlist Decision Dashboard {trade_date}", f'관심 종목 의사결정 대시보드 {trade_date}')
                 suffix = f"（{g['name']}）" if g["name"] else ""
                 send_email(self.config, g["to"], title + suffix, render_dashboard(trade_date, sub_items, sub_failed, lang))
             except Exception as e:
@@ -337,14 +341,14 @@ class WatchlistReportService:
         with get_db_session(self.db_path) as session:
             session.query(WatchlistReport).filter(WatchlistReport.trade_date == trade_date).delete()
             session.add(WatchlistReport(trade_date=trade_date, markdown=markdown,
-                                        summary_json=json.dumps({"items": items, "failed": failed}, ensure_ascii=False)))
+                                        summary_json=json.dumps({"items": items, "failed": failed, 'language': report_language(self.config)}, ensure_ascii=False)))
 
     def _push(self, trade_date: str, markdown: str, lang: str = "zh") -> bool:
         from src.notifier import broadcast, enabled_channels
 
         if not enabled_channels(self.config, "watchlist"):
             return False
-        results = broadcast(self.config, tr(lang, f"自选股决策仪表盘 {trade_date}", f"Watchlist Decision Dashboard {trade_date}"), markdown, kind="watchlist")
+        results = broadcast(self.config, tr(lang, f"自选股决策仪表盘 {trade_date}", f"Watchlist Decision Dashboard {trade_date}", f'관심 종목 의사결정 대시보드 {trade_date}'), markdown, kind="watchlist")
         return any(results.values())
 
     def latest(self) -> dict[str, Any] | None:
@@ -354,4 +358,4 @@ class WatchlistReportService:
                 return None
             summary = json.loads(row.summary_json or "{}")
             return {"trade_date": row.trade_date, "markdown": row.markdown, "items": summary.get("items", []),
-                    "failed": summary.get("failed", []), "created_at": row.created_at.strftime("%Y-%m-%d %H:%M")}
+                    "failed": summary.get("failed", []), "created_at": row.created_at.strftime("%Y-%m-%d %H:%M"), 'language': summary.get('language', 'zh')}

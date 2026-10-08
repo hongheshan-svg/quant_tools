@@ -2,6 +2,7 @@
 
 from src.services.opinion_validity import valid_opinion
 from src.services.skill_consult import consensus
+from src.services.report_language import language_directive, tr
 
 
 def synthesize(opinions: list[dict], *, llm=None, context_pack: dict | None = None, config: dict | None = None, budget=None, lang: str = "zh") -> dict:
@@ -16,9 +17,9 @@ def synthesize(opinions: list[dict], *, llm=None, context_pack: dict | None = No
     if bullish and bearish:
         severe = any(o.get("confidence") == "高" for o in bullish) and any(o.get("confidence") == "高" for o in bearish)
         conflicts.append({"type": "directional_opposition", "severity": "high" if severe else "medium",
-                          "description": "策略对方向存在相反判断", "participants": [o.get("skill") for o in bullish + bearish]})
+                          "description": tr(lang, '策略对方向存在相反判断', 'Strategies disagree on direction', '전략 간 방향 판단이 상충합니다.'), "participants": [o.get("skill") for o in bullish + bearish]})
     if max(o["score"] for o in valid) - min(o["score"] for o in valid) >= 40:
-        conflicts.append({"type": "score_dispersion", "severity": "medium", "description": "策略评分差异至少 40 分"})
+        conflicts.append({"type": "score_dispersion", "severity": "medium", "description": tr(lang, '策略评分差异至少 40 分', 'Strategy scores differ by at least 40 points', '전략 점수 차이가 40점 이상입니다.')})
     minority = [o for o in valid if o["stance"] != summary["stance"]]
     result = {"version": "synthesis-v1", "status": "ready", "valid_count": len(valid), "consensus": summary,
             "support": [o for o in valid if o["stance"] == summary["stance"]], "minority": minority,
@@ -40,6 +41,7 @@ def deliberate(result: dict, original: list[dict], llm, context: dict, config: d
     from src.services.diagnosis_prompts import DELIBERATION_PROMPT_EN
     system = (DELIBERATION_PROMPT_EN if lang == "en" else
               '只根据证据审议分歧。只能维持原方向或弱化为中性，不得提高信心、增加偏离50分的程度或撤销上一轮弱化。保留每个 skill；返回 {"opinions":[{"skill":"...","stance":"看多/看空/中性","score":0到100,"confidence":"高/中/低","reason":"具体证据或维持原意见的原因"}]}。不得添加策略。')
+    system += language_directive(lang, 'stance=看多/看空/中性; confidence=高/中/低')
     expires = time.monotonic() + min(config.get("timeout_seconds", 30), max(0, budget.remaining() - 30) if budget else 30)
     current, rounds = original, []
     for round_no in range(1, min(3, int(config.get("max_rounds", 2))) + 1):
@@ -63,12 +65,12 @@ def deliberate(result: dict, original: list[dict], llm, context: dict, config: d
                     raise ValueError("审议修订必须维持或弱化观点，不能反转方向或提高信心")
             current = revised
             rounds.append({"round": round_no, "opinions": revised})
-            if not synthesize(current)["conflicts"]:
+            if not synthesize(current, lang=lang)["conflicts"]:
                 break
         except Exception as error:
             result["deliberation"]["failure_reason"] = redact_text(error, 200)
             break
-    review = synthesize(current)
+    review = synthesize(current, lang=lang)
     original_conflicts = result["conflicts"]
     result.update({"original_opinions": original, "revised_opinions": current,
                    "original_conflicts": original_conflicts,
