@@ -277,9 +277,16 @@ class StockChatSession:
                 expected = resolve_identity(context_code).code
                 if name == "web_search":
                     import re
-                    symbols = re.findall(r"(?<!\d)(\d{6})(?!\d)", str(args.get("query", "")))
+                    query = str(args.get("query", ""))
+                    symbols = re.findall(r"(?<!\d)(\d{6})(?!\d)", query)
                     if any(resolve_identity(c).code != expected for c in symbols):
                         return "工具被拒绝：超出当前股票范围"
+                    # 搜索对象由已确认的证券决定：搜索词里点名了其他证券（名称或简称）时不执行。
+                    db_path = getattr(self.tools, "db_path", None)
+                    if db_path:
+                        from src.services.web_intent import mentioned_targets
+                        if any(resolve_identity(t["code"]).code != expected for t in mentioned_targets(query, db_path)):
+                            return "工具被拒绝：搜索词包含当前范围以外的证券"
                 elif name != "resolve_stock":
                     if not any(args.get(key) for key in ("code", "query", "name")):
                         args["code"] = expected
