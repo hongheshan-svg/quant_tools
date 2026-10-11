@@ -264,7 +264,12 @@ class StockChatSession:
         }.get(intent)
         if allowed is not None and name not in allowed and not (name.startswith("fxmacrodata_") and intent in ("market_review", "sector_analysis", "portfolio_risk")):
             return '工具被拒绝：超出当前任务的只读工具范围'
-        from src.utils.stock_code import resolve_identity
+        from src.utils.stock_code import is_ticker_jargon, resolve_identity
+        identity_arg = args.get("code") or args.get("query") or args.get("name")
+        if (name not in ("resolve_stock", "web_search") and not name.startswith("fxmacrodata_")
+                and isinstance(identity_arg, str) and is_ticker_jargon(identity_arg.strip())):
+            # 模型把 MACD、PE、TTM 之类的缩写当成股票代码：不执行，也不按美股去查。
+            return f"工具被拒绝：「{identity_arg.strip()}」是指标或术语，不是证券代码"
         context_code = (turn.stock_context or {}).get("code")
         if context_code and name not in ("market", "watchlist") and not name.startswith("fxmacrodata_"):
             try:

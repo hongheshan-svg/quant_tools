@@ -59,6 +59,43 @@ def overseas_identity(raw: str) -> StockIdentity | None:
     return None
 
 
+# 自由文本里形似美股代码、其实是术语的大写缩写（指标、估值、宏观、交易所片段、常见英文词）。
+# 只用于从问句或模型参数里识别「裸」代码；显式写成 US:MA、MA.US 的仍按美股处理。
+TICKER_JARGON = frozenset({
+    # 交易所、市场与板块片段
+    "SH", "SZ", "BJ", "HK", "SS", "US", "CN", "AH", "ST", "SST", "PT", "IPO", "ETF", "LOF", "FOF", "QDII",
+    "QFII", "REIT", "REITS", "KCB", "CYB",
+    # 技术指标
+    "MA", "EMA", "SMA", "EXPMA", "BBI", "MACD", "DIF", "DEA", "KDJ", "RSI", "BOLL", "OBV", "DMI", "ADX", "CCI",
+    "WR", "BIAS", "VOL", "VWAP", "ATR", "SAR", "TRIX", "ASI", "VR", "PSY", "ROC", "MTM", "CR", "BRAR", "DMA",
+    # 估值与财务
+    "PE", "PB", "PS", "PEG", "PCF", "ROE", "ROA", "ROI", "ROIC", "EPS", "BPS", "TTM", "LTM", "NTM", "FWD", "YOY",
+    "QOQ", "MOM", "YTD", "EBIT", "EBITDA", "DCF", "CAGR", "FCF", "NAV", "AUM", "GMV", "ARPU", "CAPEX", "OPEX",
+    # 宏观与政策
+    "CPI", "PPI", "GDP", "PMI", "LPR", "MLF", "SLF", "SLO", "RRR", "OMO", "FOMC", "FED", "QE", "QT", "USD", "CNY",
+    "CNH", "HKD", "EUR", "GBP", "JPY",
+    # 交易用语与常见英文
+    "BUY", "SELL", "HOLD", "LONG", "SHORT", "CALL", "PUT", "STOP", "LOSS", "RISK", "CASH", "BOND", "FUND",
+    "STOCK", "INDEX", "PRICE", "TRADE", "TREND", "BULL", "BEAR", "HIGH", "LOW", "OPEN", "CLOSE", "AI", "IT",
+    "OK", "VS", "PK", "CEO", "CFO", "AND", "OR", "THE", "FOR", "NOT", "YES", "NO", "IS", "OF", "TO", "IN",
+    "ON", "AT", "BY", "IF", "HI", "HEY", "WHAT", "WHY", "HOW", "WHO", "NEW", "NOW",
+})
+# 缩写后面紧跟这些字时是术语：A股、AH股、K线、V型、M头、W底、N字
+_JARGON_SUFFIX = ("股", "线", "型", "头", "底", "字", "形", "值")
+
+
+def is_ticker_jargon(token: str, following: str = "") -> bool:
+    """问句或模型参数里的裸大写缩写是否应视为术语而不是美股代码。
+
+    单个字母（A股、K线、T+0）、TICKER_JARGON 里的缩写，以及紧跟「股/线/型」等字的缩写都算术语；
+    带 US:、.US 或其他市场后缀的显式代码不调用这个判断。
+    """
+    value = str(token or "").strip().upper()
+    if not value or not re.fullmatch(r"[A-Z]{1,5}(?:[.\-][A-Z])?", value):
+        return False
+    return len(value) == 1 or value in TICKER_JARGON or str(following or "").startswith(_JARGON_SUFFIX)
+
+
 def _inferred_exchange(digits: str) -> str:
     if digits.startswith(("92", "4", "8")):
         return "bj"

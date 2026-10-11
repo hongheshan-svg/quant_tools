@@ -3,6 +3,7 @@
 import re
 from copy import deepcopy
 from src.services.stock_search import StockSearch, ALIASES
+from src.utils.stock_code import is_ticker_jargon
 
 KINDS = {
     "portfolio_risk": r"持仓|组合|账户|portfolio",
@@ -67,7 +68,8 @@ def resolve(question, db_path, state=None, stock_context=None):
                 mentions.append((match.start(), match.end(), raw, []))
         for match in re.finditer(r"(?<![A-Za-z0-9])(?:HK[.:]?\d{1,5}|\d{4,6}\.(?:HK|T|KS|KQ|TW|TWO)|US[:.][A-Za-z]{1,5}(?:[-.][A-Za-z])?|[A-Z]{1,5}(?:[-.][A-Z])?)(?![A-Za-z0-9])", clause):
             raw = match.group()
-            if raw in {"AI", "ETF", "AND", "OR", "US", "HK"}:
+            # 裸大写缩写：单字母（A股、K线）、指标和宏观缩写（MACD、PE、CPI）不是美股代码。
+            if re.fullmatch(r"[A-Z]{1,5}(?:[-.][A-Z])?", raw) and is_ticker_jargon(raw, clause[match.end():]):
                 continue
             found = search.search(raw, 10)
             from src.utils.stock_code import overseas_identity
@@ -121,7 +123,8 @@ def resolve(question, db_path, state=None, stock_context=None):
                         tasks.append({"kind": kind, "question": clause, "targets": [stock_context]})
                     else:
                         stripped = re.sub(r"请|帮我|看看|分析|诊断|走势|研究|行情|最新价|怎么样|一下|的|现在", "", clause).strip()
-                        candidates = search.search(stripped, 6) if stripped else []
+                        candidates = [item for item in (search.search(stripped, 6) if stripped else [])
+                                      if not (item.get("market") == "US" and is_ticker_jargon(item["code"]))]
                         tasks.append({"kind": kind, "question": clause, "targets": [], "needs_confirmation": {"name": stripped or clause, "candidates": candidates}})
                 else:
                     tasks.append({"kind": kind, "question": clause, "targets": []})
