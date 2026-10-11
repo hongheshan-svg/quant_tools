@@ -404,13 +404,18 @@ class RealCorporateAction(Base):
 
 
 class ChatSessionRecord(Base):
-    """AI 问股会话（Web 端保存，重启后可继续查看和追问）"""
+    """AI 问股会话（Web 和聊天机器人共用，重启后可继续查看和追问）"""
     __tablename__ = "chat_session"
 
     id = Column(String(32), primary_key=True, comment="会话 ID")
     title = Column(String(100), comment="标题（第一个问题）")
     perspective = Column(String(20), comment="默认分析视角")
     turns_json = Column(Text, comment="问答记录 JSON")
+    active_stock_json = Column(Text, comment="服务端确认的主讨论对象 JSON（代码、名称、类型、确认来源和时间），空为未确认")
+    state_version = Column(Integer, comment="会话状态版本：每接受一个问题加 1，旧会话为空按 0 处理")
+    skills_json = Column(Text, comment="已保存的补充策略选择 JSON：空为未选择，[] 为显式清空")
+    source = Column(String(20), comment="会话来源：空为 Web，否则为机器人平台（dingtalk/feishu/discord）")
+    source_key = Column(String(200), comment="机器人会话键（平台:会话:用户），结束或过期后清空")
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 

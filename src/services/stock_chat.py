@@ -214,6 +214,7 @@ class ChatTurn:
     intent_state: dict = field(default_factory=dict)
     stage_events: list[dict] = field(default_factory=list)
     asked_at: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d %H:%M"))
+    status: str = "done"   # 会话里已接受、正在回答的一轮为 running，服务中断后读取时显示为 interrupted
 
 
 class StockChatSession:
