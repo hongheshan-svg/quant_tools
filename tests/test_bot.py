@@ -10,6 +10,8 @@ from src.bot import dingtalk, feishu, manager
 from src.bot.dispatcher import Dispatcher, reply_title
 from src.bot.models import BotMessage
 from src.bot.router import HELP_TEXT, CommandRouter
+from src.database import db as db_module
+from src.database.db import init_db
 from src.services import watchlist as watchlist_module
 
 STOCKS = {"茅台": ("600519", "贵州茅台"), "600519": ("600519", "贵州茅台"), "宁德": ("300750", "宁德时代")}
@@ -53,25 +55,39 @@ class FakePipeline:
 
 
 class FakeChat:
-    created = 0
+    """假问股会话：问答记录由 ChatSessionStore 从数据库恢复到 turns，回答编号 = 已有轮数 + 1。"""
 
     def __init__(self):
-        FakeChat.created += 1
-        self.questions = []
+        self.turns = []
 
     def ask(self, question, perspective="综合", progress=None):
-        self.questions.append(question)
         if progress:
             progress("正在查询：行情")
             progress("正在查询：资金流")
-        return SimpleNamespace(answer=f"回答{len(self.questions)}：{question}", error="")
+        return SimpleNamespace(answer=f"回答{len(self.turns) + 1}：{question}", error="")
+
+
+def _reset_db_engine():
+    if db_module._engine:
+        db_module._engine.dispose()
+    db_module._engine = None
+    db_module._SessionFactory = None
 
 
 @pytest.fixture
-def router(monkeypatch):
+def chat_db(tmp_path):
+    """机器人问股会话写入 chat_session 表（与 Web 共用），每个测试一个临时库。"""
+    path = str(tmp_path / "bot.db")
+    _reset_db_engine()
+    init_db(path)
+    yield path
+    _reset_db_engine()
+
+
+@pytest.fixture
+def router(monkeypatch, chat_db):
     monkeypatch.setattr(watchlist_module.WatchlistService, "resolve", lambda self, text: STOCKS.get(text))
-    FakeChat.created = 0
-    return CommandRouter({"database": {"sqlite_path": ":memory:"}}, pipeline=FakePipeline(), chat_factory=FakeChat)
+    return CommandRouter({"database": {"sqlite_path": chat_db}}, pipeline=FakePipeline(), chat_factory=FakeChat)
 
 
 def msg(text, user="u1", chat="c1", **kw):
@@ -156,7 +172,8 @@ def test_chat_sessions_keep_context_per_user_and_expire(router):
     assert progress == ["正在查询：行情…"]  # 多次工具调用只提示一次
     assert router.handle(msg("那宁德呢")) == "回答2：那宁德呢"
     assert router.handle(msg("你好", user="u2")) == "回答1：你好"  # 群里每个人各自一段对话
-    assert FakeChat.created == 2
+    sessions = router.chat_store.list()
+    assert len(sessions) == 2 and {s["source"] for s in sessions} == {"dingtalk"}
     assert "已结束" in router.handle(msg("清空"))
     assert router.handle(msg("再问")) == "回答1：再问"
     router.idle_seconds = 0

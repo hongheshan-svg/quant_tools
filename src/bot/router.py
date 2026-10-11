@@ -3,14 +3,14 @@
 
 命令可以带或不带 /，中文命令后面可以不加空格（「诊断茅台」）；不是命令的消息交给 AI 问股，
 同一会话（群里按人区分）30 分钟内保持上下文。所有命令只读，不能下单。
+
+AI 问股会话与 Web 共用 chat_session 表（ChatSessionStore）：机器人对话会出现在 Web【AI 问股】的会话列表里，
+可在 Web 继续追问；两边共用服务端保存的主讨论对象、策略选择和状态版本，追问沿用已确认的标的。
 """
 
 from __future__ import annotations
 
 import re
-import threading
-import time
-from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -20,7 +20,6 @@ from loguru import logger
 from src.bot.models import BotMessage
 
 SESSION_IDLE_SECONDS = 30 * 60
-MAX_SESSIONS = 200
 MAX_LIST_ROWS = 20
 MAX_BATCH = 5
 HISTORY_ROWS = 5
@@ -53,13 +52,6 @@ class Command:
     takes_args: bool = False
 
 
-class _Session:
-    def __init__(self, chat) -> None:
-        self.chat = chat
-        self.lock = threading.Lock()
-        self.last_used = time.monotonic()
-
-
 class CommandRouter:
     def __init__(self, config: dict, pipeline=None, chat_factory: Callable[[], Any] | None = None,
                  idle_seconds: float = SESSION_IDLE_SECONDS) -> None:
@@ -68,8 +60,7 @@ class CommandRouter:
         self._chat_factory = chat_factory
         self.idle_seconds = idle_seconds
         self.allowed_users = {str(u) for u in (config.get("bot") or {}).get("allowed_users") or [] if str(u).strip()}
-        self._sessions: OrderedDict[str, _Session] = OrderedDict()
-        self._sessions_lock = threading.Lock()
+        self._chat_store = None
         self.commands = [
             Command(("帮助", "help", "?", "？", "菜单"), self._help),
             Command(("诊断", "分析", "analyze", "diagnose"), self._diagnose, takes_args=True),
@@ -332,34 +323,24 @@ class CommandRouter:
         return "\n".join(lines)
 
     def _reset(self, message: BotMessage, args: str, progress) -> str:
-        with self._sessions_lock:
-            self._sessions.pop(message.session_key, None)
+        self.chat_store.end_source(message.session_key)
         return "已结束当前对话，下一条消息开始新的问股对话。"
 
     # ---------- AI 问股 ----------
 
-    def _session(self, key: str) -> _Session:
-        now = time.monotonic()
-        with self._sessions_lock:
-            session = self._sessions.get(key)
-            if session is None or now - session.last_used > self.idle_seconds:
-                session = _Session(self._new_chat())
-                self._sessions[key] = session
-            session.last_used = now
-            self._sessions.move_to_end(key)
-            while len(self._sessions) > MAX_SESSIONS:
-                self._sessions.popitem(last=False)
-            return session
+    @property
+    def chat_store(self):
+        """与 Web 共用的问股会话存储；测试通过 chat_factory 注入假的会话对象。"""
+        if self._chat_store is None:
+            from src.services.chat_sessions import ChatSessionStore
 
-    def _new_chat(self):
-        if self._chat_factory:
-            return self._chat_factory()
-        from src.services.stock_chat import StockChatSession
-
-        return StockChatSession(self.config)
+            factory = (lambda _cfg: self._chat_factory()) if self._chat_factory else None
+            self._chat_store = ChatSessionStore(self.config, session_factory=factory)
+        return self._chat_store
 
     def _chat(self, message: BotMessage, question: str, progress, perspective: str | None = None) -> str:
-        session = self._session(message.session_key)
+        from src.services.chat_sessions import ChatStateConflict
+
         notified: list[str] = []
 
         def notify_once(text: str) -> None:  # 聊天软件里只提示一次「正在查询」，避免刷屏
@@ -367,14 +348,24 @@ class CommandRouter:
                 notified.append(text)
                 progress(text + "…")
 
-        with session.lock:  # 同一会话的问题排队回答，保证上下文顺序
-            if perspective:
-                turn = session.chat.ask(question, perspective, progress=notify_once)
-            else:
-                turn = session.chat.ask(question, progress=notify_once)
-        if turn.error:
-            return turn.error
-        return turn.answer
+        store = self.chat_store
+        # 普通问题按「综合」回答，「策略 名称 问题」按指定策略，与原来每条消息的视角一致。
+        perspective = perspective or "综合"
+        for attempt in range(2):
+            session_id = store.session_for_source(message.platform, message.session_key, self.idle_seconds)
+            try:
+                turn = store.ask(session_id, question, perspective, progress=notify_once)
+                break
+            except KeyError:
+                if attempt:  # 会话刚在 Web 里被删除：新建一个再问一次
+                    raise
+            except ChatStateConflict:
+                if attempt:  # 准备期间 Web 或另一个进程先接受了问题：按最新状态重新准备一次
+                    return "会话刚在其他窗口更新，请再发一次问题。"
+        answer, error = turn.get("answer") or "", turn.get("error") or ""
+        if error and answer:
+            return f"{answer}\n\n（{error}）"
+        return error or answer or "没有回答"
 
 
 def _num(value: Any, digits: int = 2) -> str:

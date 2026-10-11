@@ -10,6 +10,7 @@ import pytest
 from src.bot.models import BotMessage
 from src.bot.router import HELP_TEXT, CommandRouter
 from src.services import strategy_skills, watchlist as watchlist_module
+from tests.test_bot import chat_db  # noqa: F401
 
 STOCKS = {
     "茅台": ("600519", "贵州茅台"), "600519": ("600519", "贵州茅台"),
@@ -44,6 +45,7 @@ class Chat:
 
     def __init__(self):
         self.calls = []
+        self.turns = []
         Chat.instances.append(self)
 
     def ask(self, question, perspective="综合", progress=None):
@@ -67,11 +69,11 @@ def custom_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def setup(monkeypatch, custom_dir):
+def setup(monkeypatch, custom_dir, chat_db):
     monkeypatch.setattr(watchlist_module.WatchlistService, "resolve", lambda self, text: STOCKS.get(text))
     Chat.instances = []
     pipe = Pipe()
-    router = CommandRouter({"database": {"sqlite_path": ":memory:"}}, pipeline=pipe, chat_factory=Chat)
+    router = CommandRouter({"database": {"sqlite_path": chat_db}}, pipeline=pipe, chat_factory=Chat)
     return router, pipe
 
 
@@ -237,10 +239,10 @@ def test_history_unparseable_goes_to_chat(setup):
 
 # ---------- 权限 ----------
 
-def test_allowed_users_still_enforced(monkeypatch, custom_dir):
+def test_allowed_users_still_enforced(monkeypatch, custom_dir, chat_db):
     monkeypatch.setattr(watchlist_module.WatchlistService, "resolve", lambda self, text: STOCKS.get(text))
     pipe = Pipe()
-    router = CommandRouter({"database": {"sqlite_path": ":memory:"}, "bot": {"allowed_users": ["u1"]}},
+    router = CommandRouter({"database": {"sqlite_path": chat_db}, "bot": {"allowed_users": ["u1"]}},
                            pipeline=pipe, chat_factory=Chat)
     for text in ("策略龙回头 茅台", "批量 茅台", "历史 茅台", "策略"):
         assert "没有使用权限" in router.handle(msg(text, user="intruder"))
