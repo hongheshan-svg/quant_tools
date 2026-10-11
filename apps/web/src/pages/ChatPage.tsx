@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ApiError } from '@/api/client'
 import { api } from '@/api/endpoints'
-import type { ChatSession, ChatSkill, ChatStage, ChatTurn } from '@/api/types'
+import type { ChatActiveStock, ChatContext, ChatSession, ChatSessionState, ChatSkill, ChatStage, ChatTurn } from '@/api/types'
 import { ChatStages } from '@/components/ChatStages'
 import { Markdown } from '@/components/Markdown'
 import { Button, Card, PageHeader, Select, Spinner, Textarea, Input } from '@/components/ui'
@@ -23,6 +23,10 @@ interface Live {
 }
 
 const EXAMPLES = ['中远海控现在能买吗？止损放哪？', '今天的主线是什么，龙头是谁？', '我的持仓风险大吗？', '用龙回头的标准看看招商轮船']
+const SOURCE_LABELS: Record<string, string> = { dingtalk: '钉钉', feishu: '飞书', discord: 'Discord' }
+const CONFLICT = '会话已在其他窗口或机器人中更新，请刷新后重试'
+
+const activeLabel = (stock: ChatActiveStock) => (stock.name ? `${stock.name}（${stock.code}）` : stock.code)
 
 function TurnView({ turn, onChoose }: { turn: ChatTurn; onChoose: (code: string) => void }) {
   const t = useT()
@@ -35,7 +39,7 @@ function TurnView({ turn, onChoose }: { turn: ChatTurn; onChoose: (code: string)
         {labels.length > 0 && <> ｜ {t('查询：{list}', { list: labels.join('、') })}</>}
       </div>
       <div className="rounded-lg border border-line bg-panel-2 px-3 py-2">
-        {turn.answer ? <Markdown text={turn.answer} /> : <p className="text-sm text-danger">{t(turn.error || '没有回答')}</p>}
+        {turn.answer ? <Markdown text={turn.answer} /> : turn.status === 'running' ? <p className="text-sm text-muted">{t('回答中…')}</p> : <p className="text-sm text-danger">{t(turn.error || '没有回答')}</p>}
         {turn.error && turn.answer && <p role="status" className="mt-2 text-sm text-danger">{t(turn.error)}</p>}
       </div>
       {!!turn.intent_state?.pending?.candidates?.length && <div className="flex gap-2">{turn.intent_state.pending.candidates.map((candidate) => <Button key={candidate.code} onClick={() => onChoose(candidate.code)}>{candidate.name} ({candidate.code})</Button>)}</div>}
@@ -68,10 +72,15 @@ export function ChatPage() {
   const [question, setQuestion] = useState('')
   const [stockCode, setStockCode] = useState(params.get('code') ?? '')
   const [extraSkills, setExtraSkills] = useState<string[]>([])
+  // 服务端确认的主讨论对象；旧接口没有该字段时显示「未确认」，不从问题文本推测
+  const [active, setActive] = useState<ChatActiveStock | null>(null)
+  const versionRef = useRef<number | undefined>(undefined) // 已知的会话状态版本，随提问发送，过期时服务端返回冲突
+  const skillsDirty = useRef(false) // 用户改过策略选择、还没被服务端接受：只有这时才发送 skills
+  const sendSeq = useRef(0) // 每次发送加 1：发送之后才返回的旧会话详情不覆盖本地新状态
   const [pending, setPending] = useState('')
   const [live, setLive] = useState<Live | null>(null)
   const abortRef = useRef<AbortController | null>(null)
-  const ask = useTask<ChatTurn>()
+  const ask = useTask<ChatTurn & ChatSessionState>()
   const groups = groupSkills(skills.data ?? [])
   const current = (skills.data ?? []).find((s) => s.display_name === perspective)
   const bottom = useRef<HTMLDivElement>(null)
@@ -80,20 +89,45 @@ export function ChatPage() {
   useEffect(() => {
     if (!sessionId) {
       setSession(null)
+      setActive(null)
+      versionRef.current = undefined
       return
     }
     if (createdRef.current === sessionId) {
       createdRef.current = ''
       return
     }
+    let stale = false
+    const seq = sendSeq.current
     api.chatSession(sessionId).then((s) => {
+      // 已切换到别的会话，或这期间已发出新问题：迟到的详情不覆盖当前会话和进行中的回答
+      if (stale || seq !== sendSeq.current) return
       setSession(s)
       setPerspective(s.perspective || '综合')
       const last = s.turns.at(-1)
       setStockCode(last?.stock_context?.code ?? '')
-      setExtraSkills(last?.skills ?? [])
-    }).catch(() => navigate('/chat'))
+      setExtraSkills(s.session_state?.selected_skill_ids ?? last?.skills ?? [])
+      skillsDirty.current = false
+      setActive(s.active_stock_context ?? null)
+      versionRef.current = s.session_state_version
+    }).catch(() => {
+      if (!stale) navigate('/chat')
+    })
+    return () => {
+      stale = true
+    }
   }, [sessionId, navigate])
+
+  // 以服务端为准刷新会话（冲突或已接受后连接中断）；保留输入框和未提交的策略选择
+  const refresh = async (sid: string) => {
+    const s = await api.chatSession(sid).catch(() => null)
+    if (!s) return
+    setSession(s)
+    setActive(s.active_stock_context ?? null)
+    versionRef.current = s.session_state_version
+    if (!skillsDirty.current) setExtraSkills(s.session_state?.selected_skill_ids ?? [])
+    void sessions.reload()
+  }
 
   // 新版 Chromium 的 scrollIntoView 返回 Promise，不能直接作为 effect 的返回值（React 会把它当清理函数调用而报错）
   useEffect(() => {
@@ -103,13 +137,20 @@ export function ChatPage() {
   const send = async (text = question) => {
     const q = text.trim()
     if (!q || ask.running || pending) return
-    const context = { stock_context: stockCode.trim() ? { code: stockCode.trim() } : undefined, skills: extraSkills }
+    sendSeq.current += 1
     let current = session
     if (!current) {
       current = await api.createChat(perspective)
       createdRef.current = current.id
+      versionRef.current = current.session_state_version
       setSession(current)
       navigate(`/chat/${current.id}`, { replace: true })
+    }
+    const context: ChatContext = {
+      stock_context: stockCode.trim() ? { code: stockCode.trim() } : undefined,
+      // 没改过策略选择时不发送，服务端沿用会话已保存的选择
+      ...(skillsDirty.current ? { skills: extraSkills } : {}),
+      ...(versionRef.current !== undefined ? { state_version: versionRef.current } : {}),
     }
     setQuestion('')
     setPending(q)
@@ -119,6 +160,8 @@ export function ChatPage() {
     const state: Live = { status: t('思考中'), tools: [], answer: '', stages: [] }
     setLive({ ...state })
     let received = false
+    let accepted = false
+    let conflict = false
     let doneTurn: ChatTurn | null = null
     let streamError = ''
     try {
@@ -131,7 +174,16 @@ export function ChatPage() {
           else if (ev.type === 'tool') state.tools = [...state.tools, ev.label]
           else if (ev.type === 'intent') state.status = t(ev.requires_confirmation ? '等待证券确认' : '按任务顺序执行')
           else if (ev.type === 'delta') state.answer += ev.text
-          else if (ev.type === 'error') streamError = ev.message
+          else if (ev.type === 'accepted') {
+            // 问题、主对象和策略选择已保存：之后的失败或中断不撤销
+            accepted = true
+            versionRef.current = ev.session_state_version
+            setActive(ev.active_stock_context ?? null)
+            skillsDirty.current = false
+          } else if (ev.type === 'error') {
+            streamError = ev.message
+            conflict ||= ev.error_code === 'session_state_conflict'
+          }
           else if (ev.type === 'done') doneTurn = { ...ev.turn, tools: ev.turn.tools.map((x) => ({ ...x, result: '' })) }
           else if (ev.type !== 'tool_result') state.stages = [...state.stages, { type: 'stage', stage_id: `unknown:${state.stages.length}`, name: `未知事件 ${(ev as { type: string }).type}`, status: 'unknown', elapsed_ms: 0, reason: JSON.stringify(ev).slice(0, 300) }]
           setLive({ ...state })
@@ -146,9 +198,15 @@ export function ChatPage() {
           toast.error(turn.error)
           setQuestion(q)
         }
+      } else if (conflict) {
+        toast.error(t(CONFLICT))
+        setQuestion(q)
+        void refresh(sid)
       } else if (streamError) {
         toast.error(streamError)
         setQuestion(q)
+      } else if (accepted) {
+        void refresh(sid)
       }
     } catch (e) {
       if (controller.signal.aborted) {
@@ -162,13 +220,29 @@ export function ChatPage() {
         void sessions.reload()
       } else if (e instanceof ApiError && e.status === 401) {
         setQuestion(q)
+      } else if (e instanceof ApiError && e.status === 409) {
+        // 会话已在其他窗口或机器人中更新：不自动重发，刷新后由用户决定
+        toast.error(t(CONFLICT))
+        setQuestion(q)
+        void refresh(sid)
+      } else if (accepted) {
+        // 服务端已接受这个问题：不再改用后台任务重发，以服务端保存的结果为准
+        toast.error(e instanceof Error ? e.message : t('连接中断'))
+        void refresh(sid)
       } else if (!received || (e instanceof ApiError && e.status === 404)) {
         // 流式不可用：回退到后台任务轮询
         try {
-          const turn = await ask.run(() => api.ask(sid, q, perspective, context))
-          setSession((s) => (s ? { ...s, turns: [...s.turns, turn] } : s))
+          const result = await ask.run(() => api.ask(sid, q, perspective, context))
+          setSession((s) => (s ? { ...s, turns: [...s.turns, result] } : s))
+          setActive(result.active_stock_context ?? null)
+          versionRef.current = result.session_state_version
+          skillsDirty.current = false
           void sessions.reload()
-        } catch {
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 409) {
+            toast.error(t(CONFLICT))
+            void refresh(sid)
+          }
           setQuestion(q)
         }
       } else {
@@ -204,6 +278,7 @@ export function ChatPage() {
             {(sessions.data ?? []).map((s) => (
               <li key={s.id} className={cn('group flex items-center justify-between rounded-md px-2 py-1.5 text-sm', s.id === sessionId ? 'bg-panel-2 text-accent' : 'hover:bg-panel-2')}>
                 <button type="button" className="min-w-0 flex-1 truncate text-left" onClick={() => navigate(`/chat/${s.id}`)} title={s.title}>
+                  {s.source && s.source !== 'web' && <span className="mr-1 rounded border border-line px-1 text-[10px] text-muted">{t(SOURCE_LABELS[s.source] ?? s.source)}</span>}
                   {s.title}
                   <div className="text-xs text-muted">{s.updated_at} · {t('{n} 问', { n: s.turns })}</div>
                 </button>
@@ -257,14 +332,17 @@ export function ChatPage() {
             )}
             <div ref={bottom} />
           </div>
-          <details className="mt-3 rounded-md border border-line p-2 text-sm">
+          <p className="mt-3 text-xs text-muted" data-testid="chat-active-stock">
+            {t('当前讨论：{name}', { name: active ? activeLabel(active) : t('未确认') })}
+          </p>
+          <details className="mt-2 rounded-md border border-line p-2 text-sm">
             <summary className="cursor-pointer">{t('限定股票与补充策略')}</summary>
             <div className="mt-2 space-y-2">
               <Input value={stockCode} onChange={(event) => setStockCode(event.target.value)} placeholder={t('股票代码（可选，例如 600519）')} aria-label={t('限定股票代码')} />
               <p className="text-xs text-muted">{t('填写后，个股工具仅查询该标的。可额外选择最多四个分析策略。')}</p>
               <div className="flex flex-wrap gap-2">
                 {(skills.data ?? []).filter((skill) => skill.display_name !== perspective).map((skill) => <label key={skill.name} className="inline-flex items-center gap-1">
-                  <input type="checkbox" checked={extraSkills.includes(skill.name)} disabled={!!pending || (!extraSkills.includes(skill.name) && extraSkills.length >= 4)} onChange={(event) => setExtraSkills((items) => event.target.checked ? [...items, skill.name] : items.filter((item) => item !== skill.name))} />{skill.display_name}
+                  <input type="checkbox" checked={extraSkills.includes(skill.name)} disabled={!!pending || (!extraSkills.includes(skill.name) && extraSkills.length >= 4)} onChange={(event) => { skillsDirty.current = true; setExtraSkills((items) => event.target.checked ? [...items, skill.name] : items.filter((item) => item !== skill.name)) }} />{skill.display_name}
                 </label>)}
               </div>
             </div>

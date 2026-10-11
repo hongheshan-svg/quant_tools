@@ -150,7 +150,7 @@ export const api = {
   chatSession: (id: string) => http.get<T.ChatSession>(`/chat/sessions/${id}`),
   deleteChat: (id: string) => http.del<{ ok: boolean }>(`/chat/sessions/${id}`),
   ask: (id: string, question: string, perspective?: string, context?: T.ChatContext) =>
-    http.post<T.Task<T.ChatTurn>>(`/chat/sessions/${id}/ask`, { question, perspective, ...context }),
+    http.post<T.Task<T.ChatTurn & T.ChatSessionState>>(`/chat/sessions/${id}/ask`, { question, perspective, ...context }),
   askStream: (
     id: string,
     question: string,

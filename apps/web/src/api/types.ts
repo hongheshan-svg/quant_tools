@@ -846,7 +846,26 @@ export interface ChatSkill {
 
 export interface ChatContext {
   stock_context?: { code: string }
+  // 省略时沿用会话已保存的策略选择；[] 显式清空
   skills?: string[]
+  // 客户端已知的会话状态版本，过期时服务端返回 409 / session_state_conflict
+  state_version?: number
+}
+
+// 服务端确认的主讨论对象
+export interface ChatActiveStock {
+  code: string
+  name?: string
+  kind?: 'stock' | 'etf' | 'index'
+  market?: string
+  source?: string
+  confirmed_at?: string
+}
+
+export interface ChatSessionState {
+  active_stock_context?: ChatActiveStock | null
+  session_state_version?: number
+  session_state?: { selected_skill_ids: string[] | null }
 }
 
 export interface ChatTurn {
@@ -862,6 +881,8 @@ export interface ChatTurn {
   stage_events?: ChatStage[]
   intent_plan?: ChatIntent[]
   intent_state?: { pending?: { candidates: { code: string; name: string }[] } | null }
+  // running 回答中（其他窗口或机器人），interrupted 服务中断
+  status?: 'running' | 'done' | 'interrupted'
 }
 
 export interface ChatStage {
@@ -889,7 +910,8 @@ export type ChatStreamEvent =
   | { type: 'tool'; name: string; label: string; args: Dict }
   | { type: 'tool_result'; name: string; label: string; summary: string }
   | { type: 'delta'; text: string }
-  | { type: 'error'; message: string }
+  | ({ type: 'accepted'; session_id: string; message_id: string } & ChatSessionState)
+  | { type: 'error'; message: string; error_code?: string }
   | { type: 'done'; turn: Omit<ChatTurn, 'tools'> & { tools: { name: string; label: string; args: Dict }[] } }
 
 export interface ChatSessionSummary {
@@ -898,14 +920,17 @@ export interface ChatSessionSummary {
   perspective: string
   turns: number
   updated_at: string
+  // web 或机器人平台（dingtalk / feishu / discord）
+  source?: string
 }
 
-export interface ChatSession {
+export interface ChatSession extends ChatSessionState {
   id: string
   title: string
   perspective: string
   turns: ChatTurn[]
   updated_at: string
+  source?: string
 }
 
 // ---------- 自选股 ----------
