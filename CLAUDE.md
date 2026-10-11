@@ -129,7 +129,11 @@ cd apps/desktop && npm test                                 # node --test，不�
   - **其他设置段：** `GET/PUT /settings/report`（AI 输出语言）、`/settings/watchlist`（仪表盘设置）、`/settings/diagnosis`（决策风格、多智能体模式、股东数据等，body 外层有 `diagnosis` 键）、`/settings/templates` 系列（报告模板，见下文）。
   - **配置校验：** `GET /system/config-check`（`src/services/config_check.py` 的 `check_config()`），配置导入的返回也附带校验结果（只提示，不拦截）。
   - **配置向导：** `GET /system/setup`（`src/services/setup_status.py`）检查大模型、数据、交易日历、推送、自选股、浏览器，以及对外监听时是否开启登录；只查本地、不联网、出错视为未完成。首页据此提示，`/setup` 为向导页，设置页支持 `?tab=`，帮助内容在 `utils/settingsHelp.ts`（中英文两份）。
-- AI 问股的多会话存在 `chat_session` 表（`src/services/chat_sessions.py` 的 `ChatSessionStore`），每个会话一把锁。
+- AI 问股的多会话存在 `chat_session` 表（`src/services/chat_sessions.py` 的 `ChatSessionStore`），Web 和聊天机器人共用，每个会话一把锁（整轮问答期间持有）。
+  - **会话状态**（对齐 DSA 问股会话状态）：服务端保存主讨论对象 `active_stock_context`（代码、名称、类型、确认来源和时间）、状态版本 `session_state_version`（每接受一个问题加 1）、补充策略选择 `session_state.selected_skill_ids`（`None` 未选择、`[]` 显式清空、列表为已保存的选择）。会话详情、`accepted` 事件和非流式结果都带这三个字段。
+  - **先接受后执行：** `_accept()` 先算意图和主对象，再按版本比较写入这一轮（`status="running"`）、主对象和策略选择（另一个进程在准备期间已接受问题时冲突）；之后的失败、取消、断开不撤销，最终回答按 `message_id` 写回同一轮，会话被删除后迟到的回答丢弃。读取时本进程没在回答、最后一轮仍是 running 的显示为 interrupted（只改展示不写回）。
+  - **冲突：** 请求带 `state_version` 且与服务端不一致时，接口返回 409，流式在接受前只发一个 `error`（`error_code=session_state_conflict`，没有 accepted 和 done），不写入任何内容。前端保留输入、刷新会话，不自动重发；收到 accepted 后流断开不再回退到 `/ask` 重发，而是刷新会话。
+  - **策略选择三态：** `AskBody.skills` 省略/null 沿用已保存的选择，`[]` 显式清空。前端只在用户改过勾选时发送 `skills`。
 
 ### Web 前端（`apps/web`）
 
@@ -152,7 +156,7 @@ cd apps/desktop && npm test                                 # node --test，不�
 
 ### 聊天机器人（`src/bot/`）
 
-- `router.CommandRouter`：与平台无关的命令分发，返回 Markdown。不带参数的命令（大盘、持仓…）要整句匹配，带参数的（诊断、自选、策略、批量、历史）按前缀匹配，参数无法解析为策略或股票时整句交给 AI 问股（按 `平台:会话:用户` 保存 `StockChatSession`，闲置 30 分钟后重建）。`bot.allowed_users` 非空时只允许名单内的用户。测试通过 `pipeline=`、`chat_factory=` 注入假对象。
+- `router.CommandRouter`：与平台无关的命令分发，返回 Markdown。不带参数的命令（大盘、持仓…）要整句匹配，带参数的（诊断、自选、策略、批量、历史）按前缀匹配，参数无法解析为策略或股票时整句交给 AI 问股：走 `ChatSessionStore`，与 Web 共用 `chat_session` 表（`source` 为平台，`source_key` 为 `平台:会话:用户`）。最近 30 分钟内有活动（包括在 Web 里继续追问）就沿用原会话，否则新建；「清空」清掉 `source_key`。机器人会话会出现在 Web 会话列表里，两边共用主讨论对象和状态版本。测试要给 `CommandRouter` 配临时库（`tests/test_bot.py` 的 `chat_db` fixture）。`bot.allowed_users` 非空时只允许名单内的用户。测试通过 `pipeline=`、`chat_factory=` 注入假对象。
 - **策略技能系统**（`src/services/strategy_skills.py`）：19 个内置分析策略（YAML 格式），支持自定义覆盖（`config/strategies/*.yaml`），按修改时间动态缓存。机器人「策略」命令、Web 问股页、API `/chat/skills` 都可获取和使用策略；AI 按选定策略的判断标准回答问题。
 - **机器人新命令（从 `HELP_TEXT` 的实际格式）：**
   - `诊断 茅台` / `分析 茅台` / `/analyze 茅台`：个股 AI 诊断。
@@ -266,9 +270,16 @@ cd apps/desktop && npm test                                 # node --test，不�
   - **提醒与问股：** 盘中提醒和问股的 `watchlist` 工具都会读取自选股。
 - AI 问股 `StockChatSession`（`src/services/stock_chat.py`）：
   - **协议：** 每个问题最多 3 轮工具调用。LLM 用 JSON 返回 `{"tool_calls": [...]}` 或 `{"answer": ...}`，不依赖各家模型的 function calling。
-  - **工具：** 工具在 `src/services/chat_tools.py`，全部只读，不能下单；股票参数可以是名称或拼音，会先经 `StockSearch` 解析。新增 `web_search` 工具从博查、Tavily、SerpAPI、Brave、SearXNG 联网搜索资讯（需配置 `search.enabled` 和各源 API Key；参数带 `code` 且是个股时按资讯相关度过滤并标注类别）；`shareholders` 工具查股东数据。
+  - **工具：** 工具在 `src/services/chat_tools.py`，全部只读，不能下单；股票参数可以是名称或拼音，会先经 `StockSearch` 解析。`_call_tool()` 拒绝把 MACD、PE 等术语当作代码的调用（`stock_code.is_ticker_jargon()`）。限定范围时，`web_search` 的搜索词点名其他证券（代码、名称或简称）会被拒绝；同码的个股不能顶替指数。新增 `web_search` 工具从博查、Tavily、SerpAPI、Brave、SearXNG 联网搜索资讯（需配置 `search.enabled` 和各源 API Key；参数带 `code` 且是个股时按资讯相关度过滤并标注类别）；`shareholders` 工具查股东数据。
   - **策略选择：** `perspective` 参数可传策略名称、中文名或别名；`PERSPECTIVES` 是模块导入时的策略快照。
-  - **流式输出**（`POST /chat/sessions/{id}/ask/stream`）：SSE，每个事件一行 `data: JSON`，type 为 status、tool、tool_result、delta、error、done，done 总是最后一个；`StockChatSession.ask_stream()` 边接收边解析 JSON 里的 answer 字符串产出 delta；`POST /chat/sessions/{id}/cancel` 取消；前端可停止，流式失败回退任务轮询。模型没有 `chat_stream` 时退化为一次性回答。
+  - **Web 意图与主讨论对象**（`src/services/web_intent.py` 的 `resolve()`，纯本地）：按分句拆成有序任务，每个任务锁定证券范围。主对象规则对齐 DSA：
+    - 「改看/换成/切换到 X」只确认目的地；目的地有多个备选时先确认。
+    - 否定（不要改看 X）里的操作不执行。条件（如果…就改看）和疑问（是否改看）里的切换只澄清、不执行。
+    - 比较和一句多标的不改主对象；本轮只涉及一只证券时确认为主对象。
+    - 没有标的的追问（分析风险、看看近期走势、风险呢、它的行情）沿用主对象；没有主对象时列出最近的证券请用户选，不按「风险」去搜索。
+    - 没有标的的后续分句并入前一个个股任务。
+    - 自由文本里的单字母和 `TICKER_JARGON` 缩写（A股、K线、MACD、PE、CPI…）不当美股代码，显式 `US:MA`、`MA.US` 仍可用。
+  - **流式输出**（`POST /chat/sessions/{id}/ask/stream`）：SSE，每个事件一行 `data: JSON`，type 为 accepted、intent、stage、status、tool、tool_result、delta、error、done。accepted 最先发出，done 总是最后一个（唯一例外是接受前的版本冲突，只发 error）；`StockChatSession.ask_stream()` 边接收边解析 JSON 里的 answer 字符串产出 delta；`POST /chat/sessions/{id}/cancel` 取消；前端可停止，流式失败回退任务轮询。模型没有 `chat_stream` 时退化为一次性回答。
   - **测试：** 通过 `llm=`、`tools=` 注入假对象。
 
 ### 评分与自学习

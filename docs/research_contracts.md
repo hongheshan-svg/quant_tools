@@ -30,7 +30,23 @@
 {"question":"复核趋势与风险","stock_context":{"code":"600519.SH"},"skills":["volume_breakout"]}
 ```
 
-请求保存为 canonical code；补充 skills 最多四个，未知策略返回 422。限定标的时个股工具先核验 code/query/name，越界查询不执行；market/watchlist/resolve_stock 仍提供辅助背景。web_search 对显式六位代码做范围检查，不能声称对任意自然语言主体完成语义强约束。同轮相同工具及规范化参数的成功结果复用，失败不缓存。
+请求保存为 canonical code；补充 skills 最多四个，未知策略返回 422。`skills` 为三态：省略或 null 沿用会话已保存的选择，`[]` 显式清空，列表保存为新选择。可选 `state_version` 是客户端已知的会话状态版本，过期时 `/ask` 和 `/ask/stream` 都返回 409。
+
+限定标的时个股工具先核验 code/query/name，越界查询不执行；market/watchlist/resolve_stock 仍提供辅助背景。web_search 检查搜索词里的六位代码和能唯一确定的证券名称或简称，点名范围外证券的搜索不执行；同名多义的名称不判定。MACD、PE、TTM 等缩写作为证券参数时直接拒绝，不按美股代码查询。同轮相同工具及规范化参数的成功结果复用，失败不缓存。
+
+### 会话状态（对齐 DSA c3349de4）
+
+`GET /chat/sessions/{id}`、流式 `accepted` 事件、`/ask` 任务结果共用以下字段：
+
+```json
+{"active_stock_context":{"code":"600519","name":"贵州茅台","kind":"stock","source":"message","confirmed_at":"2026-10-11 10:00:00"},
+ "session_state_version":3,"session_state":{"selected_skill_ids":null}}
+```
+
+- **主讨论对象：** 由 `web_intent.resolve()` 确认。「改看/换成/切换到」只确认目的地。否定里的操作不执行；条件、疑问里的切换只澄清。比较和一句多标的不改主对象。没有标的的普通追问沿用主对象。旧会话没有主对象时，列出最近证券请用户确认，不从历史文本推测。
+- **接受与执行：** 先在一个事务里写入这一轮（status=running）、主对象和策略选择，成功后发出 `accepted`（版本加 1），再执行分析。之后的失败、取消、断开不撤销已接受的状态，最终回答按 `message_id` 写回；会话被删除后迟到的回答丢弃。
+- **冲突：** 接受前的版本冲突只发 `error`（`error_code=session_state_conflict`），不发 `accepted` 和 `done`，不写入任何内容。客户端保留输入并刷新，不自动重发。
+- **机器人：** 机器人与 Web 共用会话表，机器人会话在 Web 列表里标出平台，可以交替追问。
 
 ChatTurn 附 `run_log.trace_id/total_ms/steps`，流的 done 事件保留概览但不重复发送完整工具结果；完整工具结果持久化在会话。取消、客户端关闭与超时保留已产生的文字。context 字符预算默认 12000，本轮问题和范围优先保留。
 
