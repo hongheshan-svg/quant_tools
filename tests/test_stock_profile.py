@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 from src.database.db import get_db_session
 from src.database.models import DecisionSignal, StockDaily, StockDiagnosis, Watchlist
@@ -23,7 +23,8 @@ def test_profile_blocks(env):  # noqa: F811
                                                      "created_at": "2026-09-25 16:40", "one_sentence": "放量突破"}),
                              created_at=datetime(2026, 9, 25, 16, 40)))
         s.add(DecisionSignal(code="600519", name="贵州茅台", action="buy", trade_date="2026-09-25", status="active",
-                             stop_loss=9.0, target_price=12.0, horizon_days=5, expires_on="2026-10-09"))
+                             stop_loss=9.0, target_price=12.0, horizon_days=5,
+                             expires_on=(date.today() + timedelta(days=30)).isoformat()))   # 有效期按运行日期，不随时间过期
         s.add(Watchlist(code="600519", name="贵州茅台"))
     assert RealPortfolioService(config).add_trade("2026-09-24", "600519", "buy", 9.5, 200)["ok"]
     config["alerts"] = {"rules": [{"code": "600519", "type": "price_cross", "direction": "above", "price": 11, "note": "突破提醒"},
