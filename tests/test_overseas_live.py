@@ -96,6 +96,7 @@ def test_futu_quote_context_is_read_only_closes_and_isolates_failed_blocks(monke
         def get_market_snapshot(self, codes): return 0, pd.DataFrame([{'pe_ttm_ratio':25, 'pb_ratio':2}])
         def close(self): calls.append('closed')
     monkeypatch.setitem(sys.modules, 'futu', SimpleNamespace(OpenQuoteContext=QuoteContext, RET_OK=0))
+    futu_evidence.reset_state()
     result = futu_evidence.fetch({}, '00700.HK')
     assert calls[-1] == 'closed' and result['profile']['longName'] == '港股测试公司'
     assert result['financial_report']['currency'] == 'CNY' and result['financial_report']['revenue'] == 1000
@@ -122,3 +123,52 @@ def test_futu_setting_accepts_boolean_only():
     group = next(group for group in metadata() if group['key'] == 'futu')
     assert next(field for field in group['fields'] if field['key'] == 'fundamentals_enabled')['type'] == 'checkbox'
     with pytest.raises(ValueError): merge_settings({}, {'futu':{'fundamentals_enabled':'true'}})
+
+
+class _StatusContext:
+    """模拟 futu 异步连接：status 依次取 statuses，最后一个保持不变。"""
+    def __init__(self, statuses, log):
+        self.statuses, self.log = list(statuses), log
+
+    @property
+    def status(self):
+        return self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]
+
+    def close(self):
+        self.log.append('closed')
+
+
+def _fake_futu(monkeypatch, statuses, log):
+    status = SimpleNamespace(READY='READY')
+    def open_ctx(**kwargs):
+        log.append(kwargs)
+        return _StatusContext(statuses, log)
+    monkeypatch.setitem(sys.modules, 'futu', SimpleNamespace(OpenQuoteContext=open_ctx, RET_OK=0, ContextStatus=status))
+
+
+def test_futu_connect_is_async_and_waits_for_ready(monkeypatch):
+    futu_evidence.reset_state()
+    log = []
+    _fake_futu(monkeypatch, ['CONNECTING', 'CONNECTED', 'READY'], log)
+    monkeypatch.setattr(futu_evidence.time, 'sleep', lambda s: None)
+    context = futu_evidence._connect('127.0.0.1', 11111)
+    assert log == [{'host': '127.0.0.1', 'port': 11111, 'is_async_connect': True}] and context.status == 'READY'
+
+
+def test_futu_connect_times_out_closes_and_cools_down(monkeypatch):
+    futu_evidence.reset_state()
+    log, clock = [], [1000.0]
+    _fake_futu(monkeypatch, ['WAIT_RECONNECT'], log)
+    monkeypatch.setattr(futu_evidence.time, 'monotonic', lambda: clock[0])
+    monkeypatch.setattr(futu_evidence.time, 'sleep', lambda s: clock.__setitem__(0, clock[0] + s))
+    with pytest.raises(TimeoutError):
+        futu_evidence._connect('127.0.0.1', 11111)
+    assert log[-1] == 'closed' and clock[0] - 1000.0 >= futu_evidence.CONNECT_TIMEOUT_SECONDS
+    # 冷却期内不再建连
+    with pytest.raises(ConnectionError):
+        futu_evidence.fetch({}, '00700.HK')
+    assert sum(1 for item in log if isinstance(item, dict)) == 1
+    clock[0] += futu_evidence.CONNECT_COOLDOWN_SECONDS + 1
+    with pytest.raises(TimeoutError):
+        futu_evidence._connect('127.0.0.1', 11111)
+    futu_evidence.reset_state()

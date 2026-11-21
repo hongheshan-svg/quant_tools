@@ -2,8 +2,50 @@
 from copy import deepcopy
 from datetime import datetime, timezone
 import re
+import time
+
+from loguru import logger
 
 from src.services.overseas_evidence import number
+
+# futu-api 的同步 OpenQuoteContext 在 OpenD 没运行时会无限重试，构造函数不返回。
+# 改为异步连接，最多等 5 秒到 READY（协议握手完成，不只是端口通），失败后关闭上下文
+# 停掉 SDK 的后台自动重连，并在 5 分钟内不再尝试连接。
+CONNECT_TIMEOUT_SECONDS = 5.0
+CONNECT_POLL_SECONDS = 0.05
+CONNECT_COOLDOWN_SECONDS = 300.0
+_retry_after = 0.0
+
+
+def reset_state() -> None:
+    """清空连接冷却（测试用）。"""
+    global _retry_after
+    _retry_after = 0.0
+
+
+def _connect(host: str, port: int):
+    """在有限时间内连上 OpenD 并返回行情上下文；失败抛异常并进入冷却。"""
+    global _retry_after
+    if time.monotonic() < _retry_after:
+        raise ConnectionError('Futu OpenD 最近连接失败，冷却期内不重试')
+    import futu
+    context = futu.OpenQuoteContext(host=host, port=port, is_async_connect=True)
+    ready = getattr(getattr(futu, 'ContextStatus', None), 'READY', None)
+    try:
+        deadline = time.monotonic() + CONNECT_TIMEOUT_SECONDS
+        while ready is not None and getattr(context, 'status', ready) != ready:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f'OpenD 未在 {CONNECT_TIMEOUT_SECONDS:g} 秒内就绪（status={context.status}）')
+            time.sleep(CONNECT_POLL_SECONDS)
+        return context
+    except Exception as exc:
+        try:
+            context.close()
+        except Exception:
+            pass
+        _retry_after = time.monotonic() + CONNECT_COOLDOWN_SECONDS
+        logger.warning('Futu 连接 OpenD {}:{} 失败，{} 分钟内跳过: {}', host, port, int(CONNECT_COOLDOWN_SECONDS // 60), exc)
+        raise
 
 
 def fetch(config: dict, code: str) -> dict:
@@ -11,8 +53,8 @@ def fetch(config: dict, code: str) -> dict:
     host = cfg.get('host', '127.0.0.1')
     if host not in ('127.0.0.1', 'localhost', '::1'):
         raise ValueError('Futu OpenD 只允许本机连接')
-    from futu import OpenQuoteContext, RET_OK
-    context = OpenQuoteContext(host=host, port=int(cfg.get('port', 11111)))
+    from futu import RET_OK
+    context = _connect(host, int(cfg.get('port', 11111)))
     symbol = 'HK.' + code.split('.')[0].zfill(5)
     payload, failed = {}, []
     operations = {
