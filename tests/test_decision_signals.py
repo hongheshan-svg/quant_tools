@@ -177,6 +177,19 @@ def test_hit_target(svc, db_path):
     assert svc.get(sid)["status"] == "hit_target"
 
 
+@pytest.mark.parametrize("stop,target", [(9.0, 9.8), (10.0, 12.0), (10.5, None)])
+def test_plan_invalid_at_base_close_skips_stop_and_target(svc, db_path, stop, target):
+    """盘中诊断时现价 9.6，计划目标 9.8；收盘 10.0（基准）已高于目标，次日最高 10.3 不能算「触及目标」。"""
+    days = [d for d in DAYS if d >= "2026-09-21"][:4]
+    _bars(db_path, "600519", [(days[0], 10, 10, 10), (days[1], 10.2, 10.3, 8.5)])
+    sid = _add_signal(db_path, trade_date=days[0], expires_on=days[3], stop_loss=stop, target_price=target)
+    r = svc.evaluate(now=datetime(2026, 9, 23, 16, 0))
+    assert r["hit_target"] == 0 and r["hit_stop"] == 0
+    row = svc.get(sid)
+    assert row["status"] == "active" and "已失效" in row["status_reason"]
+    assert row["ret_1d"] == pytest.approx(2.0, abs=0.01)
+
+
 def test_no_stop_when_stop_empty(svc, db_path):
     days = [d for d in DAYS if d >= "2026-09-21"][:4]
     _bars(db_path, "600519", [(days[0], 10, 10, 10), (days[1], 8, 10, 5)])

@@ -203,7 +203,12 @@ class DecisionSignalService:
             row.max_favorable_pct = _round(-min(min(lows), 0) * 100) if lows else None
         if row.status != "active":
             return ""
-        if direction > 0:
+        # 价格计划写于诊断时，基准是诊断行情日收盘价（盘中诊断为当天收盘）。止损不低于基准或目标不高于基准时，
+        # 计划在基准价已失效：不判止损止盈，否则基准日之前的走势会被算成「触及目标」，只按观察期收益评估。
+        plan_invalid = bool((row.stop_loss and row.stop_loss >= base) or (row.target_price and row.target_price <= base))
+        if direction > 0 and plan_invalid:
+            row.status_reason = f"价格计划相对基准收盘价 {base} 已失效，不判止损止盈，只按观察期收益评估"
+        if direction > 0 and not plan_invalid:
             for bar in window:
                 if row.stop_loss and bar["low"] and bar["low"] <= row.stop_loss:
                     row.status, row.status_reason = "hit_stop", f"{bar['date']} 最低价 {bar['low']} 触及止损 {row.stop_loss}"
