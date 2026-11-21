@@ -9,6 +9,7 @@ import { useApi } from '@/hooks/useApi'
 import { useT } from '@/i18n'
 import { progressText, useTask } from '@/hooks/useTask'
 import { cn } from '@/utils/cn'
+import { toast } from '@/stores/toast'
 import { LLMSettingsForm, NotifierForm } from './SettingsPage'
 
 // 后端返回的步骤说明：固定文案查词典，「服务监听 {host}」按模式翻译，其余原样显示
@@ -71,6 +72,26 @@ export function SetupPage() {
   const t = useT()
   const { data, error, loading, reload } = useApi(api.setupStatus)
   const [current, setCurrent] = useState('')
+  const [doctorText, setDoctorText] = useState('')
+  const [copying, setCopying] = useState(false)
+
+  const copyDoctor = async () => {
+    setCopying(true)
+    try {
+      const report = await api.doctor()
+      try {
+        await navigator.clipboard.writeText(report.text)
+        setDoctorText('')
+        toast.success(t('诊断信息已复制，可直接粘贴到 issue（已脱敏）'))
+      } catch {
+        setDoctorText(report.text)   // 剪贴板不可用（权限、非安全上下文）时显示出来手动复制
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setCopying(false)
+    }
+  }
 
   useEffect(() => {
     if (data && !data.items.some((i) => i.key === current)) {
@@ -84,8 +105,17 @@ export function SetupPage() {
       <PageHeader
         title={t('配置向导')}
         description={t('按步骤完成首次配置；必需项完成后即可使用，可选项可稍后再配')}
-        actions={<Button onClick={() => void reload()}>{t('重新检查')}</Button>}
+        actions={<>
+          <Button loading={copying} onClick={() => void copyDoctor()}>{t('复制诊断信息')}</Button>
+          <Button onClick={() => void reload()}>{t('重新检查')}</Button>
+        </>}
       />
+      {doctorText && (
+        <Card className="mb-3" title={t('诊断信息')}>
+          <p className="mb-2 text-sm text-muted">{t('无法写入剪贴板，请手动复制下面的诊断信息（已脱敏）')}</p>
+          <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all text-xs">{doctorText}</pre>
+        </Card>
+      )}
       {loading && !data && <Spinner text={t('检查中…')} />}
       {error && <ErrorBox message={error} />}
       {data && (

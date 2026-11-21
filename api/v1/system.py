@@ -206,6 +206,15 @@ def config_check(config: dict = Depends(get_config)) -> dict[str, Any]:
     return check_current(config)
 
 
+@router.get("/system/doctor")
+def doctor(config: dict = Depends(get_config)) -> dict[str, Any]:
+    """离线环境诊断：已脱敏，可直接分享；附带纯文本 text。status 为 error 表示有必须处理的问题。"""
+    from src.services.doctor import format_doctor, run_doctor
+
+    report = run_doctor(config)
+    return {**report, "text": format_doctor(report)}
+
+
 @router.get("/system/capabilities")
 def data_capabilities(config: dict = Depends(get_config)) -> list[dict[str, Any]]:
     """各数据集的回退顺序、配置情况与健康状态"""

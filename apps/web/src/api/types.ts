@@ -48,6 +48,15 @@ export interface SetupStatus {
   required_missing: number
 }
 
+/** 离线环境诊断（已脱敏）：text 为可直接粘贴的纯文本报告 */
+export interface DoctorReport {
+  status: 'ok' | 'warn' | 'error'
+  summary: { errors: number; warnings: number }
+  environment: Dict
+  checks: Dict
+  text: string
+}
+
 // ---------- 首页 ----------
 
 export interface MarketOverview {

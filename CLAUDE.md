@@ -30,6 +30,7 @@ python main.py --stocks 600519,000858       # 只诊断指定股票（也可以�
 python main.py --no-notify                  # 运行任务但不推送消息
 python main.py --check-notify               # 检查推送配置后退出（退出码 0 为可用，1 为失败）
 python main.py --check-config               # 校验 settings.yaml（未知键、类型、格式、语义）后退出（有错误时退出码 1）
+python main.py --doctor [--json]            # 离线脱敏环境诊断（src/services/doctor.py，也是 GET /system/doctor 和配置向导页「复制诊断信息」），有错误时退出码 1
 python main.py --debug                      # 打印详细日志
 cd apps/web && npm run dev                  # 前端开发服务器 :5173，/api 代理到 8000（API_TARGET 可改）
 cd apps/desktop && npm run dev              # Electron 开发模式：在空闲端口启动仓库里的 server.py

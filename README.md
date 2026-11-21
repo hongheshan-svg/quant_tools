@@ -129,6 +129,7 @@ cd apps/desktop && npm install && npm run dev
 | `python main.py --no-notify` | 运行任务但不推送消息 |
 | `python main.py --check-notify` | 检查推送配置后退出（退出码 0 为可用，1 为失败） |
 | `python main.py --check-config` | 检查 settings.yaml 的配置项（未知键、类型、取值范围、语义问题等），退出码 0 为通过，1 为失败 |
+| `python main.py --doctor [--json]` | 离线环境诊断：版本与依赖、配置校验、配置向导、大模型、推送、存储，输出已脱敏的报告（可直接贴到 issue），有错误时退出码为 1；Web 配置向导页「复制诊断信息」得到同一份报告 |
 | `python run_full.py` | 基于已采集数据一次性执行：舆情分析 → 题材提取 → 国际因子 → 评分，打印 Top 10 |
 | `python run_score.py` | 只对已有数据评分 |
 | `python run_demo.py` | 演示数据采集与展示 |

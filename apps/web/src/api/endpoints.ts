@@ -50,6 +50,7 @@ export const api = {
   scheduler: () => http.get<T.SchedulerStatus>('/system/scheduler'),
   runJob: (id: string) => http.post<T.Task>(`/system/scheduler/${id}/run`),
   setupStatus: () => http.get<T.SetupStatus>('/system/setup'),
+  doctor: () => http.get<T.DoctorReport>('/system/doctor'),
   usage: (days: number) => http.get<T.UsageSummary>('/usage', { days }),
 
   // 首页与大盘
