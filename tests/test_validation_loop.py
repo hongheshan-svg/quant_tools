@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -97,8 +97,10 @@ def test_screener_applies_latest_backtest_weights(backtest_db):
               "status": "success", "calendar_verified": True, "weights": {"volume_breakout": 0.8, "strong_close": 1.2},
               "strategies": [{"strategy": "volume_breakout", "evaluated": 40, "evaluated_days": 10, "avg_1d": -5},
                              {"strategy": "strong_close", "evaluated": 40, "evaluated_days": 10, "avg_1d": 5}]}
+    # strategy_weights() 只认 30 天内结束的回测，日期要相对今天，否则测试随运行日期失效
+    end = datetime.now().date() - timedelta(days=3)
     with get_db_session(path) as session:
-        session.add(StrategyBacktest(start_date="2026-08-01", end_date="2026-09-18",
+        session.add(StrategyBacktest(start_date=(end - timedelta(days=48)).isoformat(), end_date=end.isoformat(),
                                      result_json=json.dumps(report)))
     result = StrategyScreener(backtest_db).run(TRADE_DATE, save=False)
     pick = next(p for p in result.picks if p.code == "600001")
