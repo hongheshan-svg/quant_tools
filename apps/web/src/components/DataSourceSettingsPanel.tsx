@@ -61,17 +61,17 @@ function SettingsEditor({ initial, onSaved }: { initial: DataSourceSettingsRespo
     </div>
     <Card title={t('供应商与数据质量')}>
       <div className="grid gap-4 md:grid-cols-2">
-        <label className="space-y-1 text-xs text-muted">Tushare Token<Input type="password" autoComplete="new-password" value={value.tushare_token} onChange={(e) => patch('tushare_token', e.target.value)} /></label>
-        <label className="space-y-1 text-xs text-muted">TickFlow API Key<Input type="password" autoComplete="new-password" value={value.tickflow_api_key} onChange={(e) => patch('tickflow_api_key', e.target.value)} /></label>
-        <label className="space-y-1 text-xs text-muted">Miaoxiang API Key<Input type="password" autoComplete="new-password" value={value.miaoxiang_api_key ?? ''} onChange={(e) => patch('miaoxiang_api_key', e.target.value)} /><span>{t('仅补充 A 股个股资金流与筹码，不提供全市场行情或日线。')}</span></label>
-        <label className="space-y-1 text-xs text-muted">{t('Tushare 兼容网关')}<Input placeholder={t('留空使用官方 HTTPS 接口')} value={value.tushare_http_url} onChange={(e) => patch('tushare_http_url', e.target.value)} /></label>
-        <label className="space-y-1 text-xs text-muted">{t('TickFlow 日线复权')}<Select value={value.tickflow_kline_adjust} onChange={(e) => patch('tickflow_kline_adjust', e.target.value)}>
-          {['none', 'forward', 'backward', 'forward_additive', 'backward_additive'].map((v) => <option key={v} value={v}>{t({ none: '不复权', forward: '前复权', backward: '后复权', forward_additive: '前复权（加法）', backward_additive: '后复权（加法）' }[v] || v)}</option>)}
-        </Select></label>
         <label className="space-y-1 text-xs text-muted">{t('供应商超时（秒）')}<Input type="number" min={1} max={60} value={value.request_timeout_seconds} onChange={(e) => patch('request_timeout_seconds', Number(e.target.value))} /></label>
         <label className="space-y-1 text-xs text-muted">{t('数据集回退总预算（秒）')}<Input type="number" min={1} max={600} value={value.stage_timeout_seconds ?? 60} onChange={(e) => patch('stage_timeout_seconds', Number(e.target.value))} /></label>
         <label className="space-y-1 text-xs text-muted">{t('整条采集预算（秒）')}<Input type="number" min={1} max={900} value={value.collect_timeout_seconds ?? 240} onChange={(e) => patch('collect_timeout_seconds', Number(e.target.value))} /></label>
         <label className="space-y-1 text-xs text-muted">{t('全市场最低样本数')}<Input type="number" min={0} max={10000} value={value.minimum_realtime_rows} onChange={(e) => patch('minimum_realtime_rows', Number(e.target.value))} /></label>
+        <label className="space-y-1 text-xs text-muted">Tushare Token<Input type="password" autoComplete="new-password" value={value.tushare_token} onChange={(e) => patch('tushare_token', e.target.value)} /></label>
+        <label className="space-y-1 text-xs text-muted">{t('Tushare 兼容网关')}<Input placeholder={t('留空使用官方 HTTPS 接口')} value={value.tushare_http_url} onChange={(e) => patch('tushare_http_url', e.target.value)} /></label>
+        <label className="space-y-1 text-xs text-muted">TickFlow API Key<Input type="password" autoComplete="new-password" value={value.tickflow_api_key} onChange={(e) => patch('tickflow_api_key', e.target.value)} /></label>
+        <label className="space-y-1 text-xs text-muted">{t('TickFlow 日线复权')}<Select value={value.tickflow_kline_adjust} onChange={(e) => patch('tickflow_kline_adjust', e.target.value)}>
+          {['none', 'forward', 'backward', 'forward_additive', 'backward_additive'].map((v) => <option key={v} value={v}>{t({ none: '不复权', forward: '前复权', backward: '后复权', forward_additive: '前复权（加法）', backward_additive: '后复权（加法）' }[v] || v)}</option>)}
+        </Select></label>
+        <label className="space-y-1 text-xs text-muted">{t('东方财富妙想 API Key')}<Input type="password" autoComplete="new-password" value={value.miaoxiang_api_key ?? ''} onChange={(e) => patch('miaoxiang_api_key', e.target.value)} /><span>{t('仅补充 A 股个股资金流与筹码，不提供全市场行情或日线。')}</span></label>
       </div>
       <p className="mt-3 text-xs text-muted">{t('密钥显示为掩码，原样保存可保留；清空可删除。实时行情需要对应供应商权限，未配置密钥的源自动跳过。')}</p>
       <p className="mt-2 text-xs text-muted">{t('前复权与不复权日线可能来自不同来源，请结合个股页展示的实际口径使用。全市场样本数为 0 时关闭覆盖门槛。')}</p>

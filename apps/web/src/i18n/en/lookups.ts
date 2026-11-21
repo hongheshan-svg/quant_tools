@@ -15,4 +15,5 @@ export default {
   '订阅地址': 'Feed URL',
   '股票代码（可空）': 'Stock code (optional)',
   '行业（可空）': 'Sector (optional)',
+  '东方财富妙想 API Key': 'Eastmoney Miaoxiang API Key',
 }
