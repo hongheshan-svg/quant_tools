@@ -192,7 +192,7 @@ cd apps/desktop && npm test                                 # node --test，不�
 - 个股日线（回补和按需补齐）按 `data_sources.daily_history` 的顺序回退：`daily_history.DAILY_SOURCES` 把配置名映射成（来源标记, 取数函数），默认腾讯 → 新浪 → 东方财富 → baostock → 通达信 → efinance → Tushare。来源标记 `tx`/`daily`/`em` 走原有解析；额外数据源（`src/collectors/extra_sources.py`）统一返回 date、OHLC、volume（股）、amount（元）、turnover（小数）。
   - baostock 用模块级单连接，调用加锁，登录输出被静默；不支持北交所。
   - 通达信按「`data_sources.pytdx_servers` → 上次连上的 → 内置列表 → pytdx 自带列表」尝试服务器（pytdx 自带的大多已失效）；日线不复权，成交量单位是手。
-  - efinance 走东方财富接口，东方财富不可用时它也不可用；Tushare 需要 `data_sources.tushare_token`，日线不复权。
+  - efinance 走东方财富接口，东方财富不可用时它也不可用；Tushare 需要 `data_sources.tushare_token`，日线不复权。Tushare 按接口授权：某接口返回权限不足（40101/40203，或不含限流字样的「权限」文案）时抛 `TusharePermissionError`，按（网关、Token 摘要、接口）冷却 6 小时不再请求（`paid_market.reset_permission_cache()` 清空，测试前后要调用）。
   - **成交量单位统一：** 实时行情腾讯普通板块是手、科创板（688/689）是股；日线由 `normalize_volume_unit()` 按「成交额/(收盘价×成交量)」判断单位并转换为股；`scripts/repair_star_volume.py` 修复已入库的错误数据。
 - **ETF 与指数：** 日线来自腾讯 K 线（`src/collectors/fund_data.py`，不走个股日线回退链），单独存入 `fund_daily`、`fund_info`，不写 `stock_daily`，否则会影响涨跌家数、大盘环境和选股。指数与个股代码会冲突（000001 上证指数与平安银行、000016、000688 等），所以指数的规范代码带交易所前缀（如 `sh000300`），任何地方都不能对指数调用 `bare_code`，统一用 `stock_code.diagnosis_code()`；ETF 用 6 位代码。内置指数在 `fund_registry.INDEXES`；ETF 列表来自新浪，7 天刷新一次，只在 `server.py` 运行定时任务或 `main.py` 常驻时后台刷新。支持搜索、个股页 K 线、AI 诊断（`FundDiagnosisService`，结果字段与个股相同）、问股工具、机器人诊断、加入自选股（决策仪表盘和 `--stocks` 对基金走基金诊断，盘中提醒跳过基金）；不能交易，批量导入、图片导入和实盘记账只识别个股。腾讯 K 线不含成交额，ETF 按成交量×均价估算，指数记 0。
 - **数据源能力总览**（`src/services/data_capabilities.py`，`GET /system/capabilities`）：实时行情、个股日线、涨停池、涨停原因、个股资金流、股东数据、联网搜索、RSS 资讯源八个数据集，按实际回退顺序列出各来源是否已配置和健康状态（ok / failing / open / unknown，读自进程级的 source_health 与熔断器）。
@@ -261,7 +261,7 @@ cd apps/desktop && npm test                                 # node --test，不�
   - **入场与统计：** 次日开盘入场，统计 1/3/5 日收益、次日涨停率、每日等权组合的累计收益和最大回撤。
   - **策略权重：** 样本不少于 30 个的策略按次日平均收益相对全体的差值调整权重。
 - `DiagnosisOutcomeService`（`src/services/diagnosis_outcome.py`）对近 60 天的 AI 诊断做事后验证（只读）：以诊断行情日收盘价为基准统计之后 1/3/5 日涨跌，买入/加仓算看多、减仓/卖出/回避算看空，持有/观望不判方向；同一行情日多次诊断只算最后一次。
-- 自选股：`WatchlistService`（`src/services/watchlist.py`，`watchlist` 表）负责增删和批量导入。批量导入的表格有「代码」列表头时只读取代码列，避免把数量、金额里的 6 位数字当成代码。
+- 自选股：`WatchlistService`（`src/services/watchlist.py`，`watchlist` 表）负责增删和批量导入。批量导入的表格有「代码」列表头时只读取代码列，避免把数量、金额里的 6 位数字当成代码。上传文件（自选股和交割单）一律经 `src/utils/text_decode.py` 的 `decode_upload()` 解码（UTF-32/UTF-16 BOM → utf-8-sig → gbk）；扩展名是 .xls/.xlsx 但内容不是 Excel（`is_real_excel()` 看 PK/OLE 文件头）时按文本读，券商软件常导出这种「假 .xls」。
   - **ETF 和指数：** `resolve(text, include_funds=True)` 也识别 ETF 和指数，表里存规范代码（指数带前缀）；纯 6 位数字优先当个股（000001 是平安银行），加指数要输入带前缀的代码或名称（sh000001、上证指数）。`list()`/`overview()` 每行带 `kind`（stock/etf/index），基金行情取自 `fund_daily`、诊断取自 `FundDiagnosisService`；`contains()`/`remove()` 用 `diagnosis_code`。批量导入、图片导入、实盘记账传 `include_funds=False`。
   - **决策仪表盘：** `WatchlistReportService`（`src/services/watchlist_report.py`）并发诊断每只自选股（`watchlist.workers`），基金走基金诊断，仪表盘里标注「ETF」「指数」。收盘后复用当天收盘后的诊断，盘中复用 30 分钟内的（只复用同语言的）。结果汇总成仪表盘，存入 `watchlist_report` 并推送。
     - `watchlist.timeout_minutes`（0 不限，可为小数）：总时长上限，超时后未完成的记入 failed，`shutdown(wait=False, cancel_futures=True)` 不等卡住的线程，仍保存并推送已完成部分，返回 `timed_out`。
@@ -271,7 +271,7 @@ cd apps/desktop && npm test                                 # node --test，不�
   - **提醒与问股：** 盘中提醒和问股的 `watchlist` 工具都会读取自选股。
 - AI 问股 `StockChatSession`（`src/services/stock_chat.py`）：
   - **协议：** 每个问题最多 3 轮工具调用。LLM 用 JSON 返回 `{"tool_calls": [...]}` 或 `{"answer": ...}`，不依赖各家模型的 function calling。
-  - **工具：** 工具在 `src/services/chat_tools.py`，全部只读，不能下单；股票参数可以是名称或拼音，会先经 `StockSearch` 解析。`_call_tool()` 拒绝把 MACD、PE 等术语当作代码的调用（`stock_code.is_ticker_jargon()`）。限定范围时，`web_search` 的搜索词点名其他证券（代码、名称或简称）会被拒绝；同码的个股不能顶替指数。新增 `web_search` 工具从博查、Tavily、SerpAPI、Brave、SearXNG 联网搜索资讯（需配置 `search.enabled` 和各源 API Key；参数带 `code` 且是个股时按资讯相关度过滤并标注类别）；`shareholders` 工具查股东数据。
+  - **工具：** 工具在 `src/services/chat_tools.py`，全部只读，不能下单；股票参数可以是名称或拼音，会先经 `StockSearch` 解析。`_call_tool()` 拒绝把 MACD、PE 等术语当作代码的调用（`stock_code.is_ticker_jargon()`）。限定范围时，`web_search` 的搜索词点名其他证券（代码、名称或简称）会被拒绝；同码的个股不能顶替指数。新增 `web_search` 工具从博查、Tavily、SerpAPI、Brave、SearXNG 联网搜索资讯（需配置 `search.enabled` 和各源 API Key；参数带 `code` 且是个股时按资讯相关度过滤并标注类别）；`shareholders` 工具查股东数据。工具阶段的完成状态由 `chat_tools.tool_status(result)` 判定（completed/failed/timeout：JSON 结果看 `error`、`success is False`、`status`，文本结果看失败前缀），`tool_result` 事件带 `status`；不要再按结果里有没有「失败」字样去猜。
   - **策略选择：** `perspective` 参数可传策略名称、中文名或别名；`PERSPECTIVES` 是模块导入时的策略快照。
   - **Web 意图与主讨论对象**（`src/services/web_intent.py` 的 `resolve()`，纯本地）：按分句拆成有序任务，每个任务锁定证券范围。主对象规则对齐 DSA：
     - 「改看/换成/切换到 X」只确认目的地；目的地有多个备选时先确认。
@@ -348,7 +348,7 @@ cd apps/desktop && npm test                                 # node --test，不�
   - **测试：** 诊断前会补齐日线，并获取筹码、业绩、个股新闻和公告，这些都会联网。测试要 monkeypatch `fundamentals.fetch_chip_summary`、`EarningsCache.get`、`stock_news.get_stock_news` 和 `daily_history.ensure_daily_history`（参考 `tests/test_stock_diagnosis.py` 的 fixture）。股东数据只在配置 `diagnosis.shareholders` 为真时获取（要测时 monkeypatch `shareholders.fetch_shareholders`）；本地资讯只取近 3 天，测试数据的 `collected_at` 要用当前时间附近。
   - **缓存：** 结果存入 `stock_diagnosis` 表，30 分钟内复用（同语言、同风格）。
   - **多策略会诊**（`src/services/skill_consult.py`，表 `skill_opinion`）：个股诊断时可选择多个策略（`diagnosis.skill_consult`，示例配置 `enabled: true`、`max_skills: 2`；代码缺省关闭）并发咨询各策略给观点后汇总；结果含 `skill_opinions` 和 `skill_consensus`；5 个交易日后评估命中，样本≥20 后按命中率调整权重到 0.8~1.2；决策信号页「策略表现」（`GET /chat/skills/performance`）查看；每次诊断多约 `max_skills` 次模型调用。
-  - **运行记录**（`src/services/run_log.py`，存 `stock_diagnosis.run_log`）：记录各数据步骤的结果与耗时、模型调用（名称与耗时，不含 token）和护栏调整；`build_context(code, run_log=None)` 通过参数传入记录器，不能存在服务实例上（自选股诊断多线程共用一个实例）。诊断历史详情可查看；`GET /stocks/{code}/diagnosis-trend` 提供评分与收盘价趋势。
+  - **运行记录**（`src/services/run_log.py`，存 `stock_diagnosis.run_log`）：记录各数据步骤的结果与耗时、模型调用（名称与耗时，不含 token）和护栏调整；`build_context(code, run_log=None)` 通过参数传入记录器，不能存在服务实例上（自选股诊断多线程共用一个实例）。诊断历史详情可查看；`GET /stocks/{code}/diagnosis-trend` 提供评分与收盘价趋势。运行记录（`ACTIVE_LOG`）、后台任务轨迹（`TRACE_ID`、`EVENT_SINK`）和请求预算（`request_budget.POLICY`）都是 ContextVar，新开线程池提交任务要用 `executor.submit(copy_context().run, fn, ...)`（每次提交各自 `copy_context()`），否则子线程里的模型调用、数据源尝试记不进本次运行。
   - **历史查询：** `DataQueryService.list_diagnoses(code, action, days, limit, offset)` 按股票、操作建议、天数筛选诊断记录；`get_diagnosis(id)` 获取单条；`delete_diagnosis(id)` 删除。诊断历史 Web 页面支持下载 Markdown 或分享图（`/stocks/diagnoses/{id}/markdown`、`/stocks/diagnoses/{id}/image`）。
   - **注入假 LLM：** 测试通过构造函数的 `llm=` 参数注入（`MarketReviewService` 也一样）。
 - `LimitUpPredictor`（`src/services/premarket_predictor.py`）按时段选择提示词，时段为 `premarket`（9:25 前）、`morning`、`noon`、`afternoon`、`aftermarket`（15:00 后）。非交易日一律按 `premarket` 处理。预测写入 `TradeSignal` 时，`signal_date` 存的是目标交易日：交易日盘前和盘中是当天，盘后和非交易日是下一个交易日。
@@ -367,6 +367,7 @@ cd apps/desktop && npm test                                 # node --test，不�
 - `RiskManager` 负责仓位限制、ST/*ST 黑名单和 `config/stock_pool.yaml` 股票池过滤。股票池规则只在 `validate_order_intent()`（下单前校验）里执行；`filter_signals()` 目前没有调用方。黑名单和股票池只对买单生效，卖单（止损止盈离场）不能被拦截。
 - 当 `min_listing_days > 0` 时，每个 `RiskManager` 实例第一次校验股票池会调用 `StockInfoCollector.refresh_if_stale()`：如果 `stock_info` 表超过一天没更新，就联网从沪深北交易所列表采集。涉及股票池的测试要 monkeypatch 掉这一步。
 - 实盘记账 `RealPortfolioService`（`src/services/real_portfolio.py`）只记账，不连券商、不下单。
+  - **数值校验：** `api/v1/trading.py` 的账本请求体继承 `LedgerModel`（`allow_inf_nan=False`），JSON 里的 NaN/Infinity/1e400 返回 422；`add_trade()` 也用 `math.isfinite` 校验。`api/app.py` 自定义了 `RequestValidationError` 处理器，回显的非有限数转成字符串，否则默认处理器序列化 inf 会 500。
   - **多账户：** `real_account` 表记账户（名称唯一），四张实盘表都有 `account` 列，空值即默认账户「默认」（`DEFAULT_ACCOUNT`）。`RealPortfolioService(config, account=None)`：None 时只读方法汇总全部账户（同一代码合并：数量相加、成本加权，每行带 `accounts`），写方法写入默认账户；指定账户时成交重放、资金锚点、止损计划、公司行为都只看该账户。非默认账户的导入去重键加「账户|」前缀（默认账户保持原格式）。`accounts()`、`add_account()`、`rename_account()`（同步四张表）、`delete_account()`（默认账户和有记录的账户不能删）。`real_position_plan` 唯一索引是 (account, code)，旧库由 `db._migrate_real_plan_index()` 迁移。盘中提醒、个股诊断、问股、机器人用全部账户汇总。
   - **成交流水：** 存在 `real_trade` 表，手动录入或导入交割单（`parse_trade_rows()` 按常见列名识别）。导入用 `import_key` 去重：有成交编号时按编号，否则按日期+时间+代码+方向+价格+数量+序号。
   - **公司行为**（`real_corporate_action` 表）：分红（现金到账摊薄成本）、送转股（只增加数量）、红利税补缴（计入成本）。同一天先处理公司行为再处理成交；可按每 10 股方案（`add_corporate_action_by_plan`，按除权日前持仓计算）或按到账金额逐笔录入。交割单导入识别「红利入账」「红股入账」「红利税补缴」行并转换为公司行为记录（`parse_import_rows`，`parse_trade_rows` 三元组签名不变）。Web 页面导入先预览后确认（`POST /real/trades/import?preview=true`）。API 支持 `GET/POST/DELETE /real/actions`。**已知限制：** 公司行为（dividend/tax）暂不进 `PortfolioRiskService` 的 fills 重放。
@@ -390,7 +391,7 @@ cd apps/desktop && npm test                                 # node --test，不�
   - **QUANT_NO_NOTIFY：** 环境变量 `QUANT_NO_NOTIFY` 非空时，`broadcast()` 不执行推送（用于测试或调试）。
 - **渠道列表：** 企业微信、钉钉、飞书、邮件、Telegram、Discord、Slack、PushPlus、Server酱、ntfy、Gotify、Pushover、Bark、自定义 Webhook。
   - **CHANNEL_FIELDS：** 新增的 10 个渠道（Telegram、Discord 等）用 `CHANNEL_FIELDS` 字典描述配置字段（如 bot_token、webhook_url、api_key），Web 设置页通用渲染。密钥字段（`secret` 标记）在 `/settings/notifier` 返回时整体替换为 `******`，保存时掩码原样回传会保留原值。大模型 Key 和联网搜索 Key 显示为 `******` 加后 4 位。旧的企业微信、钉钉、飞书、邮件有专用表单。
-  - 各渠道 `send()` 用 `split_by_bytes()` 按字节上限拆分消息并逐条发送，上限见各模块 `MAX_CONTENT_BYTES`。
+  - 各渠道 `send()` 用 `send_paged()`/`split_by_size()` 按上限拆分消息并逐条发送，上限见各模块 `MAX_CONTENT_BYTES`；口径由 `size` 参数决定，默认 UTF-8 字节，Telegram 用 `utf16_size`（`MAX_CONTENT_UNITS`，4096 按 UTF-16 code unit 计），Bark 用 `go_json_size`（APNs payload 按 Go JSON 转义后的字节计）。Telegram 遇到 429 按 `parameters.retry_after`（最多 60 秒）等待后重试。
   - 飞书签名特殊：用「时间戳\n密钥」作为 HMAC 密钥，对空消息签名。
   - `diagnose()` 检查配置，`test_channel()` 发送测试消息（导入测试文件时要改名，否则 pytest 会把它当成测试）。
 - `DailyReportService.push()` 在没有任何渠道启用时直接返回，不会生成报告，也不会访问网络。
@@ -407,7 +408,7 @@ cd apps/desktop && npm test                                 # node --test，不�
 
 ### 部署与 CI（`docker/`、`.github/workflows/`）
 
-- Docker：多阶段构建（先构建前端），以 UID 1000 的 `quant` 用户运行，默认 `python server.py --host 0.0.0.0`。默认配置放在镜像的 `/app/defaults/config`，`entrypoint.sh` 启动时复制进挂载的 `/app/config`（示例配置覆盖、股票池缺失才复制），并修复挂载目录属主。compose 用环境变量开启 Web 登录，因为容器外的请求不算本机。因为 `COPY src/` 会自然包含 `src/services/skills`，所以 Docker 镜像内置有策略技能。
+- Docker：多阶段构建（先构建前端），以 UID 1000 的 `quant` 用户运行，默认 `python server.py --host 0.0.0.0`。默认配置放在镜像的 `/app/defaults/config`，`entrypoint.sh` 启动时复制进挂载的 `/app/config`（示例配置覆盖、股票池缺失才复制），并修复挂载目录属主。compose 用环境变量开启 Web 登录，因为容器外的请求不算本机。因为 `COPY src/` 会自然包含 `src/services/skills`，所以 Docker 镜像内置有策略技能。ARM64 上 `entrypoint.sh` 在没设置时默认 `OPENBLAS_CORETYPE=ARMV8`：Apple Silicon 上较新内核的 Linux 虚拟机暴露 HWCAP2_SME，OpenBLAS 自动选 SME 内核会 SIGILL。
 - **桌面端自动更新：** 使用 electron-updater，检查 GitHub Release（hongheshan-svg/quant_tools）；启动时检查（可在设置禁用，偏好文件 `desktop-prefs.json`），菜单「帮助 → 检查更新」手动触发；Windows 和 Linux（AppImage）下载后重启安装，macOS 未签名只提示前往下载。发布工作流需上传 `latest*.yml` 和 `*.blockmap`（旧版本发布没有这些文件时检查不到更新）。
 - 工作流：
   - `ci.yml`（后端测试、前端 lint/测试/构建、桌面端测试）：推送 main、PR 时运行，只改文档（`*.md` 等）不运行，同一分支有新提交时取消旧任务；后端测试不安装 PyInstaller。也作为 `release.yml` 的前置（`workflow_call`）。
