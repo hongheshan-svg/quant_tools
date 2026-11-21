@@ -24,6 +24,29 @@ MAX_RESULT_CHARS = 1500
 DEFAULT_BAR_DAYS = 20
 MAX_BAR_DAYS = 60
 STOCK_ONLY_TEXT = "该工具只适用于个股，不支持 ETF 和指数"
+FAILURE_PREFIXES = ("工具执行失败", "工具被拒绝", "没有名为 ")
+FAILED_STATUSES = ("unavailable", "invalid", "error", "failed")
+
+
+def tool_status(result: Any) -> str:
+    """工具调用结果的状态：completed / failed / timeout。
+
+    只认工具自己报告的失败：异常、拒绝、未知工具、只适用于个股，以及结构化结果里的
+    error、success=false、status 为 unavailable/invalid 等。结果正文出现「失败」「拒绝」
+    （新闻标题、公告）或数据为空、不完整都不算失败。
+    """
+    text = str(result or "").strip()
+    failed = text.startswith(FAILURE_PREFIXES) or text == STOCK_ONLY_TEXT
+    if not failed and text.startswith("{"):
+        try:
+            data = json.loads(text)
+        except ValueError:
+            data = None
+        if isinstance(data, dict):
+            failed = bool(data.get("error")) or data.get("success") is False or data.get("status") in FAILED_STATUSES
+    if failed and ("超时" in text or "预算已耗尽" in text or "TimeoutError" in text):
+        return "timeout"
+    return "failed" if failed else "completed"
 KIND_LABELS = {"etf": "ETF", "index": "指数"}
 
 

@@ -20,7 +20,7 @@ from loguru import logger
 
 from src.analyzers.llm_client import NO_MODEL_HINT
 from src.config_loader import load_config
-from src.services.chat_tools import TOOL_LABELS, ChatTools, tools_prompt
+from src.services.chat_tools import TOOL_LABELS, ChatTools, tool_status, tools_prompt
 from src.services.report_language import report_language
 from src.services.strategy_skills import DEFAULT_SKILL, get_skill, load_skills
 from src.services.execution_budget import BudgetExpired, ExecutionBudget
@@ -470,7 +470,7 @@ class StockChatSession:
                         yield started
                 elif not isolated and event["type"] == "tool_result" and current:
                     summary = event.get("summary", "")
-                    status = "timeout" if "超时" in summary else "budget_skipped" if "预算" in summary and "跳过" in summary else "failed" if "失败" in summary or "拒绝" in summary else "completed"
+                    status = event.get("status") or tool_status(summary)
                     done = tracker.finish(current, status, summary if status != 'completed' else None)
                     if done: yield done
                     current = None
@@ -571,7 +571,7 @@ class StockChatSession:
                     with run_log.step(f"工具 {call['name']}"):
                         result = self._call_tool(call["name"], args, turn)
                     turn.tools.append({"name": call["name"], "label": label, "args": args, "result": result, "call_id": call.get("id"), "protocol": (reply or {}).get("protocol", "json")})
-                    yield {"type": "tool_result", "name": call["name"], "label": label, "summary": str(result)[:200]}
+                    yield {"type": "tool_result", "name": call["name"], "label": label, "summary": str(result)[:200], "status": tool_status(result)}
                 if cancelled():
                     turn.error = "已取消"
                     turn.answer = "".join(streamed).strip()

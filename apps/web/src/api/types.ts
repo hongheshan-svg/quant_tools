@@ -908,7 +908,7 @@ export type ChatStreamEvent =
   | { type: 'intent'; tasks: ChatIntent[]; requires_confirmation: boolean; candidates?: { code: string; name: string }[] }
   | { type: 'status'; text: string }
   | { type: 'tool'; name: string; label: string; args: Dict }
-  | { type: 'tool_result'; name: string; label: string; summary: string }
+  | { type: 'tool_result'; name: string; label: string; summary: string; status?: 'completed' | 'failed' | 'timeout' }
   | { type: 'delta'; text: string }
   | ({ type: 'accepted'; session_id: string; message_id: string } & ChatSessionState)
   | { type: 'error'; message: string; error_code?: string }
