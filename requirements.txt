@@ -38,5 +38,5 @@ jsonschema>=4.23
 fxmacrodata-public-client @ https://github.com/fxmacrodata/fxmacrodata-public-client/releases/download/v0.1.0/fxmacrodata_public_client-0.1.0-py3-none-any.whl#sha256=5c60ff217243ff4001f178d4fdd8c3c8ce29001ad1ea0a170ed96606f0dd07c8
 # Linux 旧系统使用 CPython 3.11 + 兼容 glibc 的 SDK；新版 wheel 要求 glibc 2.39。
 longbridge==0.2.74; platform_system == "Linux" and python_version < "3.12"
-longbridge==5.2.0; platform_system != "Linux" or python_version >= "3.12"
+longbridge==5.2.2; platform_system != "Linux" or python_version >= "3.12"
 futu-api==10.8.6808
