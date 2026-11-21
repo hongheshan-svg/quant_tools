@@ -282,3 +282,43 @@ def test_source_probe_does_not_write_quotes(env, monkeypatch):  # noqa: F811
     assert _wait(client, response.json())["result"]["bars"] == 1
     with get_db_session(config["database"]["sqlite_path"]) as session:
         assert session.query(StockDaily).count() == before
+
+
+def _tushare_reply(monkeypatch, msg, code=40203):
+    calls = []
+    monkeypatch.setattr(paid_market.requests, "post", lambda url, **kw: calls.append(kw["json"]["api_name"]) or SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"code": code, "msg": msg}))
+    return calls
+
+
+def test_tushare_permission_denial_cools_down_per_endpoint_and_token(monkeypatch):
+    paid_market.reset_permission_cache()
+    calls = _tushare_reply(monkeypatch, "抱歉，您没有访问该接口的权限，权限的具体详情访问：https://tushare.pro/document/1?doc_id=108。")
+    client = paid_market.TushareHttpClient({"tushare_token": "token-a"})
+    for _ in range(3):
+        with pytest.raises(paid_market.TusharePermissionError):
+            client.query("rt_k")
+    assert calls == ["rt_k"]                      # 冷却期内不再联网
+    # 其他接口、换 Token 都不受影响
+    with pytest.raises(paid_market.TusharePermissionError):
+        client.query("daily")
+    with pytest.raises(paid_market.TusharePermissionError):
+        paid_market.TushareHttpClient({"tushare_token": "token-b"}).query("rt_k")
+    assert calls == ["rt_k", "daily", "rt_k"]
+    # 冷却到期后重新请求
+    now = paid_market.time.monotonic()
+    monkeypatch.setattr(paid_market.time, "monotonic", lambda: now + paid_market.PERMISSION_COOLDOWN_SECONDS + 1)
+    with pytest.raises(paid_market.TusharePermissionError):
+        client.query("rt_k")
+    assert calls[-1] == "rt_k" and len(calls) == 4
+    paid_market.reset_permission_cache()
+
+
+def test_tushare_rate_limit_is_not_a_permission_denial(monkeypatch):
+    paid_market.reset_permission_cache()
+    calls = _tushare_reply(monkeypatch, "抱歉，您每分钟最多访问该接口80次，权限的具体详情访问：https://tushare.pro", code=40203)
+    client = paid_market.TushareHttpClient({"tushare_token": "token-a"})
+    for _ in range(2):
+        with pytest.raises(RuntimeError) as caught:
+            client.query("daily")
+        assert not isinstance(caught.value, paid_market.TusharePermissionError)
+    assert calls == ["daily", "daily"]

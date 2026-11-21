@@ -2,16 +2,51 @@
 
 from __future__ import annotations
 
+import hashlib
+import threading
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
+from loguru import logger
 
 from src.collectors.extra_sources import _daily_frame, data_source_config, tushare_code
 from src.utils.redaction import redact_text
 
 SHANGHAI = ZoneInfo("Asia/Shanghai")
+
+# Tushare 按接口授权（rt_k 实时行情、部分日线要单独开通或积分）。某个接口返回没有权限时，
+# 同一 Token + 地址下这个接口 6 小时内不再请求，直接报错让回退链换下一个来源；换 Token 立即重试。
+PERMISSION_COOLDOWN_SECONDS = 6 * 3600
+# 限流提示（「每分钟最多访问该接口80次，权限的具体详情…」）也含「权限」，要先排除。
+RATE_LIMIT_PATTERNS = ("每分钟最多访问", "每天最多访问", "每小时最多访问", "每秒最多访问", "访问频次", "访问频率",
+                       "调用频次", "调用频率", "请求过于频繁", "超过限制", "too many requests", "rate limit", "quota", "配额")
+PERMISSION_PATTERNS = ("没有访问该接口的权限", "没有接口访问权限", "无接口访问权限", "没有该接口的访问权限", "暂无访问权限",
+                       "无访问权限", "没有访问权限", "权限不足", "没有权限", "积分不足", "所需积分", "请先积累积分",
+                       "您的token不对", "无效的token", "token无效", "token不对", "permission denied",
+                       "insufficient points", "unauthorized api", "invalid token")
+PERMISSION_CODES = frozenset({40101, 40203})
+_denied: dict[tuple[str, str, str], tuple[float, str]] = {}
+_denied_lock = threading.Lock()
+
+
+class TusharePermissionError(RuntimeError):
+    """Tushare 接口没有权限或积分不足：不是网络故障，重试也没用。"""
+
+
+def is_permission_message(message: str, code: int | None = None) -> bool:
+    text = str(message or "").lower()
+    if any(p in text for p in RATE_LIMIT_PATTERNS):
+        return False
+    return code in PERMISSION_CODES or any(p in text for p in PERMISSION_PATTERNS)
+
+
+def reset_permission_cache() -> None:
+    """清空接口权限冷却（测试用）。"""
+    with _denied_lock:
+        _denied.clear()
 
 
 class TushareHttpClient:
@@ -22,15 +57,31 @@ class TushareHttpClient:
         if not self.token:
             raise ValueError("Tushare Token 未配置")
 
+    def _scope(self, api_name: str) -> tuple[str, str, str]:
+        """冷却键：地址、Token 摘要（不存明文）、接口名。"""
+        return self.url.rstrip("/").lower(), hashlib.sha256(self.token.encode("utf-8")).hexdigest()[:16], api_name
+
     def query(self, api_name: str, fields: str = "", **params) -> pd.DataFrame:
+        key = self._scope(api_name)
+        with _denied_lock:
+            expires, reason = _denied.get(key, (0.0, ""))
+        if time.monotonic() < expires:
+            raise TusharePermissionError(f"Tushare 接口 {api_name} 没有权限（{reason}），冷却中暂不请求")
         response = requests.post(self.url, json={"api_name": api_name, "token": self.token, "params": params, "fields": fields},
                                  timeout=self.timeout)
         response.raise_for_status()
         payload = response.json()
         if payload.get("code") != 0:
             # 不把服务端回显的凭据带入诊断、任务或健康记录。
-            message = str(payload.get("msg") or "请求失败").replace(self.token, "[REDACTED]")
-            raise RuntimeError(redact_text(message))
+            message = redact_text(str(payload.get("msg") or "请求失败").replace(self.token, "[REDACTED]"))
+            code = payload.get("code")
+            if is_permission_message(message, code if isinstance(code, int) else None):
+                reason = " ".join(message.split())[:200]
+                with _denied_lock:
+                    _denied[key] = (time.monotonic() + PERMISSION_COOLDOWN_SECONDS, reason)
+                logger.warning("Tushare 接口 {} 没有权限，{} 小时内不再请求: {}", api_name, PERMISSION_COOLDOWN_SECONDS // 3600, reason)
+                raise TusharePermissionError(f"Tushare 接口 {api_name} 没有权限：{reason}")
+            raise RuntimeError(message)
         data = payload.get("data") or {}
         return pd.DataFrame(data.get("items") or [], columns=data.get("fields") or [])
 
