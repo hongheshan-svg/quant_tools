@@ -32,6 +32,30 @@ function collectKeys(): { key: string; file: string }[] {
   return out
 }
 
+// t(表达式)：参数不是字面量（如 t(({ value: '估值' } as Record<string, string>)[key])、t(cond ? '完成' : '进行中')），
+// 其中出现的中文字符串字面量就是可能传给 t() 的 key，同样要有译文。
+const DYNAMIC_CALL = /(?<![\w.$])t\((?!\s*['"`])/g
+const CN_LITERAL = /'((?:[^'\\\n]|\\.)*[一-鿿](?:[^'\\\n]|\\.)*)'/g
+
+function dynamicArgument(code: string, start: number): string {
+  let depth = 1
+  for (let i = start; i < code.length && i < start + 2000; i++) {
+    if (code[i] === '(') depth++
+    else if (code[i] === ')' && --depth === 0) return code.slice(start, i)
+  }
+  return ''
+}
+
+function collectDynamicKeys(): { key: string; file: string }[] {
+  const out: { key: string; file: string }[] = []
+  for (const [file, code] of files) {
+    for (const m of code.matchAll(DYNAMIC_CALL)) {
+      for (const lit of dynamicArgument(code, m.index + m[0].length).matchAll(CN_LITERAL)) out.push({ key: unescape(lit[1]), file })
+    }
+  }
+  return out
+}
+
 describe('i18n coverage', () => {
   it('scans source files', () => {
     expect(files.length).toBeGreaterThan(10)
@@ -48,6 +72,20 @@ describe('i18n coverage', () => {
     }
     const report = [...missing].map(([k, f]) => `${JSON.stringify(k)}  <- ${[...f].join(', ')}`)
     expect(report, `缺少英文翻译 ${report.length} 条：\n${report.join('\n')}`).toEqual([])
+  })
+
+  it('Chinese literals inside dynamic t() arguments have English entries', () => {
+    const keys = collectDynamicKeys()
+    expect(keys.length).toBeGreaterThan(20)
+    const missing = new Map<string, Set<string>>()
+    for (const { key, file } of keys) {
+      if (!(key in EN)) {
+        if (!missing.has(key)) missing.set(key, new Set())
+        missing.get(key)!.add(file.replace('../', 'src/'))
+      }
+    }
+    const report = [...missing].map(([k, f]) => `${JSON.stringify(k)}  <- ${[...f].join(', ')}`)
+    expect(report, `动态 t() 缺少英文翻译 ${report.length} 条：\n${report.join('\n')}`).toEqual([])
   })
 
   it('EN values are non-empty and contain no Chinese', () => {
