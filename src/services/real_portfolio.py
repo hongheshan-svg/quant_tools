@@ -242,6 +242,8 @@ class RealPortfolioService:
         side = {"买入": "buy", "卖出": "sell"}.get(side, side)
         if side not in ("buy", "sell") or price <= 0 or quantity <= 0 or not _date(trade_date):
             return {"ok": False, "error": "请填写正确的日期、方向、价格和数量"}
+        if not all(math.isfinite(float(v)) for v in (price, quantity, fee or 0.0)):
+            return {"ok": False, "error": "价格、数量和费用必须为有限数值"}
         resolved = self._resolve_code(code, name)
         if isinstance(resolved, str):
             return {"ok": False, "error": resolved}

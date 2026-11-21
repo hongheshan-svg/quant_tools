@@ -89,6 +89,19 @@ def create_app(config: dict[str, Any] | None = None, *, pipeline=None, start_sch
     @app.exception_handler(StockCodeError)
     async def stock_code_error(request: Request, error: StockCodeError):
         return JSONResponse({"detail": str(error)}, status_code=400)
+
+    from fastapi.exceptions import RequestValidationError
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, error: RequestValidationError):
+        """与 FastAPI 默认的 422 格式相同；校验错误会回显输入值，inf/NaN 要转成字符串，
+        否则被拒绝的请求在序列化时变成 500。"""
+        import math
+
+        from fastapi.encoders import jsonable_encoder
+
+        detail = jsonable_encoder(error.errors(), custom_encoder={float: lambda v: v if math.isfinite(v) else str(v)})
+        return JSONResponse({"detail": detail}, status_code=422)
     if pipeline is None:
         from src.services.pipeline_service import PipelineService
 

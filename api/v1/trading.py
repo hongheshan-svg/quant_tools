@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from api.deps import bad_request, get_pipeline, get_tasks
 from api.tasks import TaskManager
@@ -50,7 +50,12 @@ def check_exits(tasks: TaskManager = Depends(get_tasks), pipeline: PipelineServi
 
 # ---------- 实盘记账 ----------
 
-class TradeBody(BaseModel):
+class LedgerModel(BaseModel):
+    """记账数值必须是有限数：JSON 的 1e400 会解析成 inf、NaN/Infinity 常量也能解析，落库后持仓和资金都会坏掉。"""
+    model_config = ConfigDict(allow_inf_nan=False)
+
+
+class TradeBody(LedgerModel):
     trade_date: str
     code: str = Field(min_length=1, max_length=40)
     side: str
@@ -62,7 +67,7 @@ class TradeBody(BaseModel):
     account: str = ""
 
 
-class CashBody(BaseModel):
+class CashBody(LedgerModel):
     cash: float = Field(ge=0)
     account: str = ""
 
@@ -79,20 +84,20 @@ class AccountUpdate(BaseModel):
     note: str | None = None
 
 
-class PlanBody(BaseModel):
+class PlanBody(LedgerModel):
     account: str = ""
     stop_loss: float | None = Field(None, ge=0)
     target_price: float | None = Field(None, ge=0)
 
 
-class ActionPlan(BaseModel):
+class ActionPlan(LedgerModel):
     cash_per_10: float = Field(0.0, ge=0)
     bonus_per_10: float = Field(0.0, ge=0)
     transfer_per_10: float = Field(0.0, ge=0)
     tax_rate: float = Field(0.0, ge=0, lt=1)
 
 
-class ActionBody(BaseModel):
+class ActionBody(LedgerModel):
     """分红送转：直接填到账（action + cash/shares），或填分红方案（plan，按除权日前持仓计算）。"""
     ex_date: str
     code: str = Field(min_length=1, max_length=40)
@@ -199,7 +204,7 @@ def add_action(body: ActionBody, pipeline: PipelineService = Depends(get_pipelin
     return result
 
 
-class CashFlowBody(BaseModel):
+class CashFlowBody(LedgerModel):
     flow_date: str
     direction: Literal["in", "out"]
     amount: float = Field(gt=0)
