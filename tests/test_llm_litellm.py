@@ -168,3 +168,21 @@ def test_native_protocol_falls_back_to_json_without_losing_question(tmp_path, mo
     monkeypatch.setattr(client, '_call', lambda *a, **kw: None)
     monkeypatch.setattr(client, 'chat_json', lambda **kw: {'answer': kw['user_message']})
     assert client.chat_with_tools('当前问题', '系统', [])['answer'] == '当前问题'
+
+
+def test_native_tool_args_with_nan_are_sent_as_strict_json(tmp_path, fake):
+    """模型返回的参数里有 NaN（json.loads 接受）时，回传给平台的 arguments 必须是合法 JSON。"""
+    import json
+    import math
+
+    client = _client(tmp_path)
+    fake.replies = [_resp('完成')]
+    args = {'code': '600519', 'price': float('nan'), 'range': [1.0, float('inf'), -float('inf')], 'nested': {'x': math.nan}}
+    tools = [{'type': 'function', 'function': {'name': 'quote', 'parameters': {'type': 'object', 'properties': {}}}}]
+    client.chat_with_tools('继续', '系统', tools, [{'protocol': 'native', 'call_id': 'c1', 'name': 'quote', 'args': args, 'result': '无'}])
+    sent = fake.calls[-1]['messages'][-2]['tool_calls'][0]['function']['arguments']
+    assert 'NaN' not in sent and 'Infinity' not in sent
+    assert json.loads(sent, parse_constant=lambda c: pytest.fail(f'非法常量 {c}')) == {
+        'code': '600519', 'price': None, 'range': [1.0, None, None], 'nested': {'x': None}}
+    assert math.isnan(args['price'])   # 不改动原对象
+

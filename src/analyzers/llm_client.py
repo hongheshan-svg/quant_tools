@@ -11,6 +11,7 @@ import base64
 import dataclasses
 import hashlib
 import json
+import math
 import re
 import sqlite3
 import threading
@@ -39,6 +40,23 @@ KEY_ERROR_NAMES = ("AuthenticationError", "RateLimitError", "PermissionDeniedErr
 # 主模型和备用模型都没有可用 Key（未填写或仍是 your- 占位）时的提示
 NO_MODEL_HINT = "未配置可用的大模型 API Key，请在【设置 → AI 模型】填写主模型的 API Key"
 DEFAULT_MODEL = "deepseek-v4-flash"                    # 配置里没写 model 时使用（与示例配置、DeepSeek 预设一致）
+
+
+def _finite_only(value: Any) -> Any:
+    """递归把 NaN、±Infinity 换成 None，不改动原对象。"""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _finite_only(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_finite_only(v) for v in value]
+    return value
+
+
+def strict_json(value: Any) -> str:
+    """发给模型平台的 JSON 必须符合 RFC 8259：json.loads 会接受模型输出里的 NaN，
+    原样 dumps 回去是非法 JSON，平台直接报 400（\"NaN\" is not valid JSON）。"""
+    return json.dumps(_finite_only(value), ensure_ascii=False, allow_nan=False)
 
 
 def parse_keys(value: Any) -> list[str]:
@@ -584,7 +602,7 @@ class LLMClient:
         for item in tool_results or []:
             if item.get("protocol") != "native" or not item.get("call_id"):
                 continue
-            messages.append({"role": "assistant", "content": None, "tool_calls": [{"id": item["call_id"], "type": "function", "function": {"name": item["name"], "arguments": json.dumps(item.get("args") or {}, ensure_ascii=False)}}]})
+            messages.append({"role": "assistant", "content": None, "tool_calls": [{"id": item["call_id"], "type": "function", "function": {"name": item["name"], "arguments": strict_json(item.get("args") or {})}}]})
             messages.append({"role": "tool", "tool_call_id": item["call_id"], "content": str(item.get("result") or "没有数据")})
 
         kwargs = {
