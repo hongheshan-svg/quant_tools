@@ -19,8 +19,9 @@ ENV TZ=Asia/Shanghai \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
+# libatomic1：新版 Playwright 自带的 node 依赖它，slim 镜像没有，缺了 playwright install 直接失败
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gosu tzdata fonts-noto-cjk \
+    && apt-get install -y --no-install-recommends gosu tzdata fonts-noto-cjk libatomic1 \
     && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
