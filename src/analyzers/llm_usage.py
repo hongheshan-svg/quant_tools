@@ -44,6 +44,9 @@ def import_litellm():
     import litellm
 
     litellm.suppress_debug_info = True
+    # 用量从响应自身统计，不需要 LiteLLM 的逐块日志。默认每个流式 chunk 都会提交一次 asyncio.run() 日志任务，
+    # Windows 上每次新建 Proactor 事件循环和回环 socketpair，长回答产生数千次，耗 CPU 且可能让进程退出时卡住。
+    litellm.disable_streaming_logging = True
     return litellm
 
 

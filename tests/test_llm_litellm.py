@@ -186,3 +186,14 @@ def test_native_tool_args_with_nan_are_sent_as_strict_json(tmp_path, fake):
         'code': '600519', 'price': None, 'range': [1.0, None, None], 'nested': {'x': None}}
     assert math.isnan(args['price'])   # 不改动原对象
 
+
+def test_import_litellm_disables_per_chunk_streaming_logging(monkeypatch):
+    import sys
+    from types import ModuleType
+
+    from src.analyzers.llm_usage import import_litellm
+
+    fake_mod = ModuleType('litellm')
+    monkeypatch.setitem(sys.modules, 'litellm', fake_mod)
+    lib = import_litellm()
+    assert lib.disable_streaming_logging is True and lib.suppress_debug_info is True
