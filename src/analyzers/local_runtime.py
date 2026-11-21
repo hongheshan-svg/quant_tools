@@ -76,8 +76,6 @@ def diagnostics(config: dict) -> list[dict]:
     result = [{"provider": name, "available": bool(shutil.which(str(cfg.get(name) or default))),
                "capabilities": ["generation"], "reason": "已安装，登录状态需调用验证" if shutil.which(str(cfg.get(name) or default)) else "未找到本地程序"}
               for name, default in EXECUTABLES.items()]
-    result.append({"provider": "codex_app_server", "available": result[0]["available"],
-                   "capabilities": ["generation", "read_only_tools", "resume", "cancel"], "reason": "共用 Codex；协议兼容性需调用验证"})
     try:
         validate_hermes_url(cfg.get("hermes_url", "http://127.0.0.1:8642/v1"))
         reason = "本机地址有效，服务连通性需调用验证"

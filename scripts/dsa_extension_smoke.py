@@ -94,26 +94,9 @@ async def main():
             await page.get_by_label('宏观查询内容').select_option('health')
             await page.get_by_role('button', name='查询宏观数据').click()
             await expect(page.get_by_text('隔离验收宏观服务', exact=False)).to_be_visible()
-            await page.get_by_label('本地模型问题').fill('检查自选股')
-            await page.get_by_role('button', name='发送', exact=True).click()
-            await expect(page.get_by_text('隔离验收本地回答，已恢复 0 条历史消息。', exact=False)).to_be_visible(timeout=20000)
-            await page.get_by_label('本地模型问题').fill('继续核对质量')
-            await page.get_by_role('button', name='发送', exact=True).click()
-            await expect(page.get_by_text('隔离验收本地回答，已恢复 2 条历史消息。', exact=False)).to_be_visible(timeout=20000)
-            await page.reload()
-            await expect(page.get_by_label('继续已有会话').locator('option')).to_have_count(2)
-            sid = await page.get_by_label('继续已有会话').locator('option').nth(1).get_attribute('value')
-            await page.get_by_label('继续已有会话').select_option(sid)
-            await expect(page.get_by_text('隔离验收本地回答，已恢复 2 条历史消息。', exact=False)).to_be_visible()
-            await page.get_by_label('本地模型问题').fill('测试取消')
-            await page.get_by_role('button', name='发送', exact=True).click()
-            await expect(page.get_by_role('button', name='取消', exact=True)).to_be_enabled()
-            await page.get_by_role('button', name='取消', exact=True).click()
-            await expect(page.get_by_role('button', name='发送', exact=True)).to_be_enabled(timeout=20000)
-            history = await (await context.request.get(BASE + '/api/v1/integrations/runtime/sessions/' + sid)).json()
-            assert len(history['messages']) == 4 and history['last_run']['status'] == 'cancelled'
             await page.screenshot(path=str(OUT / 'integrations.png'), full_page=True)
-            results['integrations'] = {'catalogue': 72, 'macro_query': True, 'session_reload_resume': True, 'cancel_without_history_pollution': True}
+            await expect(page.get_by_text('Codex App Server 只读问股', exact=True)).to_have_count(0)
+            results['integrations'] = {'catalogue': 72, 'macro_query': True, 'app_server_chat_removed': True}
 
             await page.goto(BASE + '/overseas')
             await expect(page.get_by_text('AAPL · US', exact=True)).to_be_visible()

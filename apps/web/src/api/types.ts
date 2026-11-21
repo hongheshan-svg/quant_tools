@@ -1568,4 +1568,3 @@ export interface OverseasPortfolio {
   status: string; market_value_cny: number | null; base_currency: string; limitations: string[]
 }
 export interface HoldingsImportResult { ok: boolean; saved: number; rows: Record<string, unknown>[]; errors: { line: number; error: string }[] }
-export interface RuntimeAnswer { answer: string; session_id: string; tools: { name: string; success: boolean }[] }

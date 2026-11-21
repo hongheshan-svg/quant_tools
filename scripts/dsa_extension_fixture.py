@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 
 
 def seed(app):
-    from src.services import macro_tools, codex_runtime, social_sentiment
+    from src.services import macro_tools, social_sentiment
     from src.services.overseas_research import OverseasResearchService
     from src.services.overseas_market import phase, MARKETS
     from src.analyzers.llm_client import LLMClient
@@ -70,15 +70,3 @@ def seed(app):
         'channels': {'reddit': {'status': 'available'}, 'x': {'status': 'fetch_failed'}, 'polymarket': {'status': 'unavailable'}}}
     OverseasPortfolioService.futu_symbols = lambda self: {'codes': ['AAPL', '00700.HK'], 'source': '隔离验收 Futu'}
 
-    class Runtime:
-        def __init__(self, config, folder, event):
-            self.event, self.calls = event, [{'name': 'watchlist', 'success': True}]
-        def run(self, question, history):
-            if '取消' in question:
-                for _ in range(100):
-                    if self.event.wait(.1):
-                        raise RuntimeError('本地模型会话已取消')
-            return f'隔离验收本地回答，已恢复 {len(history)} 条历史消息。'
-        def close(self):
-            pass
-    codex_runtime.AppServer = Runtime

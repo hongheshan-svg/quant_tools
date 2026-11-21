@@ -40,7 +40,7 @@ Linux 桌面包在 Ubuntu 22.04 上打包，Docker 基于 Debian 12，与 Window
 
 ## FXMacroData
 
-固定公开客户端 v0.1.1 的 79 项原生工具保留原参数结构，界面可逐项查询；AI 问股也能调用 `fxmacrodata_*` 工具。公开 USD 数据无需密钥；授权数据填写 API Key。响应保留来源、发布时间及预测类别；不可用时明确标识，凭据不作为模型参数。Codex App Server 的可取消本地工具集合不包含这些联网工具。
+固定公开客户端 v0.1.1 的 79 项原生工具保留原参数结构，界面可逐项查询；AI 问股也能调用 `fxmacrodata_*` 工具。公开 USD 数据无需密钥；授权数据填写 API Key。响应保留来源、发布时间及预测类别；不可用时明确标识，凭据不作为模型参数。
 
 ## 本地模型
 
@@ -50,7 +50,7 @@ AI 模型平台可选 Codex CLI、Claude Code CLI、OpenCode CLI、Hermes。前�
 
 Hermes 仅接受 `localhost/127.0.0.1/::1` 的 `/v1` 地址，无 API Key、原生工具、流式或视觉输入，不使用代理环境变量或跟随重定向。
 
-“Codex App Server 只读问股”提供限定本地研究工具、调用次数限制、权限校验、取消和运行记录。会话历史保存在本地数据库；继续会话时将已完成消息注入新隔离会话，失败调用不重放。不加载主机 MCP、插件或仓库指令。需要支持命名 permissions 和动态工具协议的 Codex 版本；不兼容会明确失败。配置检查只确认程序存在，不等于登录、协议和网络调用已通过。
+原“Codex App Server 只读问股”已移除（同步上游 daily_stock_analysis 88ec4bae）：`/api/v1/integrations/runtime/chat` 与 `/cancel` 返回 410，本地数据库里的旧会话记录保留不删。研究问答请用“AI 问股”；Codex CLI 等本地程序仍可作为【设置 → AI 模型】的生成后端。配置检查只确认程序存在，不等于登录和调用已通过。
 
 ## 通知与韩文
 

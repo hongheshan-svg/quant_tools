@@ -57,59 +57,15 @@ def runtime(config: dict = Depends(get_config)):
     return diagnostics(config)
 
 
-class RuntimeQuestion(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    question: str = Field(min_length=1, max_length=20000)
-    session_id: str | None = Field(None, pattern=r"^[a-f0-9]{32}$")
+# Codex App Server 只读问股已移除（同步 DSA 88ec4bae）。旧页面或脚本调用时明确返回 410，
+# 不让它落到「接口不存在」或 405；本地数据库里的旧会话记录保持原样，不删除。
+APP_SERVER_REMOVED = "Codex App Server 只读问股已移除，请使用「AI 问股」；本地 CLI 模型仍可在【设置 → AI 模型】选择"
 
 
-@router.post("/integrations/runtime/chat")
-def runtime_chat(body: RuntimeQuestion, request: Request, config: dict = Depends(get_config)):
-    from src.services.codex_runtime import create_session, ask, reserve
-    try:
-        session_id = create_session(config, body.session_id)
-        reserve(session_id)
-    except ValueError as error:
-        raise HTTPException(404, str(error)) from error
-    except RuntimeError as error:
-        raise HTTPException(409, str(error)) from error
-    task = request.app.state.tasks.submit("codex_runtime", ask, config, body.question, session_id,
-                                         dedupe_key="codex:" + session_id)
-    return {**task, "session_id": session_id}
-
-
-class RuntimeCancel(BaseModel):
-    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
-
-
-@router.post("/integrations/runtime/cancel")
-def runtime_cancel(body: RuntimeCancel):
-    from src.services.codex_runtime import cancel
-    return {"ok": cancel(body.session_id)}
-
-
-@router.get("/integrations/runtime/sessions/{session_id}")
-def runtime_session(session_id: str, config: dict = Depends(get_config)):
-    from src.services.overseas_research import OverseasResearchService
-    result = OverseasResearchService(config).cached("runtime-chat:" + session_id)
-    if not result:
-        raise HTTPException(404, "本地模型会话不存在")
-    return result
-
-
-@router.get("/integrations/runtime/sessions")
-def runtime_sessions(config: dict = Depends(get_config)):
-    import json
-    from src.database.db import get_db_session
-    from src.database.models import ResearchCache
-    with get_db_session(config.get("database", {}).get("sqlite_path", "data/quant.db")) as session:
-        results = []
-        for row in session.query(ResearchCache).filter(ResearchCache.key.startswith("runtime-chat:")).order_by(ResearchCache.updated_at.desc()).limit(100):
-            value = json.loads(row.payload_json)
-            questions = [m["content"] for m in value.get("messages", []) if m["role"] == "user"]
-            results.append({"session_id": row.key.removeprefix("runtime-chat:"), "label": questions[-1][:100] if questions else "未完成会话",
-                            "status": value.get("last_run", {}).get("status", "pending")})
-        return results
+@router.post("/integrations/runtime/chat", status_code=410)
+@router.post("/integrations/runtime/cancel", status_code=410)
+def runtime_app_server_removed():
+    raise HTTPException(410, APP_SERVER_REMOVED)
 
 
 @router.get("/overseas/portfolio")

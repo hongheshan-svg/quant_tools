@@ -1,4 +1,4 @@
-"""真实临时子进程与模拟 App Server 协议；不调用模型、不访问网络。"""
+"""真实临时子进程；不调用模型、不访问网络。"""
 import json
 import os
 from pathlib import Path
@@ -11,7 +11,6 @@ import pytest
 
 from src.analyzers import local_runtime
 from src.analyzers.llm_client import build_route, LLMClient
-from src.services import codex_runtime
 from tests.test_api import env  # noqa: F401
 from tests.test_decision_signals import db_path  # noqa: F401
 
@@ -94,65 +93,6 @@ def test_hermes_never_sends_credentials_tools_or_proxy(monkeypatch):
     assert set(calls[1][1]['json']) == {'model', 'messages', 'stream'}
 
 
-SERVER = '''import json, sys
-injected = 0
-thread = 'provider-thread'
-def send(value):
-    print(json.dumps(value), flush=True)
-for line in sys.stdin:
-    message = json.loads(line)
-    method = message.get('method')
-    params = message.get('params', {})
-    if method == 'initialized': continue
-    if method == 'initialize': result = {}
-    elif method == 'thread/start':
-        assert params['approvalPolicy'] == 'never' and params['ephemeral']
-        assert all(t['name'] in {'context_pack','resolve_stock','quote','daily_bars','diagnosis','watchlist','screening'} for t in params['dynamicTools'])
-        result = {'thread': {'id': thread}, 'activePermissionProfile': {'id': 'quant_research'}}
-    elif method == 'thread/inject_items':
-        injected = len(params['items'])
-        result = {}
-    elif method == 'turn/start':
-        send({'id': message['id'], 'result': {'turn': {'id': 'turn'}}})
-        send({'id': 700, 'method': 'item/tool/call', 'params': {'threadId': thread, 'turnId': 'turn', 'tool': 'watchlist', 'arguments': {}}})
-        continue
-    elif message.get('id') == 700:
-        assert message['result']['success']
-        send({'method': 'item/completed', 'params': {'threadId': thread, 'turnId': 'turn', 'item': {'type': 'agentMessage', 'phase': 'final_answer', 'text': '恢复消息数:' + str(injected)}}})
-        send({'method': 'turn/completed', 'params': {'threadId': thread, 'turn': {'id': 'turn', 'status': 'completed'}}})
-        continue
-    else: raise RuntimeError('unsupported')
-    send({'id': message['id'], 'result': result})
-'''
-
-
-@pytest.mark.skipif(os.name != 'posix', reason='POSIX 子进程验收')
-def test_app_server_tool_loop_and_resume_persist_only_finished_messages(tmp_path, db_path, monkeypatch):
-    binary = executable(tmp_path, SERVER)
-    monkeypatch.setenv('CODEX_HOME', str(tmp_path / 'empty-home'))
-    monkeypatch.setattr('src.services.chat_tools.ChatTools.call', lambda self, name, args: '本地自选证据')
-    config = {'database': {'sqlite_path': db_path}, 'integrations': {'runtime': {'codex_cli': binary, 'timeout_seconds': 3}}}
-    session = codex_runtime.create_session(config)
-    first = codex_runtime.ask(config, '问题一', session)
-    assert first['answer'] == '恢复消息数:0' and first['tools'] == [{'name': 'watchlist', 'success': True}]
-    assert codex_runtime.ask(config, '问题二', session)['answer'] == '恢复消息数:2'
-    saved = codex_runtime.OverseasResearchService(config).cached('runtime-chat:' + session)
-    assert len(saved['messages']) == 4 and saved['last_run']['resumed']
-    assert not codex_runtime.cancel(session)
-
-
-@pytest.mark.skipif(os.name != 'posix', reason='POSIX 子进程验收')
-def test_app_server_permission_mismatch_never_starts_turn(tmp_path, db_path, monkeypatch):
-    binary = executable(tmp_path, SERVER.replace("'id': 'quant_research'", "'id': 'unsafe'"))
-    monkeypatch.setenv('CODEX_HOME', str(tmp_path / 'empty-home'))
-    config = {'database': {'sqlite_path': db_path}, 'integrations': {'runtime': {'codex_cli': binary, 'timeout_seconds': 3}}}
-    session = codex_runtime.create_session(config)
-    with pytest.raises(RuntimeError, match='只读权限'):
-        codex_runtime.ask(config, '问题', session)
-    saved = codex_runtime.OverseasResearchService(config).cached('runtime-chat:' + session)
-    assert saved['messages'] == [] and saved['last_run']['status'] == 'failed'
-
-
 def test_invalid_local_settings_are_rejected_before_save_or_import(env):
     client, _, config = env
     from src.services.config_check import check_config
@@ -163,31 +103,6 @@ def test_invalid_local_settings_are_rejected_before_save_or_import(env):
         assert not check_config({**config, 'llm': {'primary': section}})['ok']
     invalid = {**config, 'integrations': {'runtime': {'hermes_url': 'https://remote.example/v1'}}}
     assert not check_config(invalid)['ok']
-
-
-@pytest.mark.skipif(os.name != 'posix', reason='POSIX 子进程验收')
-def test_app_server_disallowed_tool_stops_without_persisting_messages(tmp_path, db_path, monkeypatch):
-    binary = executable(tmp_path, SERVER.replace("'tool': 'watchlist'", "'tool': 'execute_order'"))
-    monkeypatch.setenv('CODEX_HOME', str(tmp_path / 'empty-home'))
-    config = {'database': {'sqlite_path': db_path}, 'integrations': {'runtime': {'codex_cli': binary, 'timeout_seconds': 3}}}
-    session = codex_runtime.create_session(config)
-    with pytest.raises(RuntimeError, match='只读范围'):
-        codex_runtime.ask(config, '问题', session)
-    saved = codex_runtime.OverseasResearchService(config).cached('runtime-chat:' + session)
-    assert saved['messages'] == [] and saved['last_run']['tools'] == []
-
-
-def test_app_server_queued_cancellation_does_not_start_process(db_path, monkeypatch):
-    config = {'database': {'sqlite_path': db_path}}
-    session = codex_runtime.create_session(config)
-    codex_runtime.reserve(session)
-    assert codex_runtime.cancel(session)
-    monkeypatch.setattr(codex_runtime, 'AppServer', lambda *args: pytest.fail('取消后不应启动程序'))
-    with pytest.raises(RuntimeError, match='取消'):
-        codex_runtime.ask(config, '问题', session)
-    assert session not in codex_runtime._active
-    saved = codex_runtime.OverseasResearchService(config).cached('runtime-chat:' + session)
-    assert saved['messages'] == [] and saved['last_run']['status'] == 'cancelled'
 
 
 @pytest.mark.parametrize('provider', local_runtime.PROVIDERS)
@@ -208,3 +123,14 @@ def test_chat_ui_uses_buffered_generation_for_local_providers(tmp_path, monkeypa
     assert len(captured) == 1 and captured[0][0] == provider
     assert 'Korean' in captured[0][1][0]['content']
     assert 'stream' not in captured[0][2] and 'tools' not in captured[0][2]
+
+
+def test_removed_app_server_endpoints_return_gone_and_status_omits_it(env):
+    """Codex App Server 只读问股已移除：旧接口明确返回 410，本地模型状态里不再列出它。"""
+    client, _, _ = env
+    for path, body in (('/api/v1/integrations/runtime/chat', {'question': '检查自选股'}),
+                       ('/api/v1/integrations/runtime/cancel', {'session_id': 'a' * 32})):
+        response = client.post(path, json=body)
+        assert response.status_code == 410 and '已移除' in response.json()['detail']
+    providers = [row['provider'] for row in client.get('/api/v1/integrations/runtime').json()]
+    assert 'codex_app_server' not in providers and 'codex_cli' in providers

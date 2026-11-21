@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '@/api/endpoints'
-import type { IntegrationSettings, RuntimeAnswer } from '@/api/types'
+import type { IntegrationSettings } from '@/api/types'
 import { Button, Card, ErrorBox, Field, Input, PageHeader, Select, Spinner } from '@/components/ui'
 import { SettingsDraftBoundary, SettingsNavigationGuard } from '@/components/SettingsDraftBoundary'
 import { useApi } from '@/hooks/useApi'
-import { useTask } from '@/hooks/useTask'
 import { toast } from '@/stores/toast'
 
 export function IntegrationsPage() {
@@ -62,29 +61,8 @@ function MacroTools() {
 
 function RuntimePanel() {
   const runtime = useApi(api.runtimeStatus)
-  const sessions = useApi(api.runtimeSessions)
-  const [question, setQuestion] = useState('检查我的自选股已有研究和行情质量。')
-  const [session, setSession] = useState('')
-  const [answer, setAnswer] = useState<RuntimeAnswer | null>(null)
-  const task = useTask<RuntimeAnswer>()
-  async function sendQuestion() {
-    try {
-      const result = await task.run(async () => {
-        const started = await api.runtimeAsk(question, session || undefined)
-        setSession(started.session_id)
-        return started
-      })
-      if (result) { setSession(result.session_id); setAnswer(result) }
-    } catch { /* useTask 已显示失败或取消原因 */ }
-    finally { await sessions.reload() }
-  }
   return <Card><h2 className="mb-3 font-semibold">本地模型状态</h2>{runtime.error && <ErrorBox message={runtime.error} />}
     <div className="grid gap-3 md:grid-cols-2">{runtime.data?.map((row) => <div className="rounded border border-line p-3 text-sm" key={row.provider}><strong>{row.provider}</strong><p className="mt-1 text-muted">{row.reason}</p></div>)}</div>
     <Button className="mt-3" onClick={() => void runtime.reload()}>重新检查安装</Button>
-    <h3 className="mb-2 mt-5 font-semibold">Codex App Server 只读问股</h3><p className="mb-2 text-sm text-muted">仅使用本地研究工具，支持继续会话；不开放文件修改、命令执行或交易。</p>
-    <Field label="继续已有会话"><Select disabled={task.running} value={session} onChange={async (e) => { const id = e.target.value; setSession(id); if (!id) { setAnswer(null); return } try { const row = await api.runtimeSession(id); const message = [...row.messages].reverse().find((m) => m.role === 'assistant'); setAnswer(message ? { answer: message.content, session_id: id, tools: row.last_run?.tools ?? [] } : null) } catch (error) { toast.error(String(error)) } }}><option value="">新会话</option>{sessions.data?.map((row) => <option key={row.session_id} value={row.session_id}>{row.label} · {row.status}</option>)}</Select></Field>
-    <Input aria-label="本地模型问题" className="w-full" value={question} onChange={(e) => setQuestion(e.target.value)} />
-    <div className="my-2 flex gap-2"><Button loading={task.running} onClick={() => void sendQuestion()}>发送</Button><Button disabled={!task.running || !session} onClick={async () => { try { const result = await api.runtimeCancel(session); if (!result.ok) toast.info("任务尚未开始或已经结束") } catch (error) { toast.error(String(error)) } }}>取消</Button><Button disabled={task.running || !session} onClick={() => { setSession(''); setAnswer(null) }}>新会话</Button></div>
-    {answer && <div className="whitespace-pre-wrap rounded bg-panel-2 p-3 text-sm">{answer.answer}<p className="mt-3 text-xs text-muted">已使用工具：{answer.tools.map((t) => t.name).join('、') || '无'} · 下一条消息继续此会话</p></div>}
   </Card>
 }
