@@ -128,9 +128,18 @@ body {
 .markdown table {
   border-collapse: collapse;
   margin: 0.5em 0;
+  /* 宽表在自身内部横向滚动，不撑宽页面 */
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
 }
 .markdown th,
 .markdown td {
   border: 1px solid var(--line);
   padding: 4px 8px;
+}
+.markdown td {
+  /* 长链接、长英文单词可以断行；短标签和数值保持可读宽度 */
+  min-width: 8ch;
+  overflow-wrap: anywhere;
 }
