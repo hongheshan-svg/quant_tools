@@ -26,7 +26,7 @@ def cfg(path):
     ('HK00700', '00700.HK', 'HK', 'HKD'), ('700.HK', '00700.HK', 'HK', 'HKD'),
     ('US.AAPL', 'AAPL', 'US', 'USD'), ('BRK.B', 'BRK-B', 'US', 'USD'),
     ('7203.T', '7203.T', 'JP', 'JPY'), ('005930.KS', '005930.KS', 'KR', 'KRW'),
-    ('035720.KQ', '035720.KQ', 'KR', 'KRW'), ('2330.TW', '2330.TW', 'TW', 'TWD'),
+    ('247540.KQ', '247540.KQ', 'KR', 'KRW'), ('2330.TW', '2330.TW', 'TW', 'TWD'),
     ('JP:7203', '7203.T', 'JP', 'JPY'), ('000001', '000001', 'CN', 'CNY'),
 ])
 def test_international_identity_does_not_lose_market(raw, code, market, currency):
@@ -355,3 +355,11 @@ def test_longbridge_supports_both_packaged_sdk_factories(db_path, monkeypatch, m
     assert rows[0]['close'] == 101 and rows[0]['currency'] == 'USD'
     assert calls[0][0] == ('modern' if modern else 'legacy')
     assert calls[1]['symbol'] == 'AAPL.US' and calls[1]['adjust_type'] == 'raw' and calls[-1] == 'closed'
+
+
+def test_overseas_seed_uses_kakao_kospi_ticker_and_drops_delisted():
+    """同步 DSA ac9c33df：Kakao 在 KOSPI（035720.KS）；赛尔群医疗 091990.KQ 已退市。"""
+    from src.services.overseas_symbols import aliases
+    seeds = aliases()
+    assert 'Kakao' in seeds['035720.KS'] and '035720.KQ' not in seeds and '091990.KQ' not in seeds
+    assert 'Celltrion' in seeds['068270.KS']
