@@ -296,6 +296,22 @@ def test_telegram_measures_utf16_so_chinese_report_fits_one_message(http):
     assert all(mod.content_size(_payload_text(c)) <= 4096 for c in http.calls)
 
 
+def test_go_json_size_counts_apns_escapes():
+    from src.notifier.base import go_json_size
+    assert go_json_size("abc") == 3 and go_json_size("中") == 3
+    assert go_json_size("<>&") == 18 and go_json_size('"\\\n') == 6 and go_json_size(" ") == 6
+
+
+def test_bark_chunks_stay_under_apns_budget_with_escapes(http):
+    cls, mod = _cls("bark")
+    http.factory = SPECS["bark"]["ok"]
+    content = "\n".join("<b>A&B</b> 涨停 > 跌停 & \"引号\"" for _ in range(400))
+    assert cls(_config("bark")).send("标题", content) is True
+    assert len(http.calls) >= 2
+    for call in http.calls:
+        assert mod.content_size(call["kwargs"]["json"]["body"]) <= mod.MAX_CONTENT_BYTES
+
+
 def test_telegram_thread_id_absent_by_default(http):
     cls, _ = _cls("telegram")
     http.factory = SPECS["telegram"]["ok"]

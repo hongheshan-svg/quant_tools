@@ -18,6 +18,23 @@ def utf16_size(text: str) -> int:
     return len(text.encode("utf-16-le")) // 2
 
 
+def go_json_size(text: str) -> int:
+    """文本编进 Go encoding/json 字符串后的 UTF-8 字节数（不含两侧引号）。
+
+    Bark 服务端用 Go 编码 APNs payload：非 ASCII 原样，引号、反斜杠、换行等转义为 2 字节，
+    < > & 转成 \\u003c 这样的 6 字节，U+2028/U+2029 也是 6 字节，其他控制字符 6 字节。
+    """
+    size = 0
+    for ch in text:
+        if ch in '"\\\n\r\t\b\f':
+            size += 2
+        elif ch in "<>&  " or ord(ch) < 0x20:
+            size += 6
+        else:
+            size += len(ch.encode("utf-8"))
+    return size
+
+
 def split_by_size(content: str, limit: int, size: Callable[[str], int] = utf8_size) -> list[str]:
     """按行把内容拆成每段 size() 不超过 limit 的若干段；单行超长时按字符硬切。size 须按字符可加。"""
     newline = size("\n")

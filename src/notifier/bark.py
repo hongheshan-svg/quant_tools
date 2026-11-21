@@ -5,10 +5,12 @@ Bark 推送（纯文本）
 import httpx
 from loguru import logger
 
-from src.notifier.base import markdown_to_text, send_paged
+from src.notifier.base import go_json_size, markdown_to_text, send_paged
 
-# Bark 服务端对 body 无硬性限制，取保守值
+# Bark 经 APNs 下发，整个 payload（含 aps、标题、分组）上限 4096 字节，超限时 Bark 返回 500、手机收不到。
+# 正文按 Go JSON 编码后的字节数计（< > & 变 6 字节、换行 2 字节），每段不超过 3000，余量留给标题等字段。
 MAX_CONTENT_BYTES = 3000
+content_size = go_json_size
 
 
 class BarkNotifier:
@@ -29,7 +31,7 @@ class BarkNotifier:
         if not self.device_key:
             logger.warning("Bark配置不完整")
             return False
-        return send_paged(title, content, MAX_CONTENT_BYTES, self._send_one)
+        return send_paged(title, content, MAX_CONTENT_BYTES, self._send_one, content_size)
 
     def _send_one(self, title: str, content: str) -> bool:
         try:
