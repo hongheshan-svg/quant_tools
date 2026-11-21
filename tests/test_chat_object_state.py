@@ -290,3 +290,42 @@ def test_concurrent_questions_on_one_session_are_serialized(db):
         thread.join()
     record = store.get(sid)
     assert record["session_state_version"] == 2 and [t["status"] for t in record["turns"]] == ["done", "done"]
+
+
+@pytest.fixture
+def changdian(monkeypatch):
+    """「长电」是长江电力的常用简称，同时是长电科技全称的前缀。"""
+    entries = [('600584', '长电科技', (), 'stock'), ('600900', '长江电力', (), 'stock'), ('600519', '贵州茅台', (), 'stock')]
+    monkeypatch.setattr(StockSearch, '_ensure_index', lambda self: entries)
+    return entries
+
+
+def _codes(plan):
+    return [[t['code'] for t in task['targets']] for task in plan['tasks']]
+
+
+def _pending(plan):
+    return [c['code'] for c in (plan['state'].get('pending') or {}).get('candidates', [])]
+
+
+def test_embedded_alias_inside_full_name_is_not_another_target(changdian):
+    """同步 DSA 85f8aa11：全称内的简称或代码片段不另算标的。"""
+    for question in ('分析长电科技(600584.SH)', '分析长电科技（600584）', '分析长电科技'):
+        plan = resolve(question, 'unused')
+        assert not plan['requires_confirmation'] and _codes(plan) == [['600584']], question
+
+
+def test_name_and_bracketed_code_conflict_asks_for_confirmation(changdian):
+    plan = resolve('分析长电科技(600900.SH)', 'unused')
+    assert plan['requires_confirmation'] and _pending(plan) == ['600584', '600900']
+    confirmed = resolve('600900', 'unused', plan['state'])
+    assert _codes(confirmed) == [['600900']]
+    # 名称和代码一致时就是一个标的
+    assert _codes(resolve('分析贵州茅台(600519)', 'unused')) == [['600519']]
+
+
+def test_separate_mention_after_full_name_is_kept(changdian):
+    plan = resolve('对比长电科技和长电', 'unused')
+    assert _codes(plan) == [['600584']] and plan['requires_confirmation']
+    assert '600900' in _pending(plan)
+    assert _codes(resolve('对比贵州茅台和长电科技，再看贵州茅台', 'unused'))[0] == ['600519', '600584']

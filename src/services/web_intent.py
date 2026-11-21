@@ -81,9 +81,11 @@ def _mentions(clause: str, search: StockSearch, entries) -> list[tuple[int, int,
             mentions.append((match.start(), match.end(), raw, exact[:1]))
     for code, name, _, kind in entries:
         for alias in (name, *ALIASES.get(code, ())):
+            if not alias or len(alias) < 2:
+                continue
             pattern = (r'(?<![A-Za-z0-9])' + re.escape(alias) + r'(?![A-Za-z0-9])') if alias.isascii() else re.escape(alias)
-            match = re.search(pattern, clause, re.I) if alias and len(alias) >= 2 else None
-            if match:
+            # 每一处都算：「分析长电科技和长电」里全称内的「长电」被全称消费，后面单独的「长电」仍是一个标的。
+            for match in re.finditer(pattern, clause, re.I):
                 start = match.start()
                 candidates = [{"code": code, "name": name, "kind": kind}]
                 if alias != name:
@@ -91,6 +93,7 @@ def _mentions(clause: str, search: StockSearch, entries) -> list[tuple[int, int,
                 mentions.append((start, start + len(alias), alias, candidates))
     # 最长名称消费对应短别名；同名标的仍保留全部候选。
     mentions = [mention for mention in mentions if not any(other[0] <= mention[0] and other[1] >= mention[1] and other[1] - other[0] > mention[1] - mention[0] for other in mentions)]
+    mentions = _pair_name_with_code(clause, mentions)
     grouped: dict[tuple, list] = {}
     for start, end, alias, found in sorted(mentions):
         group = grouped.setdefault((start, end, alias), [])
@@ -98,6 +101,31 @@ def _mentions(clause: str, search: StockSearch, entries) -> list[tuple[int, int,
             if item not in group:
                 group.append(item)
     return [(start, end, alias, found) for (start, end, alias), found in grouped.items()]
+
+
+_BRACKET_CODE = re.compile(r"\s*[(（]\s*$")
+
+
+def _pair_name_with_code(clause: str, mentions: list) -> list:
+    """「名称(代码)」是同一个标的：一致时合并成一个提及；不一致（长电科技(600900.SH)）时
+    合并成一个待确认的提及，候选为名称和代码各自对应的证券，不当成两只分别分析。"""
+    ordered = sorted(mentions)
+    paired, used = [], set()
+    for i, (start, end, alias, found) in enumerate(ordered):
+        if i in used:
+            continue
+        nxt = next((j for j in range(i + 1, len(ordered)) if ordered[j][0] >= end), None)
+        if nxt is not None and nxt not in used and re.fullmatch(r"(?:sh|sz|bj)?\d{6}", ordered[nxt][2], re.I) \
+                and _BRACKET_CODE.match(clause[end:ordered[nxt][0]]) \
+                and re.match(r"(?:\.(?:SH|SZ|BJ))?\s*[)）]", clause[ordered[nxt][1]:], re.I) \
+                and len(found) == 1 and len(ordered[nxt][3]) == 1:
+            code_item = ordered[nxt][3][0]
+            candidates = found if found[0]["code"] == code_item["code"] else [found[0], code_item]
+            paired.append((start, ordered[nxt][1], clause[start:ordered[nxt][1]], candidates))
+            used.add(nxt)
+            continue
+        paired.append((start, end, alias, found))
+    return paired
 
 
 def mentioned_targets(text: str, db_path: str) -> list[dict]:
