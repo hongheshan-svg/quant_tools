@@ -107,29 +107,24 @@ def _side(value: Any) -> str:
 
 
 def read_rows(path: str) -> list[list[str]]:
-    """CSV / TXT（UTF-8 或 GBK，逗号或制表符分隔）或 Excel，读成二维字符串表。"""
+    """CSV / TXT（带 BOM 的 UTF-16、UTF-8 或 GBK，逗号或制表符分隔）或 Excel，读成二维字符串表。
+    扩展名是 .xls/.xlsx 但内容是制表符文本（券商软件导出的交割单常这样）时按文本读。"""
+    from src.utils.text_decode import decode_upload, is_real_excel
+
     p = Path(path)
-    if p.suffix.lower() in (".xlsx", ".xls"):
+    raw = p.read_bytes()
+    if p.suffix.lower() in (".xlsx", ".xls") and is_real_excel(raw):
         import pandas as pd
 
         frames = pd.read_excel(p, sheet_name=None, dtype=str, header=None)
         return [["" if v is None or str(v) == "nan" else str(v).strip() for v in row] for df in frames.values() for row in df.values.tolist()]
-    raw = p.read_bytes()
-    text = next((raw.decode(enc) for enc in ("utf-8-sig", "gbk") if _decodes(raw, enc)), raw.decode("utf-8", errors="ignore"))
+    text = decode_upload(raw)
     rows = []
     for line in text.splitlines():
         if line.strip():
             delimiter = "\t" if "\t" in line else ","
             rows.append([c.strip().strip('"').strip("=").strip('"') for c in line.split(delimiter)])
     return rows
-
-
-def _decodes(raw: bytes, encoding: str) -> bool:
-    try:
-        raw.decode(encoding)
-        return True
-    except UnicodeDecodeError:
-        return False
 
 
 def parse_import_rows(rows: list[list[str]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int, str]:

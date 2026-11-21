@@ -91,20 +91,18 @@ def extract_tokens(text: str) -> tuple[list[str], list[str]]:
 
 
 def read_import_file(path: str) -> str:
-    """CSV / TXT 按 UTF-8 或 GBK 读成文本；Excel 用 pandas 读出所有单元格。"""
+    """CSV / TXT 按 UTF-16（带 BOM）、UTF-8 或 GBK 读成文本；Excel 用 pandas 读出所有单元格。
+    扩展名是 .xls/.xlsx 但内容是文本（券商软件常这样导出）时按文本读。"""
+    from src.utils.text_decode import decode_upload, is_real_excel
+
     p = Path(path)
-    if p.suffix.lower() in (".xlsx", ".xls"):
+    raw = p.read_bytes()
+    if p.suffix.lower() in (".xlsx", ".xls") and is_real_excel(raw):
         import pandas as pd
 
         frames = pd.read_excel(p, sheet_name=None, dtype=str, header=None)
         return "\n".join("\t".join(v if isinstance(v, str) else "" for v in row) for df in frames.values() for row in df.values.tolist())
-    raw = p.read_bytes()
-    for encoding in ("utf-8-sig", "gbk"):
-        try:
-            return raw.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    return raw.decode("utf-8", errors="ignore")
+    return decode_upload(raw)
 
 
 class WatchlistService:
