@@ -12,12 +12,12 @@ export function fmtPct(v: unknown, digits = 2, signed = true): string {
   return `${signed && v > 0 ? '+' : ''}${v.toFixed(digits)}%`
 }
 
-/** 金额：自动换算成 亿 / 万 */
+/** 金额：自动换算成 亿 / 万；四舍五入后进位到下一单位的也换单位（99999999 显示 1.00亿 而不是 10000.0万） */
 export function fmtAmount(v: unknown): string {
   if (!isNum(v)) return '--'
   const abs = Math.abs(v)
-  if (abs >= 1e8) return `${(v / 1e8).toFixed(2)}亿`
-  if (abs >= 1e4) return `${(v / 1e4).toFixed(1)}万`
+  if (abs >= 1e8 || Number((abs / 1e4).toFixed(1)) >= 1e4) return `${(v / 1e8).toFixed(2)}亿`
+  if (abs >= 1e4 || Math.round(abs) >= 1e4) return `${(v / 1e4).toFixed(1)}万`
   return v.toFixed(0)
 }
 

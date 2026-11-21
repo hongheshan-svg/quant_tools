@@ -17,6 +17,13 @@ describe('format', () => {
     expect(fmtPct(12.3, 1, false)).toBe('12.3%')
     expect(fmtAmount(3.21e8)).toBe('3.21亿')
     expect(fmtAmount(52000)).toBe('5.2万')
+    // 四舍五入进位到下一单位时换单位
+    expect(fmtAmount(99_999_999)).toBe('1.00亿')
+    expect(fmtAmount(-99_999_600)).toBe('-1.00亿')
+    expect(fmtAmount(99_996_000)).toBe('9999.6万')
+    expect(fmtAmount(99_940_000)).toBe('9994.0万')
+    expect(fmtAmount(9_999.6)).toBe('1.0万')
+    expect(fmtAmount(9_999.4)).toBe('9999')
   })
 
   it('uses red for up and green for down', () => {
