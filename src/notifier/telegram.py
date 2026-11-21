@@ -2,6 +2,8 @@
 Telegram Bot 推送（纯文本，不设 parse_mode）
 """
 
+import time
+
 import httpx
 from loguru import logger
 
@@ -11,6 +13,25 @@ from src.notifier.base import markdown_to_text, send_paged, utf16_size
 MAX_CONTENT_UNITS = 3900
 content_size = utf16_size
 MAX_IMAGE_BYTES = 10 * 1024 * 1024   # sendPhoto 上限 10MB
+MAX_ATTEMPTS = 3
+MAX_RETRY_AFTER = 60   # 限流要求等待超过 60 秒时放弃，避免卡住推送线程
+
+
+def retry_after_seconds(resp, attempt: int) -> int:
+    """429 限流的等待秒数：优先响应体 parameters.retry_after，其次 Retry-After 头，都没有时指数退避。"""
+    try:
+        value = (resp.json().get("parameters") or {}).get("retry_after")
+    except (AttributeError, ValueError):
+        value = None
+    headers = getattr(resp, "headers", None) or {}
+    for candidate in (value, headers.get("Retry-After")):
+        try:
+            delay = int(candidate)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if delay >= 0:
+            return delay
+    return 2 ** attempt
 
 
 class TelegramNotifier:
@@ -45,8 +66,7 @@ class TelegramNotifier:
             data = {"chat_id": self.chat_id, "caption": title[:1024]}
             if self.thread_id.isdigit():
                 data["message_thread_id"] = self.thread_id
-            resp = httpx.post(f"{self.api_base}/bot{self.bot_token}/sendPhoto", data=data,
-                              files={"photo": ("report.png", png, "image/png")}, timeout=30)
+            resp = self._post("sendPhoto", title, data=data, files={"photo": ("report.png", png, "image/png")}, timeout=30)
             if resp.json().get("ok") is True:
                 logger.info("Telegram图片推送成功: {}", title)
                 return True
@@ -61,7 +81,7 @@ class TelegramNotifier:
             payload = {"chat_id": self.chat_id, "text": f"{title}\n\n{markdown_to_text(content)}"}
             if self.thread_id.isdigit():
                 payload["message_thread_id"] = self.thread_id
-            resp = httpx.post(f"{self.api_base}/bot{self.bot_token}/sendMessage", json=payload, timeout=10)
+            resp = self._post("sendMessage", title, json=payload, timeout=10)
             if resp.json().get("ok") is True:
                 logger.info("Telegram推送成功: {}", title)
                 return True
@@ -71,3 +91,16 @@ class TelegramNotifier:
             logger.error("Telegram推送异常: {}", e)
             return False
 
+    def _post(self, method: str, title: str, **kwargs):
+        """调用 Bot API；429 限流时按服务端要求的秒数等待后重试，最多 MAX_ATTEMPTS 次。"""
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            resp = httpx.post(f"{self.api_base}/bot{self.bot_token}/{method}", **kwargs)
+            if resp.status_code != 429 or attempt == MAX_ATTEMPTS:
+                return resp
+            delay = retry_after_seconds(resp, attempt)
+            if delay > MAX_RETRY_AFTER:
+                logger.warning("Telegram限流要求等待 {} 秒，超过 {} 秒不再重试: {}", delay, MAX_RETRY_AFTER, title)
+                return resp
+            logger.warning("Telegram限流，{} 秒后重试（第 {}/{} 次）: {}", delay, attempt, MAX_ATTEMPTS, title)
+            time.sleep(delay)
+        return resp

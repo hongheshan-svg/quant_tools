@@ -246,6 +246,41 @@ def test_telegram_payload_and_custom_api_base_and_thread(http):
     assert _url(http.calls[0]).startswith("https://api.telegram.org/bot123:ABC/sendMessage")
 
 
+class _Resp429(FakeResp):
+    def __init__(self, data=None, headers=None):
+        super().__init__(429, data or {"ok": False})
+        self.headers = headers or {}
+
+
+def test_telegram_honors_retry_after_from_body_then_header(http, monkeypatch):
+    mod = importlib.import_module("src.notifier.telegram")
+    slept = []
+    monkeypatch.setattr(mod.time, "sleep", slept.append)
+    seq = iter([_Resp429({"ok": False, "parameters": {"retry_after": 3}}, {"Retry-After": "9"}),
+                _Resp429(headers={"Retry-After": "5"}), FakeResp(200, {"ok": True})])
+    http.factory = lambda: next(seq)
+    assert mod.TelegramNotifier(_config("telegram")).send("标题", "正文") is True
+    assert slept == [3, 5] and len(http.calls) == 3
+
+
+def test_telegram_gives_up_when_flood_wait_too_long(http, monkeypatch):
+    mod = importlib.import_module("src.notifier.telegram")
+    slept = []
+    monkeypatch.setattr(mod.time, "sleep", slept.append)
+    http.factory = lambda: _Resp429({"ok": False, "parameters": {"retry_after": 3600}})
+    assert mod.TelegramNotifier(_config("telegram")).send("标题", "正文") is False
+    assert slept == [] and len(http.calls) == 1
+
+
+def test_telegram_photo_also_retries_on_429(http, monkeypatch):
+    mod = importlib.import_module("src.notifier.telegram")
+    monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+    seq = iter([_Resp429({"ok": False, "parameters": {"retry_after": 1}}), FakeResp(200, {"ok": True})])
+    http.factory = lambda: next(seq)
+    assert mod.TelegramNotifier(_config("telegram")).send_image("图", b"png") is True
+    assert len(http.calls) == 2
+
+
 def test_telegram_measures_utf16_so_chinese_report_fits_one_message(http):
     """3000 个汉字是 9000 UTF-8 字节，但只占 3000 个 UTF-16 code unit，一条就能发完。"""
     cls, mod = _cls("telegram")
