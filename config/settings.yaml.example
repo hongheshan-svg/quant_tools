@@ -15,7 +15,7 @@ llm:
     provider: deepseek
     api_key: "your-deepseek-api-key-here"
     base_url: "https://api.deepseek.com"
-    model: "deepseek-chat"
+    model: "deepseek-v4-flash"
     max_tokens: 4096
     temperature: 0.3
   # 备用模型（主力模型失败时自动切换）
@@ -23,11 +23,11 @@ llm:
     provider: openai
     api_key: "your-openai-api-key-here"
     base_url: "https://api.openai.com/v1"
-    model: "gpt-4o"
+    model: "gpt-6.1-sol"
     max_tokens: 4096
     temperature: 0.3
   # 图片识别模型（截图导入自选股用）：留空时用主模型识别，主模型需支持图片输入，
-  # 如 gpt-4o、Claude、Gemini、qwen-vl、glm-4v；配置后优先使用它，失败再回退主/备用模型
+  # 如 GPT、Claude、Gemini、qwen-vl、glm-4v；配置后优先使用它，失败再回退主/备用模型
   vision:
     provider: ""
     model: ""

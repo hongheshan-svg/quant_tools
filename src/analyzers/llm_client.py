@@ -38,6 +38,7 @@ KEY_ERROR_CODES = (401, 403, 429)
 KEY_ERROR_NAMES = ("AuthenticationError", "RateLimitError", "PermissionDeniedError")
 # 主模型和备用模型都没有可用 Key（未填写或仍是 your- 占位）时的提示
 NO_MODEL_HINT = "未配置可用的大模型 API Key，请在【设置 → AI 模型】填写主模型的 API Key"
+DEFAULT_MODEL = "deepseek-v4-flash"                    # 配置里没写 model 时使用（与示例配置、DeepSeek 预设一致）
 
 
 def parse_keys(value: Any) -> list[str]:
@@ -477,7 +478,7 @@ class LLMClient:
         self.last_error = None
         self.last_param_fixes = []
         # 缓存命中（只按主模型 key 缓存，命中直接返回）
-        primary_model = self.primary_cfg.get("model", "deepseek-chat")
+        primary_model = self.primary_cfg.get("model", DEFAULT_MODEL)
         cache_key = self._cache_key(
             model=primary_model,
             user_message=user_message,
@@ -572,7 +573,7 @@ class LLMClient:
         if client is None:
             return None
 
-        model = cfg.get("model", "deepseek-chat")
+        model = cfg.get("model", DEFAULT_MODEL)
         temp = temperature if temperature is not None else cfg.get("temperature", 0.3)
         tokens = max_tokens if max_tokens is not None else cfg.get("max_tokens", 4096)
 
