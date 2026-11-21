@@ -137,7 +137,7 @@ def test_macro_full_catalogue_preserves_schemas_and_hides_credentials(monkeypatc
     from src.services.chat_tools import native_tool_schemas, ChatTools
     from fxmacrodata_public import list_operations
     schemas = {s['function']['name']: s['function']['parameters'] for s in native_tool_schemas()}
-    assert len(macro_tools.catalogue()) == 72
+    assert len(macro_tools.catalogue()) == 79
     assert all(schemas['fxmacrodata_' + op.name] == op.input_schema for op in list_operations())
     calls = []
     class Client:

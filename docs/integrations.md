@@ -28,7 +28,7 @@
 
 Futu 读取本机 OpenD 的真实 LONG 持仓标的；不解锁交易、不下单，不自动导入未知成本。Longbridge 优先使用 OAuth Client ID 与 SDK 本地缓存，也支持完整的 App Key、App Secret、Access Token 回退。服务未安装、未登录或账户权限不足会给出失败状态。
 
-Linux 桌面包保留 Ubuntu 22.04，Docker 保留 Debian 12；两者使用 Python 3.11 与 Longbridge 0.2.74 的兼容 wheel。Windows/macOS 使用新版 SDK。源码安装若选 Linux Python 3.12+，则要求 glibc 2.39+。适配器同时支持两代配置构造接口，发布自检会加载日历、宏观目录与券商 SDK 资源。
+Linux 桌面包在 Ubuntu 22.04 上打包，Docker 基于 Debian 12，与 Windows/macOS 一样使用 Python 3.12 和 Longbridge SDK 5.x（Linux wheel 只要求 glibc 2.28+）。适配器同时支持两代配置构造接口，发布自检会加载日历、宏观目录与券商 SDK 资源。
 
 ### Longbridge OAuth
 
@@ -40,7 +40,7 @@ Linux 桌面包保留 Ubuntu 22.04，Docker 保留 Debian 12；两者使用 Pyth
 
 ## FXMacroData
 
-固定公开客户端 v0.1.0 的 72 项原生工具保留原参数结构，界面可逐项查询；AI 问股也能调用 `fxmacrodata_*` 工具。公开 USD 数据无需密钥；授权数据填写 API Key。响应保留来源、发布时间及预测类别；不可用时明确标识，凭据不作为模型参数。Codex App Server 的可取消本地工具集合不包含这些联网工具。
+固定公开客户端 v0.1.1 的 79 项原生工具保留原参数结构，界面可逐项查询；AI 问股也能调用 `fxmacrodata_*` 工具。公开 USD 数据无需密钥；授权数据填写 API Key。响应保留来源、发布时间及预测类别；不可用时明确标识，凭据不作为模型参数。Codex App Server 的可取消本地工具集合不包含这些联网工具。
 
 ## 本地模型
 

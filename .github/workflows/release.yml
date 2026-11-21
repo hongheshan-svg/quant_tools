@@ -46,7 +46,7 @@ jobs:
             python: "3.12"
           - os: ubuntu-22.04
             label: Linux
-            python: "3.11"
+            python: "3.12"
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:

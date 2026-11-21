@@ -139,7 +139,7 @@ def self_check() -> int:
         from longbridge.openapi import Config, QuoteContext
         from importlib.util import find_spec
 
-        assert len(catalogue()) == 72
+        assert len(catalogue()) == 79
         assert all(phase(market, datetime(2026, 9, 30, 23, tzinfo=timezone.utc))["calendar_verified"] for market in MARKETS)
         assert callable(Config) and callable(QuoteContext)
         # Futu 导入会在用户目录创建日志；自检只查包，实际连接时才初始化 SDK。

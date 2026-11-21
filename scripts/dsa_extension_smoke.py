@@ -79,7 +79,7 @@ async def main():
             results['korean_report_setting'] = 'saved'
 
             await page.goto(BASE + '/integrations')
-            await expect(page.get_by_text('72 项', exact=True)).to_be_visible()
+            await expect(page.get_by_text('79 项', exact=True)).to_be_visible()
             await expect(page.get_by_role('heading', name='Longbridge 认证状态')).to_be_visible()
             await expect(page.get_by_text('尚未配置 Longbridge 认证', exact=True)).to_be_visible()
             await page.get_by_role('heading', name='Longbridge 认证状态').scroll_into_view_if_needed()

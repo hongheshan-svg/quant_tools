@@ -1,7 +1,7 @@
 akshare>=1.20.65        # 1.20.41~1.20.46 批量改名（交易日历、新浪/东方财富日线、同花顺资金流等），代码只用新名
 mini-racer>=0.13.2       # AKShare 用它执行 JS；旧版在打包后会到错误的位置找原生库
 openai>=1.0.0
-litellm>=1.80.10,!=1.82.7,!=1.82.8,<1.99
+litellm>=1.110.2,<2
 json-repair>=0.30.0
 pypinyin>=0.50.0
 fastapi>=0.110.0
@@ -33,10 +33,9 @@ jinja2>=3.1
 
 # 海外市场日历、行情与固定宏观工具目录
 exchange-calendars>=4.13,<5
-yfinance>=0.2.66,<1
+yfinance>=1.8,<2
 jsonschema>=4.23
-fxmacrodata-public-client @ https://github.com/fxmacrodata/fxmacrodata-public-client/releases/download/v0.1.0/fxmacrodata_public_client-0.1.0-py3-none-any.whl#sha256=5c60ff217243ff4001f178d4fdd8c3c8ce29001ad1ea0a170ed96606f0dd07c8
-# Linux 旧系统使用 CPython 3.11 + 兼容 glibc 的 SDK；新版 wheel 要求 glibc 2.39。
-longbridge==0.2.74; platform_system == "Linux" and python_version < "3.12"
-longbridge==5.2.2; platform_system != "Linux" or python_version >= "3.12"
-futu-api==10.8.6808
+fxmacrodata-public-client==0.1.1
+# 5.x 的 Linux wheel 为 manylinux_2_28（glibc 2.28+），Ubuntu 22.04、Debian 12 都能用
+longbridge==5.5.0
+futu-api==10.12.7208

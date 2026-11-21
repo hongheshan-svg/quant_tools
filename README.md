@@ -2,7 +2,7 @@
 
 从财经快讯、社交热搜、行情和国际市场等多个来源采集数据，由大语言模型（LLM）分析舆情，再用多因子加权模型给涨停股打分，预测下一交易时段最可能涨停的股票，并生成交易信号和模拟盘订单。系统会根据历史信号的实际结果自动调整因子权重。
 
-“海外研究”和“扩展接入”提供港美日韩台研究、券商 CSV 持仓/成交导入、原币与人民币估值、72 项宏观工具、本地 CLI/App Server 模型，以及 OpenClaw/Grok Bot 接入示例。新增飞书/Lark 与 Slack Bot、AstrBot、韩文报告和美股社交证据；配置及边界见[扩展接入指南](docs/integrations.md)，本轮质量修复见[对齐验收](docs/dsa_full_alignment_2026-10-07.md)。
+“海外研究”和“扩展接入”提供港美日韩台研究、券商 CSV 持仓/成交导入、原币与人民币估值、79 项宏观工具、本地 CLI/App Server 模型，以及 OpenClaw/Grok Bot 接入示例。新增飞书/Lark 与 Slack Bot、AstrBot、韩文报告和美股社交证据；配置及边界见[扩展接入指南](docs/integrations.md)，本轮质量修复见[对齐验收](docs/dsa_full_alignment_2026-10-07.md)。
 
 > **免责声明：** 本项目仅供学习和研究使用，输出结果不构成任何投资建议。股市有风险，据此操作风险自负。
 
@@ -80,7 +80,7 @@
 ## 环境要求
 
 - Python 3.10 及以上（CI 使用 3.12，也在 3.14 上测试）
-- Linux 使用 Python 3.12+ 时，Longbridge 新 SDK 要求 glibc 2.39+；Ubuntu 22.04 / Debian 12 使用 Python 3.11。官方 Linux 安装包和 Docker 已选择兼容的 3.11 + Longbridge 0.2.74。
+- Longbridge SDK 5.x 的 Linux wheel 只要求 glibc 2.28+，Ubuntu 22.04、Debian 12 都可直接使用；官方 Linux 安装包和 Docker 均为 Python 3.12。
 - Node.js 22 及以上（构建 Web 前端和桌面端；CI 使用 24）
 - Chromium（通过 Playwright 安装；Docker 镜像和打包的桌面端会自动准备）
 - 至少一个大模型 API Key：DeepSeek、通义千问、智谱 GLM、Kimi、百度文心、豆包、硅基流动、OpenAI、Claude、Gemini，或本地的 Ollama（不需要 Key）

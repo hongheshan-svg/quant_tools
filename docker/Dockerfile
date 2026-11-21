@@ -10,8 +10,8 @@ RUN --mount=type=cache,target=/root/.npm npm ci
 COPY apps/web/ ./
 RUN npm run build
 
-# 保留 Debian 12 / glibc 2.36，使用兼容版 Longbridge wheel。
-FROM python:3.11-slim-bookworm
+# Debian 12（glibc 2.36）；Longbridge 5.x 的 Linux wheel 只要求 glibc 2.28。
+FROM python:3.12-slim-bookworm
 
 ENV TZ=Asia/Shanghai \
     PYTHONUNBUFFERED=1 \
