@@ -192,7 +192,7 @@ def test_collect_earnings_news_fallback_generates_minimum_items(monkeypatch):
         },
     )
 
-    fake_ak = types.SimpleNamespace(stock_info_global_em=lambda: pd.DataFrame())
+    fake_ak = types.SimpleNamespace(stock_news_global_em=lambda: pd.DataFrame())
     monkeypatch.setattr(us_earnings_mod, "ak", fake_ak)
 
     class _Resp:

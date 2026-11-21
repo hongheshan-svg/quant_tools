@@ -703,7 +703,7 @@ class StockDataCollector(BaseCollector):
             return get_em_client().stock_zh_a_spot_em()
 
         def _try_sina():
-            df = ak.stock_zh_a_spot()
+            df = ak.stock_zh_a_spot_sina()
             col_map = {
                 "代码": "代码", "名称": "名称",
                 "最高": "最高", "最低": "最低",

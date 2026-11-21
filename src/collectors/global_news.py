@@ -270,7 +270,7 @@ class GlobalNewsCollector(BaseCollector):
         results = []
         try:
             import akshare as ak
-            df = ak.stock_info_global_em()
+            df = ak.stock_news_global_em()
             if df is not None and not df.empty:
                 cutoff = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
                 for idx, (_, row) in enumerate(df.head(200).iterrows()):
@@ -324,7 +324,7 @@ class GlobalNewsCollector(BaseCollector):
                 ("COMEX铜", "COMEX铜", 2),
             ]:
                 try:
-                    df = ak.futures_foreign_commodity_realtime(symbol=symbol)
+                    df = ak.futures_foreign_realtime_sina(symbol=symbol)
                     if df is not None and not df.empty:
                         latest = df.iloc[0]
                         change_pct = float(latest.get("涨跌幅", 0) or 0)

@@ -51,7 +51,7 @@ def test_ths_fund_flow_parsing(monkeypatch):
         {"股票代码": "600000", "股票简称": "浦发银行", "净额": "-1.20亿", "成交额": "12.00亿"},
         {"股票代码": "600001", "股票简称": "无数据", "净额": "--", "成交额": "1亿"},
     ])
-    monkeypatch.setattr(ak, "stock_fund_flow_individual", lambda symbol: df)
+    monkeypatch.setattr(ak, "stock_fund_flow_individual_ths", lambda symbol: df)
     rows = ff.fetch_ths_fund_flow()
     assert [(r["code"], round(r["net_inflow"]), r["net_ratio"]) for r in rows] == [
         ("301311", 27538600, 4.83), ("600000", -120000000, -10.0),

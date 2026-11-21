@@ -69,7 +69,7 @@ def safe_int(value, default: int = 0) -> int:
 
 def get_trade_dates(start_date: str, end_date: str) -> list[str]:
     try:
-        df = ak.tool_trade_date_hist_sina()
+        df = ak.calendar_trade_date_hist_sina()
         col = df.columns[0]
         dates = df[col].astype(str).str[:10].tolist()
         return [d for d in dates if start_date <= d <= end_date]

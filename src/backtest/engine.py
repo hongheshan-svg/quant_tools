@@ -218,7 +218,7 @@ class BacktestEngine:
     def _get_trade_dates(self, start_date: str, end_date: str) -> list[str]:
         """获取交易日列表"""
         try:
-            df = ak.tool_trade_date_hist_sina()
+            df = ak.calendar_trade_date_hist_sina()
             if df is not None and not df.empty:
                 col = df.columns[0]
                 dates = df[col].astype(str).tolist()
@@ -249,7 +249,7 @@ class BacktestEngine:
     def _get_price(self, code: str, trade_date: str, price_type: str = "close") -> float | None:
         """获取个股指定日期的价格"""
         try:
-            df = ak.stock_zh_a_hist(
+            df = ak.stock_zh_a_hist_em(
                 symbol=code,
                 period="daily",
                 start_date=trade_date.replace("-", ""),

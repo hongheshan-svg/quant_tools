@@ -1,6 +1,6 @@
 """
 A股交易日历
-数据来源：新浪交易日历（AKShare tool_trade_date_hist_sina），缓存在数据库 trade_calendar 表。
+数据来源：新浪交易日历（AKShare calendar_trade_date_hist_sina），缓存在数据库 trade_calendar 表。
 
 用法：先调用 load() 把日历读进内存（可按需联网刷新），之后 is_trade_day() / next_trade_day()
 只查内存，可以高频调用。日历缺失或日期超出日历范围时退化为「周一至周五」规则，
@@ -54,7 +54,7 @@ def _set_days(days: set[str]) -> None:
 def _fetch_remote() -> set[str]:
     import akshare as ak
 
-    df = ak.tool_trade_date_hist_sina()
+    df = ak.calendar_trade_date_hist_sina()
     return {_to_date(v).strftime("%Y-%m-%d") for v in df["trade_date"].tolist()}
 
 

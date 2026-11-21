@@ -1666,7 +1666,7 @@ class LimitUpPredictor:
             for attempt in range(2):
                 try:
                     import akshare as ak
-                    df = ak.stock_zh_a_hist(
+                    df = ak.stock_zh_a_hist_em(
                         symbol=bare_code, period="daily",
                         start_date=start_date, end_date=end_date,
                         adjust="qfq",

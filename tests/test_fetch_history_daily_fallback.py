@@ -18,7 +18,7 @@ def test_fetch_daily_fallback_accepts_datetime_index(monkeypatch):
     )
     monkeypatch.setattr(
         fh.ak,
-        "stock_zh_a_daily",
+        "stock_zh_a_hist_sina",
         lambda **_kwargs: pd.DataFrame(
             {
                 "open": [10.0, 10.2],
@@ -34,7 +34,7 @@ def test_fetch_daily_fallback_accepts_datetime_index(monkeypatch):
     )
     monkeypatch.setattr(
         fh.ak,
-        "stock_zh_a_hist",
+        "stock_zh_a_hist_em",
         lambda **_kwargs: _raise(AssertionError("em fallback should not be used")),
     )
 
@@ -55,7 +55,7 @@ def test_fetch_daily_fallback_retries_em_on_retryable_error(monkeypatch):
     )
     monkeypatch.setattr(
         fh.ak,
-        "stock_zh_a_daily",
+        "stock_zh_a_hist_sina",
         lambda **_kwargs: _raise(KeyError("date")),
     )
 
@@ -79,7 +79,7 @@ def test_fetch_daily_fallback_retries_em_on_retryable_error(monkeypatch):
             ]
         )
 
-    monkeypatch.setattr(fh.ak, "stock_zh_a_hist", _fake_em)
+    monkeypatch.setattr(fh.ak, "stock_zh_a_hist_em", _fake_em)
 
     source, df = fh.fetch_daily_df_with_fallback("000001", "2026-02-25", "2026-02-26")
 

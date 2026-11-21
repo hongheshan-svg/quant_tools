@@ -47,7 +47,7 @@ def parse_cn_amount(value: Any) -> float | None:
 def fetch_ths_fund_flow() -> list[dict[str, Any]]:
     import akshare as ak
 
-    df = ak.stock_fund_flow_individual(symbol="即时")
+    df = ak.stock_fund_flow_individual_ths(symbol="即时")
     rows = []
     for r in df.to_dict("records"):
         code = str(r.get("股票代码") or "").strip().zfill(6)

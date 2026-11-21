@@ -117,7 +117,7 @@ def _fetch_tx(code: str, start_date: str, end_date: str):
 
 
 def _fetch_sina(code: str, start_date: str, end_date: str):
-    df = call_with_retry(lambda: ak.stock_zh_a_daily(symbol=to_ak_symbol(code), adjust="qfq"), attempts=2)
+    df = call_with_retry(lambda: ak.stock_zh_a_hist_sina(symbol=to_ak_symbol(code), adjust="qfq"), attempts=2)
     if df is None or df.empty:
         return None
     df = normalize_daily_date_column(df)
@@ -129,7 +129,7 @@ def _fetch_sina(code: str, start_date: str, end_date: str):
 
 def _fetch_em(code: str, start_date: str, end_date: str):
     return call_with_retry(
-        lambda: ak.stock_zh_a_hist(symbol=code, period="daily", start_date=start_date.replace("-", ""),
+        lambda: ak.stock_zh_a_hist_em(symbol=code, period="daily", start_date=start_date.replace("-", ""),
                                    end_date=end_date.replace("-", ""), adjust="qfq"),
         attempts=3,
     )

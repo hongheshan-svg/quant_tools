@@ -113,7 +113,7 @@ def test_snapshot_coverage_and_quote_dates_trigger_fallback(monkeypatch):
     bad = pd.DataFrame({"代码": ["600519", "000001", "garbage"], "最新价": [11, 12, 13], "行情日期": ["2026-09-24"] * 3})
     good = pd.DataFrame({"代码": ["600519", "000001"], "最新价": [11, 12]})
     monkeypatch.setattr(collector, "_fetch_tencent_quotes", lambda: bad)
-    monkeypatch.setattr("src.collectors.stock_data.ak.stock_zh_a_spot", lambda: good)
+    monkeypatch.setattr("src.collectors.stock_data.ak.stock_zh_a_spot_sina", lambda: good)
     monkeypatch.setattr(sc.time, "sleep", lambda _: None)
     saved = []
     monkeypatch.setattr(collector, "_save_quotes", lambda df, *a: saved.append(df))

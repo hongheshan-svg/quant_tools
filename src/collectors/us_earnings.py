@@ -221,7 +221,7 @@ class USEarningsCollector(BaseCollector):
 
         # 源1: AKShare 新浪美股指数
         try:
-            df = ak.index_us_stock_sina()
+            df = ak.index_us_daily_sina()
             if df is not None and not df.empty:
                 for _, row in df.iterrows():
                     name = str(row.get("名称", ""))
@@ -618,7 +618,7 @@ class USEarningsCollector(BaseCollector):
 
         # Source 1: EastMoney global feed (via AKShare)
         try:
-            df = ak.stock_info_global_em()
+            df = ak.stock_news_global_em()
             if df is not None and not df.empty:
                 cols = [str(c) for c in df.columns]
                 title_col = _find_col(cols, ["title", cn_title])
