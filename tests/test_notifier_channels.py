@@ -147,7 +147,7 @@ def _config(name: str, **extra) -> dict:
 @pytest.mark.parametrize("name", NEW_CHANNELS)
 def test_success_sends_request_with_title_and_content(http, name):
     cls, mod = _cls(name)
-    assert mod.MAX_CONTENT_BYTES > 0
+    assert (getattr(mod, "MAX_CONTENT_UNITS", None) or mod.MAX_CONTENT_BYTES) > 0
     http.factory = SPECS[name]["ok"]
     assert cls(_config(name)).send("每日报告：涨停复盘", "内容正文ABC") is True
     assert len(http.calls) == 1
@@ -203,15 +203,18 @@ def test_long_content_is_split_within_limit(http, name):
     http.factory = SPECS[name]["ok"]
     lines = [f"第{i:04d}行 涨停股票分析内容，龙头继续走强" for i in range(1, 3000)]
     content = "\n".join(lines)
-    assert len(content.encode("utf-8")) > 2 * mod.MAX_CONTENT_BYTES
+    assert len(content.encode("utf-8")) > 2 * (getattr(mod, "MAX_CONTENT_UNITS", None) or mod.MAX_CONTENT_BYTES)
     assert cls(_config(name)).send("标题", content) is True
     assert len(http.calls) >= 2
     joined = "\n".join(_payload_text(c) for c in http.calls)
     for marker in ("第0001行", "第1500行", "第2999行"):
         assert marker in joined
+    # 上限口径：Telegram 按 UTF-16 code unit，Bark 按 Go JSON 编码字节，其余按 UTF-8 字节
+    limit = getattr(mod, "MAX_CONTENT_UNITS", None) or mod.MAX_CONTENT_BYTES
+    size = getattr(mod, "content_size", lambda s: len(s.encode("utf-8")))
     for call in http.calls:
-        body = max(_body_strings(call), key=lambda s: len(s.encode("utf-8")))
-        assert len(body.encode("utf-8")) <= mod.MAX_CONTENT_BYTES
+        body = max(_body_strings(call), key=size)
+        assert size(body) <= limit
 
 
 @pytest.mark.parametrize("name", NEW_CHANNELS)
@@ -241,6 +244,21 @@ def test_telegram_payload_and_custom_api_base_and_thread(http):
     http.calls.clear()
     cls(_config("telegram")).send("t", "c")
     assert _url(http.calls[0]).startswith("https://api.telegram.org/bot123:ABC/sendMessage")
+
+
+def test_telegram_measures_utf16_so_chinese_report_fits_one_message(http):
+    """3000 个汉字是 9000 UTF-8 字节，但只占 3000 个 UTF-16 code unit，一条就能发完。"""
+    cls, mod = _cls("telegram")
+    http.factory = SPECS["telegram"]["ok"]
+    content = "\n".join("涨停龙头继续走强" * 5 for _ in range(75))
+    assert len(content.encode("utf-8")) > 9000 and mod.content_size(content) < mod.MAX_CONTENT_UNITS
+    assert cls(_config("telegram")).send("标题", content) is True
+    assert len(http.calls) == 1
+    emoji = "📈" * 2500   # 每个 emoji 占 2 个 code unit，必须拆开
+    http.calls.clear()
+    assert cls(_config("telegram")).send("标题", emoji) is True
+    assert len(http.calls) == 2
+    assert all(mod.content_size(_payload_text(c)) <= 4096 for c in http.calls)
 
 
 def test_telegram_thread_id_absent_by_default(http):

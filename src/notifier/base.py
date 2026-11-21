@@ -5,32 +5,52 @@
 
 from __future__ import annotations
 
+from typing import Callable
 
-def split_by_bytes(content: str, max_bytes: int) -> list[str]:
-    """按行把内容拆成每段不超过 max_bytes 字节（UTF-8）的若干段；单行超长时按字符硬切。"""
+
+def utf8_size(text: str) -> int:
+    """UTF-8 字节数（多数渠道的上限口径）。"""
+    return len(text.encode("utf-8"))
+
+
+def utf16_size(text: str) -> int:
+    """UTF-16 code unit 数：Telegram 的 4096 上限按它计，汉字 1 个、emoji 2 个。"""
+    return len(text.encode("utf-16-le")) // 2
+
+
+def split_by_size(content: str, limit: int, size: Callable[[str], int] = utf8_size) -> list[str]:
+    """按行把内容拆成每段 size() 不超过 limit 的若干段；单行超长时按字符硬切。size 须按字符可加。"""
+    newline = size("\n")
     chunks: list[str] = []
     current: list[str] = []
-    size = 0
+    total = 0
     for line in content.split("\n"):
         pieces = [line]
-        if len(line.encode("utf-8")) > max_bytes:
-            pieces, buf = [], ""
+        if size(line) > limit:
+            pieces, buf, buf_size = [], "", 0
             for ch in line:
-                if len((buf + ch).encode("utf-8")) > max_bytes:
+                ch_size = size(ch)
+                if buf and buf_size + ch_size > limit:
                     pieces.append(buf)
-                    buf = ""
+                    buf, buf_size = "", 0
                 buf += ch
+                buf_size += ch_size
             pieces.append(buf)
         for piece in pieces:
-            piece_size = len(piece.encode("utf-8")) + 1  # 含换行
-            if current and size + piece_size > max_bytes:
+            piece_size = size(piece) + newline  # 含换行
+            if current and total + piece_size > limit:
                 chunks.append("\n".join(current))
-                current, size = [], 0
+                current, total = [], 0
             current.append(piece)
-            size += piece_size
+            total += piece_size
     if current:
         chunks.append("\n".join(current))
     return [c for c in chunks if c.strip()] or [""]
+
+
+def split_by_bytes(content: str, max_bytes: int) -> list[str]:
+    """按行把内容拆成每段不超过 max_bytes 字节（UTF-8）的若干段；单行超长时按字符硬切。"""
+    return split_by_size(content, max_bytes, utf8_size)
 
 
 def paged_titles(title: str, count: int) -> list[str]:
@@ -74,9 +94,12 @@ def markdown_to_slack(content: str) -> str:
     return "\n".join(lines)
 
 
-def send_paged(title: str, content: str, max_bytes: int, send_one) -> bool:
-    """拆分后逐段调用 send_one(标题, 内容)，某段失败不影响后续，全部成功才返回 True。"""
-    chunks = split_by_bytes(content, max_bytes)
+def send_paged(title: str, content: str, max_bytes: int, send_one, size: Callable[[str], int] = utf8_size) -> bool:
+    """拆分后逐段调用 send_one(标题, 内容)，某段失败不影响后续，全部成功才返回 True。
+
+    max_bytes 的口径由 size 决定，默认 UTF-8 字节。
+    """
+    chunks = split_by_size(content, max_bytes, size)
     return all([send_one(t, c) for t, c in zip(paged_titles(title, len(chunks)), chunks)])
 
 

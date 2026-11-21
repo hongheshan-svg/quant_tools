@@ -5,10 +5,11 @@ Telegram Bot 推送（纯文本，不设 parse_mode）
 import httpx
 from loguru import logger
 
-from src.notifier.base import markdown_to_text, send_paged
+from src.notifier.base import markdown_to_text, send_paged, utf16_size
 
-# 单条上限 4096 字符，按字节取保守值
-MAX_CONTENT_BYTES = 3800
+# 单条上限 4096，按 UTF-16 code unit 计（汉字 1 个、emoji 2 个）；正文留 196 个给标题和页码
+MAX_CONTENT_UNITS = 3900
+content_size = utf16_size
 MAX_IMAGE_BYTES = 10 * 1024 * 1024   # sendPhoto 上限 10MB
 
 
@@ -31,7 +32,7 @@ class TelegramNotifier:
         if not (self.bot_token and self.chat_id):
             logger.warning("Telegram配置不完整")
             return False
-        return send_paged(title, content, MAX_CONTENT_BYTES, self._send_one)
+        return send_paged(title, content, MAX_CONTENT_UNITS, self._send_one, content_size)
 
     def send_image(self, title: str, png: bytes) -> bool:
         """sendPhoto 发送图片（multipart，caption 为标题）；超过 10MB、未配置或失败返回 False，不抛异常。"""
@@ -69,3 +70,4 @@ class TelegramNotifier:
         except Exception as e:
             logger.error("Telegram推送异常: {}", e)
             return False
+
