@@ -204,6 +204,20 @@ def test_social_evidence_separates_failure_and_non_us(monkeypatch):
     assert result['channels'][2]['data'] == [{'ticker': 'AAPL'}]
 
 
+def test_social_reddit_uses_stock_endpoint_and_found_false_is_missing(monkeypatch):
+    from src.services.social_sentiment import social_context
+    urls = []
+    def get(url, **kwargs):
+        urls.append(url)
+        data = {'ticker': 'AAPL', 'found': False} if '/reddit/' in url else []
+        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: data)
+    monkeypatch.setattr(httpx, 'get', get)
+    result = social_context({'integrations': {'adanos': {'api_key': 'fixture'}}}, 'AAPL')
+    assert 'https://api.adanos.org/reddit/stocks/v1/stock/AAPL' in urls
+    reddit = result['channels'][0]
+    assert reddit['status'] == 'missing' and reddit['data'] is None
+
+
 def test_extensions_api_masks_validates_and_uses_common_auth(env):
     client, app, config = env
     config['integrations'] = {'longbridge': {'app_key': 'secret-key', 'app_secret': 'secret-pass', 'access_token': 'secret-token'}}

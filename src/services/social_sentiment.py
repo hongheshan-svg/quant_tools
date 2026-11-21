@@ -13,7 +13,8 @@ def social_context(config: dict, code: str) -> dict:
     if not key:
         return {"status": "unavailable", "channels": [], "limitations": ["missing_api_key"]}
     def fetch(channel: str) -> dict:
-        path = f"/reddit/stocks/v1/report/{identity.code}" if channel == "reddit" else f"/{channel}/stocks/v1/trending"
+        # Adanos 已下线 /reddit/stocks/v1/report/{ticker}（固定 404），单只股票改用 /stock/{ticker}
+        path = f"/reddit/stocks/v1/stock/{identity.code}" if channel == "reddit" else f"/{channel}/stocks/v1/trending"
         try:
             response = httpx.get("https://api.adanos.org" + path, headers={"X-API-Key": key, "Accept": "application/json"}, timeout=8)
             response.raise_for_status()
@@ -21,6 +22,9 @@ def social_context(config: dict, code: str) -> dict:
             if channel != "reddit":
                 rows = payload if isinstance(payload, list) else payload.get("trending", payload.get("data", []))
                 payload = [row for row in rows if str(row.get("ticker", row.get("symbol", ""))).upper() == identity.code]
+            elif isinstance(payload, dict) and payload.get("found") is False:
+                # 没有该股票的讨论时接口返回 200 和 {"ticker": ..., "found": false}，不能当成有数据
+                payload = None
             return {"source": channel, "status": "available" if payload else "missing", "data": payload,
                     "fetched_at": datetime.now(timezone.utc).isoformat(), "url": "https://api.adanos.org" + path}
         except Exception:
