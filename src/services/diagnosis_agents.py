@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from typing import Any
 
 from loguru import logger
@@ -114,7 +115,8 @@ def run_analysts(llm, context_text: str, mode: str, lang: str = "zh", *,
         finished = {o["role"]: o for o in completed}
         return [finished.get(role, {"role": role, "label": ANALYSTS[role][0], "error": "超时或预算不足", "status": "timeout"}) for role in roles]
     with ThreadPoolExecutor(max_workers=len(roles), thread_name_prefix="analyst") as pool:
-        return list(pool.map(ask, roles))
+        # 复制上下文，分析员的模型调用才会记进同一份运行记录（ACTIVE_LOG）和后台任务轨迹
+        return [f.result() for f in [pool.submit(copy_context().run, ask, role) for role in roles]]
 
 
 def disagreement(opinions: list[dict[str, Any]], lang: str = "zh") -> str:

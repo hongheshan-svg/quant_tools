@@ -201,16 +201,17 @@ class CollectorOrchestrator:
             attempt += 1
             retry_groups = {m.split(".", 1)[0] for m in missing}
             logger.warning(f"全源校验未通过，开始第{attempt}轮重试: {sorted(missing)}")
+            # 与首轮一样复制上下文：后台任务的 trace_id、事件接收和请求预算要带进重试线程
             with ThreadPoolExecutor(max_workers=max(1, len(retry_groups)), thread_name_prefix="collect-retry") as executor:
                 futs = {}
                 if "news" in retry_groups:
-                    futs["news"] = executor.submit(self.collect_news_parallel)
+                    futs["news"] = executor.submit(copy_context().run, self.collect_news_parallel)
                 if "market" in retry_groups:
-                    futs["market"] = executor.submit(self._collect_market_and_overview)
+                    futs["market"] = executor.submit(copy_context().run, self._collect_market_and_overview)
                 if "global_news" in retry_groups:
-                    futs["global_news"] = executor.submit(self._collect_global_news)
+                    futs["global_news"] = executor.submit(copy_context().run, self._collect_global_news)
                 if "us_earnings" in retry_groups:
-                    futs["us_earnings"] = executor.submit(self._collect_us_earnings)
+                    futs["us_earnings"] = executor.submit(copy_context().run, self._collect_us_earnings)
 
                 for key, fut in futs.items():
                     try:

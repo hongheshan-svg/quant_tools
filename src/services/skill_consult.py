@@ -13,6 +13,7 @@ import re
 import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -150,7 +151,8 @@ def consult(llm, context_text: str, skills: list[Skill], weights: dict[str, floa
     if budget is not None:
         return [o for o in budget.parallel(ask, skills, reserve=min(20, budget.remaining() / 3)) if o]
     with ThreadPoolExecutor(max_workers=len(skills), thread_name_prefix="consult") as pool:
-        return [o for o in pool.map(ask, skills) if o]
+        # 复制上下文，会诊的模型调用才会记进同一份运行记录和后台任务轨迹
+        return [o for o in [f.result() for f in [pool.submit(copy_context().run, ask, s) for s in skills]] if o]
 
 
 def consensus(opinions: list[dict[str, Any]]) -> dict[str, Any]:
